@@ -30,7 +30,7 @@ Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, 
 # Building
 
 ```sh
-git clone https://github.com/CluelessCatBurger/wl_shimeji.git
+git clone --recursive https://github.com/CluelessCatBurger/wl_shimeji.git
 cd wl_shimeji
 make -j$(nproc)
 make install
