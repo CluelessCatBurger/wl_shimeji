@@ -1,0 +1,1634 @@
+#!/bin/python3
+
+import os
+from posix import waitpid
+import sys
+import json
+import socket
+import argparse
+import subprocess
+from typing import Generator
+import struct
+import time
+
+# Shimeji VM compiler -----------
+import enum
+
+TokenType = enum.Enum('TokenType', ["IDENTIFIER", "NUMBER", "OPENING_BRACKET", "CLOSING_BRACKET", "OPERATOR", "QUESTION_MARK", "COLON", "SEMICOLON", "EOF", "SOF", "ACCESS_OPERATOR", "COMMA", "INVALID"])
+BracketType = enum.Enum('BracketType', ["EXPRESSION", "SCOPE", "ARRAY"])
+OperatorType = enum.Enum('OperatorType', [
+    "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "MODULUS", "POWER",
+    "BITWISE_AND", "BITWISE_OR", "BITWISE_XOR", "BITWISE_NOT", "LEFT_SHIFT", "RIGHT_SHIFT", "OR", "AND",
+    "INCREMENT", "DECREMENT",
+    "LESS_THAN", "LESS_THAN_OR_EQUAL", "GREATER_THAN", "GREATER_THAN_OR_EQUAL", "EQUAL", "NOT_EQUAL", "NOT", "INVALID"
+])
+
+ALLOWED_IDENTIFIERS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+ALLOWED_NUMBERS = set("0123456789")
+ALLOWED_OPERATORS = set("+-*/%&|^~<>=!")
+ALLOWED_BRACKETS = set("()[]{}")
+ALLOWED_WHITESPACE = set(" \t\n")
+ALLOWED_ACCESS_OPERATOR = set(".")
+ALLOWED_QUESTION_MARK = set("?")
+ALLOWED_COLON = set(":")
+ALLOWED_SEMICOLON = set(";")
+ALLOWED_COMMA = set(",")
+
+
+OPERATOR_MAP = {
+    "+": OperatorType.ADD,
+    "-": OperatorType.SUBTRACT,
+    "*": OperatorType.MULTIPLY,
+    "/": OperatorType.DIVIDE,
+    "%": OperatorType.MODULUS,
+    "&": OperatorType.BITWISE_AND,
+    "|": OperatorType.BITWISE_OR,
+    "^": OperatorType.BITWISE_XOR,
+    "~": OperatorType.BITWISE_NOT,
+    "<<": OperatorType.LEFT_SHIFT,
+    ">>": OperatorType.RIGHT_SHIFT,
+    "<": OperatorType.LESS_THAN,
+    "<=": OperatorType.LESS_THAN_OR_EQUAL,
+    ">": OperatorType.GREATER_THAN,
+    ">=": OperatorType.GREATER_THAN_OR_EQUAL,
+    "==": OperatorType.EQUAL,
+    "!=": OperatorType.NOT_EQUAL,
+    "**": OperatorType.POWER,
+    "!": OperatorType.NOT,
+    "||": OperatorType.OR,
+    "&&": OperatorType.AND,
+    "++": OperatorType.INCREMENT,
+    "--": OperatorType.DECREMENT,
+
+}
+
+BRACKET_MAP = {
+    "(": BracketType.EXPRESSION,
+    ")": BracketType.EXPRESSION,
+    "[": BracketType.ARRAY,
+    "]": BracketType.ARRAY,
+    "{": BracketType.SCOPE,
+    "}": BracketType.SCOPE,
+}
+
+OPENING_BRACKETS = set("([{")
+CLOSING_BRACKETS = set(")]}")
+
+def prepare_string(js_string: str) -> str:
+    if (js_string.startswith("${") or js_string.startswith("#{") ) and js_string.endswith("}"):
+        js_string = js_string[2:-1]
+    js_string = js_string.replace("&lt;", "<")\
+    .replace("&gt;", ">").replace("&amp;", "&")\
+    .replace("&quot;", "\"").replace("&apos;", "'")\
+    .replace("&nbsp;", " ").replace("&copy;", "©")\
+    .replace("&reg;", "®").replace("&trade;", "™")\
+    .replace("&euro;", "€").replace("&pound;", "£")
+    return js_string
+
+class Tokenizer:
+    class Token:
+        type: TokenType = None
+        subtype: BracketType | OperatorType = None
+        value: str = None
+        start: tuple[int,int] = None
+        end: tuple[int,int] = None
+
+        invalid_by: str = None
+
+        def __init__(self, *args, **kwargs) -> None:
+            x = ["type", "subtype", "value", "start", "end", "invalid_by"]
+
+            for k,v in kwargs.items():
+                if k in x:
+                    setattr(self, k, v)
+                x.remove(k)
+
+            for arg in args:
+                setattr(self, x.pop(0), arg)
+
+    @staticmethod
+    def __prepare_string(js_string: str) -> str:
+        if (js_string.startswith("${") or js_string.startswith("#{") ):
+            if js_string.endswith("}"):
+                js_string = js_string[2:-1]
+            else:
+                raise SyntaxError("Invalid string interpolation")
+
+        js_string = js_string.lower().replace("&lt;", "<")\
+        .replace("&gt;", ">").replace("&amp;", "&")\
+        .replace("&quot;", "\"").replace("&apos;", "'")\
+        .replace("&nbsp;", " ").replace("&copy;", "©")\
+        .replace("&reg;", "®").replace("&trade;", "™")\
+        .replace("&euro;", "€").replace("&pound;", "£")\
+        .replace("math.random*", "math.random()*")\
+        .replace("math.random/", "math.random()/")\
+        .replace("math.random-", "math.random()-")\
+        .replace("math.random+", "math.random()+")
+
+        return js_string
+
+    @staticmethod
+    def tokenize(string: str) -> list[Token]:
+
+        string = Tokenizer.__prepare_string(string)
+
+        tokens: list[Tokenizer.Token] = []
+        line, col = 0,0
+        current_token = Tokenizer.Token()
+
+        for char in string:
+            if char == '\n':
+                line += 1
+                col = 0
+
+            if current_token.type is None:
+                if char not in ALLOWED_WHITESPACE:
+                    current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+            else:
+                if char in ALLOWED_WHITESPACE:
+                    tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                    current_token = Tokenizer.Token()
+
+                elif current_token.type == TokenType.IDENTIFIER:
+                    if char in ALLOWED_IDENTIFIERS or char in ALLOWED_NUMBERS:
+                        current_token.value += char
+
+                    else:
+                        tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                        current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                elif current_token.type == TokenType.NUMBER:
+                    if char in ALLOWED_NUMBERS or char == ".":
+                        current_token.value += char
+
+                    elif char in ALLOWED_IDENTIFIERS:
+                        current_token.type = TokenType.INVALID
+                        current_token.invalid_by = f"Invalid character {char} in number"
+
+                    else:
+                        tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                        current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                elif current_token.type == TokenType.OPERATOR:
+                    if current_token.value + char in OPERATOR_MAP:
+                        current_token.value += char
+
+                    else:
+                        tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                        current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                elif current_token.type == TokenType.OPENING_BRACKET or current_token.type == TokenType.CLOSING_BRACKET:
+                    tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                    current_token.subtype = BRACKET_MAP[current_token.value]
+                    current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                else:
+                    tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                    current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+            col += 1
+
+        if current_token.type is not None:
+            tokens.append(Tokenizer.__emit_token(current_token, line, col))
+
+        return tokens
+
+    @staticmethod
+    def __emit_token(current_token: Token, line: int, col: int) -> Token:
+        if current_token.type == TokenType.OPERATOR:
+            current_token.subtype = OPERATOR_MAP.get(current_token.value)
+            if current_token.subtype is None:
+                current_token.type = TokenType.INVALID
+                current_token.invalid_by = f"Invalid operator {current_token.value}"
+
+        elif current_token.type == TokenType.OPENING_BRACKET or current_token.type == TokenType.CLOSING_BRACKET:
+            current_token.subtype = BRACKET_MAP[current_token.value]
+
+        current_token.end = (line, col)
+        return current_token
+
+    @staticmethod
+    def __initialize_token_by_char(char: str, line: int, col: int) -> Token:
+        current_token = Tokenizer.Token()
+        if char in ALLOWED_IDENTIFIERS:
+            current_token.type = TokenType.IDENTIFIER
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_NUMBERS:
+            current_token.type = TokenType.NUMBER
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_OPERATORS:
+            current_token.type = TokenType.OPERATOR
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_BRACKETS:
+            current_token.type = TokenType.OPENING_BRACKET if char in OPENING_BRACKETS else TokenType.CLOSING_BRACKET
+            current_token.subtype = BRACKET_MAP[char]
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_ACCESS_OPERATOR:
+            current_token.type = TokenType.ACCESS_OPERATOR
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_QUESTION_MARK:
+            current_token.type = TokenType.QUESTION_MARK
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_COLON:
+            current_token.type = TokenType.COLON
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_SEMICOLON:
+            current_token.type = TokenType.SEMICOLON
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_COMMA:
+            current_token.type = TokenType.COMMA
+            current_token.value = char
+            current_token.start = (line, col)
+
+        return current_token
+
+class ASTNode:
+    pass
+
+class BinaryOpNode(ASTNode):
+    def __init__(self, left, operator, right):
+        self.left = left
+        self.operator = operator
+        self.right = right
+
+    def __repr__(self):
+        return f"({self.left} {self.operator} {self.right})"
+
+class UnaryOpNode(ASTNode):
+    def __init__(self, operator: Tokenizer.Token, operand: ASTNode):
+        self.operator = operator
+        self.operand = operand
+
+    def __repr__(self):
+        return f"({self.operator}{self.operand})"
+
+class LiteralNode(ASTNode):
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return str(self.value)
+
+class VariableNode(ASTNode):
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+class FunctionCallNode(ASTNode):
+    def __init__(self, function_name, arguments):
+        self.function_name = function_name
+        self.arguments = arguments
+
+    def __repr__(self):
+        return f"{self.function_name}({', '.join(map(str, self.arguments))})"
+
+class MemberAccessNode(ASTNode):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self) -> str:
+        return f"{self.left}.{self.right}"
+
+    def __repr__(self):
+        return f"<MemberAccessNode: {str(self)}>"
+
+class TernaryOpNode(ASTNode):
+    def __init__(self, condition, true_expr, false_expr):
+        self.condition = condition
+        self.true_expr = true_expr
+        self.false_expr = false_expr
+
+    def __repr__(self):
+        return f"({self.condition} ? {self.true_expr} : {self.false_expr})"
+
+class AbstractSyntaxTree:
+    def __init__(self, tokens: list[Tokenizer.Token]):
+        self.tokens = tokens
+        self.pos = 0
+        self.operator_stack = []
+        self.operand_stack = []
+
+    def current_token(self) -> Tokenizer.Token:
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return Tokenizer.Token(type=TokenType.EOF)
+
+    def eat(self, token_type: TokenType) -> Tokenizer.Token:
+        current = self.current_token()
+        if current.type == token_type:
+            self.pos += 1
+            return current
+        raise SyntaxError(f"Expected token {token_type}, but got {current.type}")
+
+    def parse(self) -> ASTNode:
+        return self.parse_expression()
+
+    def parse_expression(self) -> ASTNode:
+        return self.parse_ternary()
+
+    def parse_ternary(self) -> ASTNode:
+        condition = self.parse_logical_or()
+        if self.current_token().type == TokenType.QUESTION_MARK:
+            self.eat(TokenType.QUESTION_MARK)
+            true_expr = self.parse_expression()
+            self.eat(TokenType.COLON)
+            false_expr = self.parse_expression()
+            return TernaryOpNode(condition, true_expr, false_expr)
+        return condition
+
+    def parse_logical_or(self) -> ASTNode:
+        node = self.parse_logical_and()
+        while self.current_token().subtype == OperatorType.OR:
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_logical_and()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_logical_and(self) -> ASTNode:
+        node = self.parse_equality()
+        while self.current_token().subtype == OperatorType.AND:
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_equality()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_equality(self) -> ASTNode:
+        node = self.parse_comparison()
+        while self.current_token().subtype in (OperatorType.EQUAL, OperatorType.NOT_EQUAL):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_comparison()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_comparison(self) -> ASTNode:
+        node = self.parse_additive()
+        while self.current_token().subtype in (OperatorType.LESS_THAN, OperatorType.LESS_THAN_OR_EQUAL, OperatorType.GREATER_THAN, OperatorType.GREATER_THAN_OR_EQUAL):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_additive()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_additive(self) -> ASTNode:
+        node = self.parse_multiplicative()
+        while self.current_token().subtype in (OperatorType.ADD, OperatorType.SUBTRACT):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_multiplicative()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_multiplicative(self) -> ASTNode:
+        node = self.parse_unary()
+        while self.current_token().subtype in (OperatorType.MULTIPLY, OperatorType.DIVIDE, OperatorType.MODULUS):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_unary()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_unary(self) -> ASTNode:
+        token = self.current_token()
+        if token.subtype in (OperatorType.NOT, OperatorType.SUBTRACT, OperatorType.BITWISE_NOT):
+            operator = self.eat(TokenType.OPERATOR)
+            operand = self.parse_unary()
+            return UnaryOpNode(operator, operand)
+        return self.parse_primary()
+
+    def parse_primary(self) -> ASTNode:
+        token = self.current_token()
+        if token.type == TokenType.NUMBER:
+            self.eat(TokenType.NUMBER)
+            return LiteralNode(float(token.value))
+        if token.type == TokenType.IDENTIFIER:
+            if token.value == "true":
+                self.eat(TokenType.IDENTIFIER)
+                ident_node = LiteralNode("1.0")
+            elif token.value == "false":
+                self.eat(TokenType.IDENTIFIER)
+                ident_node = LiteralNode("0.0")
+            else:
+                ident_node = VariableNode(self.eat(TokenType.IDENTIFIER).value)
+            while self.current_token().type == TokenType.ACCESS_OPERATOR:
+                self.eat(TokenType.ACCESS_OPERATOR)
+                right = self.eat(TokenType.IDENTIFIER)
+                ident_node = MemberAccessNode(ident_node, right.value)
+            if self.current_token().type == TokenType.OPENING_BRACKET:
+                self.eat(TokenType.OPENING_BRACKET)
+                arguments = []
+                while self.current_token().type != TokenType.CLOSING_BRACKET and self.current_token().type != TokenType.EOF:
+                    arguments.append(self.parse_expression())
+                    if self.current_token().type == TokenType.COMMA:
+                        self.eat(TokenType.COMMA)
+                if self.current_token().type == TokenType.CLOSING_BRACKET:
+                    self.eat(TokenType.CLOSING_BRACKET)
+                else:
+                    raise SyntaxError("Missing closing bracket for function call")
+                return FunctionCallNode(ident_node, arguments)
+            return ident_node
+        if token.type == TokenType.OPENING_BRACKET:
+            self.eat(TokenType.OPENING_BRACKET)
+            node = self.parse_expression()
+            self.eat(TokenType.CLOSING_BRACKET)
+            return node
+        raise SyntaxError(f"Unexpected token: {token}")
+
+OP = enum.Enum("OP", [
+    "ERR",
+    "RET",
+    # Stack section
+    "LOADL",
+    "LOADE",
+    "STORE",
+    # Arithmetic section
+    "ADD",
+    "SUB",
+    "MUL",
+    "DIV",
+    "MOD",
+    "POW",
+    # Bitwise section
+    "AND",
+    "OR",
+    "XOR",
+    "NOT",
+    "LSHIFT",
+    "RSHIFT",
+    # Comparison section
+    "LT",
+    "LE",
+    "GT",
+    "GE",
+    "EQ",
+    "NE",
+    # Logical section
+    "LAND",
+    "LOR",
+    "LNOT",
+    # Control section
+    # Branch
+    "BQZ",
+    "BNZ",
+    "JMP",
+    # Call
+    "CALL"
+])
+
+FORCED_EXTERNAL = [
+    "mascot.anchor",
+    "mascot.totalCount"
+]
+FORCED_LOCAL = [
+    "Name",
+    "Type",
+    "Class",
+    "Embedded",
+    "Move",
+    "Stay",
+    "Animate",
+    "Sequence",
+    "Select",
+    "BorderType",
+    "Ceiling",
+    "Wall",
+    "Floor",
+    "TargetX",
+    "TargetY",
+    "VelocityX",
+    "VelocityY",
+    "VelocityParam",
+    "InitialVX",
+    "InitialVY",
+    "Gravity",
+    "RegistanceX",
+    "RegistanceY",
+    "LookRight",
+    "IeOffsetX",
+    "IeOffsetY",
+    "X",
+    "Y",
+    "BornX",
+    "BornY",
+    "BornBehaviour",
+    "BornMascot",
+    "BornInterval",
+    "BornTransient",
+    "BornCount",
+    "TransformBehaviour",
+    "TransformMascot",
+    "Affordance",
+    "Behaviour",
+    "TargetBehaviour",
+    "Loop",
+    "Animation",
+    "Condition",
+    "Image",
+    "ImageRight",
+    "ImageAnchor",
+    "Velocity",
+    "Duration",
+    "Draggable",
+    "Sound",
+    "Volume",
+    "BehaviourList",
+    "ChaseMouse",
+    "Frequency",
+    "Hidden",
+    "NextBehaviourList",
+    "Add",
+    "BehaviourReference",
+    "Fall",
+    "Dragged",
+    "Thrown",
+    "FootX",
+    "FootDX",
+    "OffsetX",
+    "OffsetY",
+    "Pose",
+    "Hotspot",
+    "Shape",
+    "Origin",
+    "Size",
+    "Constant",
+    "Value",
+    "IsTurn",
+    "TargetLook",
+    "Information",
+    "PreviewImage",
+    "SplashImage",
+    "Artist",
+    "Scripter",
+    "URL",
+    "Commissioner",
+    "Support",
+    "Toggleable",
+    "Count",
+    "LookRight",
+    "Gap"
+]
+
+SYMNAME_REMAP = {x.lower(): f"mascot.{x[0].lower()}{x[1:]}" for x in FORCED_LOCAL}
+
+class Program:
+    def __init__(self):
+        self.instructions = []
+        self.local_vars = []
+        self.global_vars = []
+        self.functions = []
+        self.evaluate_once = True
+
+    @staticmethod
+    def from_ast(ast: ASTNode, local_vars: list = [], global_vars: list = [], functions: list = []):
+        program = Program()
+        program.local_vars = local_vars
+        program.global_vars = global_vars
+        program.functions = functions
+        program._compile(ast)
+        program.instructions.append((OP.RET,))
+        return program
+
+    def _compile(self, node: ASTNode):
+        if isinstance(node, LiteralNode):
+            self.instructions.append((OP.STORE, node.value))
+        elif isinstance(node, VariableNode):
+            name = node.name
+            symlist = self.local_vars if not name in FORCED_EXTERNAL else self.global_vars
+            name = SYMNAME_REMAP.get(name.lower(), name)
+            if name not in symlist:
+                symlist.append(name)
+            self.instructions.append((OP.LOADL, symlist.index(name)))
+
+        elif isinstance(node, MemberAccessNode):
+            name = str(node)
+            name = SYMNAME_REMAP.get(name.lower(), name)
+            if name.count(".") != 1 or name in FORCED_EXTERNAL and name not in FORCED_LOCAL:
+                if name not in self.global_vars:
+                    self.global_vars.append(name)
+                self.instructions.append((OP.LOADE, self.global_vars.index(name)))
+            else:
+                if name.startswith("mascot.") or name in FORCED_LOCAL:
+                    if name not in self.local_vars:
+                        self.local_vars.append(name)
+                    self.instructions.append((OP.LOADL, self.local_vars.index(name)))
+                if name.startswith("math.") or name in FORCED_EXTERNAL:
+                    if name not in self.global_vars:
+                        self.global_vars.append(name)
+                    self.instructions.append((OP.LOADE, self.global_vars.index(name)))
+        elif isinstance(node, UnaryOpNode):
+            if node.operator.subtype == OperatorType.NOT:
+                self._compile(node.operand)
+                self.instructions.append((OP.LNOT,))
+            elif node.operator.subtype == OperatorType.SUBTRACT:
+                self.instructions.append((OP.STORE, 0))
+                self._compile(node.operand)
+                self.instructions.append((OP.SUB,))
+            elif node.operator.subtype == OperatorType.BITWISE_NOT:
+                self._compile(node.operand)
+                self.instructions.append((OP.NOT,))
+            elif node.operator.subtype == OperatorType.ADD:
+                self._compile(node.operand)
+            else:
+                raise Exception("Unknown unary operator")
+        elif isinstance(node, BinaryOpNode):
+            self._compile(node.left)
+            self._compile(node.right)
+            if node.operator.subtype == OperatorType.ADD:
+                self.instructions.append((OP.ADD,))
+            elif node.operator.subtype == OperatorType.SUBTRACT:
+                self.instructions.append((OP.SUB,))
+            elif node.operator.subtype == OperatorType.MULTIPLY:
+                self.instructions.append((OP.MUL,))
+            elif node.operator.subtype == OperatorType.DIVIDE:
+                self.instructions.append((OP.DIV,))
+            elif node.operator.subtype == OperatorType.MODULUS:
+                self.instructions.append((OP.MOD,))
+            elif node.operator.subtype == OperatorType.POWER:
+                self.instructions.append((OP.POW,))
+            elif node.operator.subtype == OperatorType.BITWISE_AND:
+                self.instructions.append((OP.AND,))
+            elif node.operator.subtype == OperatorType.BITWISE_OR:
+                self.instructions.append((OP.OR,))
+            elif node.operator.subtype == OperatorType.BITWISE_XOR:
+                self.instructions.append((OP.XOR,))
+            elif node.operator.subtype == OperatorType.LEFT_SHIFT:
+                self.instructions.append((OP.LSHIFT,))
+            elif node.operator.subtype == OperatorType.RIGHT_SHIFT:
+                self.instructions.append((OP.RSHIFT,))
+            elif node.operator.subtype == OperatorType.LESS_THAN:
+                self.instructions.append((OP.LT,))
+            elif node.operator.subtype == OperatorType.LESS_THAN_OR_EQUAL:
+                self.instructions.append((OP.LE,))
+            elif node.operator.subtype == OperatorType.GREATER_THAN:
+                self.instructions.append((OP.GT,))
+            elif node.operator.subtype == OperatorType.GREATER_THAN_OR_EQUAL:
+                self.instructions.append((OP.GE,))
+            elif node.operator.subtype == OperatorType.EQUAL:
+                self.instructions.append((OP.EQ,))
+            elif node.operator.subtype == OperatorType.NOT_EQUAL:
+                self.instructions.append((OP.NE,))
+            elif node.operator.subtype == OperatorType.AND:
+                self.instructions.append((OP.LAND,))
+            elif node.operator.subtype == OperatorType.OR:
+                self.instructions.append((OP.LOR,))
+            else:
+                raise Exception("Unknown binary operator")
+
+        elif isinstance(node, TernaryOpNode):
+            self._compile(node.condition)
+            branch_instr = len(self.instructions)
+            self.instructions.append((OP.BQZ, 0))
+            self._compile(node.true_expr)
+            jump_instr = len(self.instructions)
+            self.instructions.append((OP.JMP, 0))
+            self.instructions[branch_instr] = (OP.BQZ, len(self.instructions)-branch_instr)
+            self._compile(node.false_expr)
+            self.instructions[jump_instr] = (OP.JMP, len(self.instructions)-jump_instr-1)
+
+
+        elif isinstance(node, FunctionCallNode):
+            name = str(node.function_name)
+            for arg in node.arguments:
+                self._compile(arg)
+            if name not in self.functions:
+                self.functions.append(name)
+            self.instructions.append((OP.CALL, self.functions.index(name)))
+
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: {len(self.instructions)} instructions long, located at 0x{id(self)}>"
+
+
+import xml
+from xml.etree import ElementTree
+
+INLINED_ACTION_AUTOINCREMENT = 0
+INLINED_BEHAVIOUR_AUTOINCREMENT = 0
+INLINED_CONDITION_AUTOINCREMENT = 0
+
+class RedefinitionError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+ACTION_TYPE = enum.Enum("ActionType", [
+    "Fall",
+    "Move",
+    "Embedded",
+    "Stay",
+    "Animate",
+    "Sequence",
+    "Select"
+])
+
+EMBEDDED_TYPE = enum.Enum("EmbeddedType", [
+    "Jump",
+    "Fall",
+    "Look",
+    "Offset",
+    "FallWithIE",
+    "JumpWithIE",
+    "WalkWithIE",
+    "ThrowIE",
+    "Dragged",
+    "Resist",
+    "Breed",
+    "Broadcast",
+    "ScanMove",
+    "Interact",
+    "Transform",
+    "Scanjump",
+    "Dispose"
+])
+
+ACTION_CONTENT_TYPE = enum.Enum("ActionContentType", [
+    "ActionReference",
+    "Animation",
+])
+
+CLASS_NAME_TO_EMBEDDED_TYPE = {
+    f"com.group_finity.mascot.action.{embedded_type.name}": embedded_type
+    for embedded_type in EMBEDDED_TYPE
+}
+
+CLASS_NAME_TO_EMBEDDED_TYPE["com.group_finity.mascot.action.Regist"] = EMBEDDED_TYPE.Resist
+CLASS_NAME_TO_EMBEDDED_TYPE["com.group_finity.mascot.action.SelfDestruct"] = EMBEDDED_TYPE.Dispose
+
+namespace = {'ns': 'http://www.group-finity.com/Mascot'}
+
+MASCOT_VAR_NAMES = [
+            "X",
+            "Y",
+            "TargetX",
+            "TargetY",
+            "VelocityParam",
+            "InitialVX",
+            "InitialVY",
+            "Gravity",
+            "RegistanceX",
+            "RegistanceY",
+            "LookRight",
+            "IeOffsetX",
+            "IeOffsetY",
+            "BornX",
+            "BornY",
+            "Duration",
+            "BornInterval",
+            "BornCount",
+            "BornTransient",
+            # "BornBehaviour",
+            # "BornMascot",
+            # "TransformBehaviour",
+            # "TransformMascot",
+            # "Affordance",
+            # "Behaviour",
+            # "TargetBehaviour",
+            "Loop",
+            "Condition",
+            # "Velocity",
+            "Duration",
+            "FootX",
+            "FootDX",
+            "OffsetX",
+            "OffsetY",
+            "Gap"
+]
+
+def vector_to_tuple(what: str) -> tuple[int, int]:
+    if what is None:
+        return (0, 0)
+    vars = what.split(",")
+    if len(vars) != 2:
+        return (int(vars[0]), int(vars[0]))
+    return (int(vars[0]), int(vars[1]))
+
+def parse_animation(animation: ElementTree.Element, programs_defs: list[str]) -> dict:
+    if animation.tag != "{http://www.group-finity.com/Mascot}Animation":
+        raise SyntaxError("Invalid XML format: Expected Animation")
+
+    animation_obj = {
+        "type": "Animation",
+        "condition": programs_defs.index(animation.attrib.get("Condition")) if animation.attrib.get("Condition") else None,
+        "frames": [],
+        "hotspots": [],
+        "frame_count": 0,
+        "hotspots_count": 0
+    }
+
+    for child in animation:
+        if child.tag == "{http://www.group-finity.com/Mascot}Pose":
+            frame_obj = {
+                "type": "Frame",
+                "image": child.attrib.get("Image"),
+                "image_right": child.attrib.get("ImageRight"),
+                "image_anchor_x": vector_to_tuple(child.attrib.get("ImageAnchor"))[0],
+                "image_anchor_y": vector_to_tuple(child.attrib.get("ImageAnchor"))[1],
+                "velocity_x": vector_to_tuple(child.attrib.get("Velocity"))[0],
+                "velocity_y": vector_to_tuple(child.attrib.get("Velocity"))[1],
+                "duration": int(child.attrib.get("Duration", 0))
+            }
+
+            if frame_obj["image"]:
+                frame_obj["image"] = frame_obj["image"].lstrip("/")
+            if frame_obj["image_right"]:
+                frame_obj["image_right"] = frame_obj["image_right"].lstrip("/")
+
+            animation_obj["frames"].append(frame_obj)
+            animation_obj["frame_count"] += 1
+        elif child.tag == "{http://www.group-finity.com/Mascot}Hotspot":
+            hotspot_obj = {
+                "type": "Hotspot",
+                "shape": child.get("Shape", "Rectangle"),
+                "x": int(child.get("Origin", "0,0").split(",")[0]),
+                "y": int(child.get("Origin", "0,0").split(",")[1]),
+                "width": int(child.get("Size", "0,0").split(",")[0]),
+                "height": int(child.get("Size", "0,0").split(",")[1]),
+                "behavior": child.get("Behavior", None)
+            }
+
+            animation_obj["hotspots"].append(hotspot_obj)
+            animation_obj["hotspots_count"] += 1
+        else:
+            print(f"Unknown tag in animation: {child.tag}; skipping...")
+            continue
+
+    return animation_obj
+
+
+
+def parse_action_reference(actionref: ElementTree.Element, action_definitions: dict, programs_defs: list[str]) -> dict:
+    if actionref.tag != "{http://www.group-finity.com/Mascot}ActionReference":
+        raise SyntaxError("Invalid XML format: Expected ActionReference")
+
+    action_name = actionref.attrib.get("Name")
+    if action_name is None:
+        raise SyntaxError("Invalid XML format: ActionReference name not found")
+
+    actionref_obj = {
+        "type": "ActionReference",
+        "action_name": action_name,
+        "duration": programs_defs.index(actionref.attrib.get("Duration")) if actionref.attrib.get("Duration") else None,
+        "condition": programs_defs.index(actionref.attrib.get("Condition")) if actionref.attrib.get("Condition") else None,
+        "locals_overrides": {},
+        "locals_count": 0,
+    }
+
+    for attrib_name, attrib_value in actionref.attrib.items():
+        if attrib_name in MASCOT_VAR_NAMES:
+            actionref_obj["locals_overrides"][f"mascot.{attrib_name}"] = programs_defs.index(attrib_value)
+            actionref_obj["locals_count"] += 1
+
+    if actionref_obj["locals_overrides"].pop("mascot.Duration", None):
+        actionref_obj["locals_count"] -= 1
+
+    if actionref_obj["locals_overrides"].pop("mascot.Loop", None):
+        actionref_obj["locals_count"] -= 1
+
+    return actionref_obj
+
+def parse_action(action: ElementTree.Element, action_definitions: dict, programs_defs = list[str], depth: int = 0) -> dict:
+    global INLINED_ACTION_AUTOINCREMENT
+
+    action_type = action.attrib.get("Type")
+    if action_type is None:
+        raise SyntaxError("Invalid XML format: Action type not found")
+
+    action_type = ACTION_TYPE[action_type]
+
+    action_object = {
+        "type": action_type.name,
+        "name": action.attrib.get("Name", None),
+        "content": [],
+        "content_count": 0,
+        "local_variables": {},
+        "local_variables_count": 0,
+        "embedded_type": CLASS_NAME_TO_EMBEDDED_TYPE.get(action.attrib.get("Class")).name if action.attrib.get("Class") else None,
+        "loop": {"true": True, "false": False}.get(action.attrib.get("Loop", False), False),
+        "condition": programs_defs.index(action.attrib.get("Condition")) if action.attrib.get("Condition") else None,
+        "border_type": action.attrib.get("BorderType", "Any"),
+    }
+
+    if action_object["name"] == None:
+        if depth == 0:
+            raise SyntaxError("Invalid XML format: Root action must have a name")
+        action_object["name"] = f"___INLINED_ACTION_{INLINED_ACTION_AUTOINCREMENT}"
+        INLINED_ACTION_AUTOINCREMENT += 1
+
+    for child in action:
+        if child.tag == "{http://www.group-finity.com/Mascot}Action":
+            if action_type not in [ACTION_TYPE.Sequence, ACTION_TYPE.Select]:
+                print(f"{' ' * depth}Warning: Action type {action_type} does not support nested actions")
+                continue
+            action_obj = parse_action(child, action_definitions, programs_defs, depth + 1)
+            action_object["content"].append(
+                {
+                    "type": "ActionReference",
+                    "action_name": action_obj["name"],
+                    "duration": programs_defs.index(child.attrib.get("Duration")) if child.attrib.get("Duration") else None,
+                    "condition": programs_defs.index(child.attrib.get("Condition")) if child.attrib.get("Condition") else None,
+                    "locals_overrides": {},
+                    "locals_count": 0,
+                }
+            )
+            action_object["content_count"] += 1
+        elif child.tag == "{http://www.group-finity.com/Mascot}ActionReference":
+            if action_type not in [ACTION_TYPE.Sequence, ACTION_TYPE.Select]:
+                print(f"{' ' * depth}Warning: Action type {action_type} does not support nested actions")
+                continue
+            actionref = parse_action_reference(child, action_definitions, programs_defs)
+            action_object["content"].append(actionref)
+            action_object["content_count"] += 1
+
+        elif child.tag == "{http://www.group-finity.com/Mascot}Animation":
+            if action_type in [ACTION_TYPE.Sequence, ACTION_TYPE.Select]:
+                print(f"{' ' * depth}Warning: Action type {action_type} does not support animations")
+                continue
+            animation_obj = parse_animation(child, programs_defs)
+            action_object["content"].append(animation_obj)
+            action_object["content_count"] += 1
+
+    for attrib_name, attrib_value in action.attrib.items():
+        if attrib_name in MASCOT_VAR_NAMES:
+            action_object["local_variables"][f"mascot.{attrib_name}"] = programs_defs.index(attrib_value)
+            action_object["local_variables_count"] += 1
+        if attrib_name == "TargetBehavior":
+            action_object["target_behavior"] = attrib_value
+        if attrib_name == "BornBehavior":
+            action_object["born_behavior"] = attrib_value
+        if attrib_name == "SelectBehavior":
+            action_object["select_behavior"] = attrib_value
+        if attrib_name == "Affordance":
+            action_object["affordance"] = attrib_value
+        if attrib_name == "TransformMascot":
+            action_object["transform_target"] = attrib_value
+        if attrib_name == "Behavior":
+            action_object["behavior"] = attrib_value
+        if attrib_name == "BornMascot":
+            action_object["born_mascot"] = attrib_value
+
+    if action_object["name"] in action_definitions:
+        raise SyntaxError(f"Action {action_object['name']} redefinition")
+
+    if action_object["local_variables"].pop("mascot.Duration", None):
+        action_object["local_variables_count"] -= 1
+
+    if action_object["local_variables"].pop("mascot.Loop", None):
+        action_object["local_variables_count"] -= 1
+
+    action_definitions[action_object["name"]] = action_object
+    return action_object
+
+
+def parse_action_list(actions_list: ElementTree.Element, action_definitions: dict, programs_defs: list[str]):
+    for action in actions_list:
+        if action.tag == "{http://www.group-finity.com/Mascot}Action":
+            action_object = parse_action(action, action_definitions, programs_defs)
+        else:
+            raise SyntaxError("Invalid XML format")
+
+def behavior_to_ref(behavior: dict) -> dict:
+    behavior_reference = {
+        "name": behavior["name"],
+        "frequency": behavior["frequency"],
+    }
+
+    return behavior_reference
+
+def parse_behavior(behavior: ElementTree.Element, behavior_definitions: dict, action_definitions: dict, programs_defs: list[str]) -> dict:
+    global INLINED_BEHAVIOUR_AUTOINCREMENT
+
+    behavior_object = {
+        "name": behavior.attrib.get("Name", None),
+        "action": None,
+        "next_behavior_list": [],
+        "next_behavior_list_count": 0,
+        "hidden": False,
+        "condition": programs_defs.index(behavior.attrib.get("Condition")) if behavior.attrib.get("Condition") else None,
+        "is_conditioner": False,
+        "next_behavior_list_add": True,
+        "frequency": int(behavior.attrib.get("Frequency", 0))
+    }
+
+    if behavior.tag == "{http://www.group-finity.com/Mascot}Condition":
+        behavior_object["name"] = f"___CONDITION_{INLINED_BEHAVIOUR_AUTOINCREMENT}"
+        INLINED_BEHAVIOUR_AUTOINCREMENT += 1
+        behavior_object["is_conditioner"] = True
+        behavior_object["hidden"] = True
+        behavior_object["frequency"] = 0
+
+        for child in behavior:
+            try:
+                new_behavior = parse_behavior(child, behavior_definitions, action_definitions, programs_defs)
+                behavior_object["next_behavior_list"].append(behavior_to_ref(new_behavior))
+                behavior_object["next_behavior_list_count"] += 1
+            except RedefinitionError:
+                behavior_reference = {
+                    "name": child.attrib.get("Name"),
+                    "frequency": int(child.attrib.get("Frequency", 0)),
+                }
+                behavior_object["next_behavior_list"].append(behavior_reference)
+                behavior_object["next_behavior_list_count"] += 1
+
+    elif behavior.tag == "{http://www.group-finity.com/Mascot}Behavior":
+        for child in behavior:
+            if child.tag == "{http://www.group-finity.com/Mascot}NextBehaviorList":
+                if child.attrib.get("Add", "true") == "false":
+                    behavior_object["next_behavior_list_add"] = False
+                for subchild in child:
+                    if subchild.tag == "{http://www.group-finity.com/Mascot}Behavior":
+                        try:
+                            new_behavior = parse_behavior(subchild, behavior_definitions, action_definitions, programs_defs)
+                            behavior_object["next_behavior_list"].append(behavior_to_ref(new_behavior))
+                            behavior_object["next_behavior_list_count"] += 1
+                        except RedefinitionError:
+                            behavior_reference = {
+                                "name": subchild.attrib.get("Name"),
+                                "frequency": int(subchild.attrib.get("Frequency", 0)),
+                            }
+                            behavior_object["next_behavior_list"].append(behavior_reference)
+                            behavior_object["next_behavior_list_count"] += 1
+                    elif subchild.tag == "{http://www.group-finity.com/Mascot}Condition":
+                        new_behavior = parse_behavior(subchild, behavior_definitions, action_definitions, programs_defs)
+                        behavior_object["next_behavior_list"].append(behavior_to_ref(new_behavior))
+                        behavior_object["next_behavior_list_count"] += 1
+                    elif subchild.tag == "{http://www.group-finity.com/Mascot}BehaviorReference":
+                        behavior_reference = {
+                            "name": subchild.attrib.get("Name"),
+                            "frequency": int(subchild.attrib.get("Frequency", 0)),
+                        }
+                        behavior_object["next_behavior_list"].append(behavior_reference)
+                        behavior_object["next_behavior_list_count"] += 1
+                    else:
+                        raise SyntaxError("Invalid XML format")
+        if behavior.get("Action") is not None:
+            behavior_object["action"] = action_definitions[behavior.get("Action")]
+        else:
+            behavior_object["action"] = behavior_object["name"]
+        if behavior_object["action"] not in action_definitions:
+            raise SyntaxError(f"Action {behavior_object['action']} not defined")
+    else:
+        raise SyntaxError("Invalid XML format")
+
+    if behavior_object["name"] in behavior_definitions:
+        raise RedefinitionError(f"Behavior {behavior_object['name']} redefinition")
+    behavior_definitions[behavior_object["name"]] = behavior_object
+    return behavior_object
+
+
+
+def parse_behavior_list(behavior: ElementTree.Element, behavior_definitions: dict, action_definitions: dict, programs_defs: list[str], root_behavior_list) -> dict:
+    for child in behavior:
+        if child.tag == "{http://www.group-finity.com/Mascot}Behavior" or child.tag == "{http://www.group-finity.com/Mascot}Condition":
+            behavior_object = parse_behavior(child, behavior_definitions, action_definitions, programs_defs)
+            root_behavior_list.append(behavior_to_ref(behavior_object))
+        else:
+            raise SyntaxError("Invalid XML format")
+
+
+def shmconv(actions: str, behaviors: str) -> tuple[list[str], dict, tuple[dict,list]]:
+
+    """
+    This functions shimeji-ee defintions to json format
+    :param actions: str: actions in shimeji-ee format (xml)
+    :param behaviors: str: behaviors in shimeji-ee format (xml)
+    """
+
+    # Read the xml strings provided as args
+    try:
+        actions_parsed = ElementTree.fromstring(actions)
+        behaviors_parsed = ElementTree.fromstring(behaviors)
+
+        acts = {}
+        behs = {}
+
+        # First find all attrubutes recursively
+        # All attributes that starts with ${ or #{ considered as a candidate for program
+        # All attributes that does not start with ${ or #{ but set some sort of value to mascot's variable considered as a candidate for program
+
+        # Assuming actions_parsed and behaviors_parsed are already defined XML trees
+        program_candidates = []
+
+        # Iterate over actions
+        for element in actions_parsed.iter():
+            for attr_name, attr_content in element.attrib.items():
+                if attr_content in program_candidates:
+                    continue
+                if attr_name in MASCOT_VAR_NAMES:
+                    program_candidates.append(attr_content)
+                elif attr_content.startswith("${") or attr_content.startswith("#{"):
+                    program_candidates.append(attr_content)
+
+        # Iterate over behaviors
+        for element in behaviors_parsed.iter():
+            for attr_name, attr_content in element.attrib.items():
+                if attr_content in program_candidates:
+                    continue
+                if attr_name in MASCOT_VAR_NAMES:
+                    program_candidates.append(attr_content)
+                elif attr_content.startswith("${") or attr_content.startswith("#{"):
+                    program_candidates.append(attr_content)
+
+        # Now parse the actions
+        action_definitions = {}
+        for action_list in actions_parsed.findall("ns:ActionList", namespaces=namespace):
+            parse_action_list(action_list, action_definitions, program_candidates)
+
+        # Sort action by type: definitions should be always first
+        action_definitions = dict(sorted(action_definitions.items(), key=lambda item: item[1]["type"] in ["Sequence", "Select"]))
+
+        # Parse behaviors
+        behavior_definitions = {}
+        root_behavior_list = []
+        for behavior_list in behaviors_parsed.findall("ns:BehaviorList", namespaces=namespace):
+            parse_behavior_list(behavior_list, behavior_definitions, action_definitions, program_candidates, root_behavior_list)
+
+        # Sanity checks:
+        if "Fall" not in behavior_definitions:
+            print("Warning: Fall behavior not defined; It is required for execution and will not load")
+        if "Dragged" not in behavior_definitions:
+            print("Warning: Dragged behavior not defined; It is required for execution and will not load")
+        if "Thrown" not in behavior_definitions:
+            print("Warning: Thrown behavior not defined; It is required for execution and will not load")
+
+
+        return program_candidates, action_definitions, (behavior_definitions, root_behavior_list)
+    except Exception as e:
+           raise e
+           raise SyntaxError("Invalid XML format")
+    # raise NotImplementedError("Not implemented yet")
+
+
+import pathlib
+import shutil
+
+
+OPCODE_TO_STR = {
+    OP.ERR: "00",
+    OP.RET: "01",
+    OP.LOADL: "10", # IMMEDIATE ARGUMENT 1 BYTE INDEX
+    OP.LOADE: "11", # IMMEDIATE ARGUMENT 1 BYTE INDEX
+    OP.STORE: "12", # IMMEDIATE ARGUMENT 4 BYTE LE FLOAT
+    OP.ADD: "20",
+    OP.SUB: "21",
+    OP.MUL: "22",
+    OP.DIV: "23",
+    OP.MOD: "24",
+    OP.POW: "25",
+    OP.AND: "30",
+    OP.OR: "31",
+    OP.XOR: "32",
+    OP.NOT: "33",
+    OP.LSHIFT: "34",
+    OP.RSHIFT: "35",
+    OP.LT: "40",
+    OP.LE: "41",
+    OP.GT: "42",
+    OP.GE: "43",
+    OP.EQ: "44",
+    OP.NE: "45",
+    OP.LAND: "50",
+    OP.LOR: "51",
+    OP.LNOT: "52",
+    OP.BQZ: "60", # IMMEDIATE ARGUMENT 1 BYTE OFFSET
+    OP.BNZ: "61", # IMMEDIATE ARGUMENT 1 BYTE OFFSET
+    OP.JMP: "62", # IMMEDIATE ARGUMENT 1 BYTE OFFSET
+    OP.CALL: "70" # IMMEDIATE ARGUMENT 1 BYTE INDEX
+}
+
+def bytes_to_hex(b: bytes) -> str:
+    return ''.join(f"{byte:02x}".upper() for byte in b)
+
+def float_to_hex(f: float) -> str:
+    bytes = struct.pack('<f', float(f))
+    return bytes_to_hex(bytes)
+
+def int_to_hex(i: int) -> str:
+    bytes = struct.pack('<I', i)
+    return bytes_to_hex(bytes)
+
+
+def char_to_hex(c: int) -> str:
+    bytes = struct.pack('<B', c)
+    return bytes_to_hex(bytes)
+
+class Compiler:
+    @staticmethod
+    def emit(program: Program, json_kwargs: dict = {}) -> dict:
+        data = {
+            "instructions": "",
+            "local_vars": program.local_vars,
+            "global_vars": program.global_vars,
+            "functions": program.functions
+        }
+
+        try:
+            for index, instruction in enumerate(program.instructions):
+                data["instructions"] += OPCODE_TO_STR[instruction[0]]
+                if instruction[0] in [OP.LOADL, OP.LOADE, OP.CALL]:
+                    data["instructions"] += char_to_hex(instruction[1])
+                elif instruction[0] in [OP.STORE]:
+                    hexdata = float_to_hex(instruction[1])
+                    data["instructions"] += hexdata[:2]
+                    data["instructions"] += "13"
+                    data["instructions"] += hexdata[2:4]
+                    data["instructions"] += "14"
+                    data["instructions"] += hexdata[4:6]
+                    data["instructions"] += "15"
+                    data["instructions"] += hexdata[6:]
+                    data["instructions"] += "8000"
+                elif instruction[0] in [OP.BQZ, OP.BNZ, OP.JMP]:
+                    # We need to calculate the offset
+                    offset = 0
+                    for ofinstr in program.instructions[index+1:index+instruction[1]]:
+                        if ofinstr[0] in [OP.STORE]:
+                            offset += 2 # First byte
+                            offset += 2 # Second byte
+                            offset += 2 # Third byte
+                            offset += 2 # Fourth byte
+                            offset += 2 # Push
+                        else:
+                            offset += 2
+
+                    data["instructions"] += char_to_hex(offset)
+                else:
+                    data["instructions"] += "00"
+        except:
+            print(f"Error at instruction {index}: {instruction}")
+            raise
+
+        return data
+
+
+    @staticmethod
+    def compile(expression: str, locals: list = [], globals: list = [], funcs: list = []) -> Program:
+        tokens = Tokenizer.tokenize(expression)
+        root_node = AbstractSyntaxTree(tokens).parse()
+        program = Program.from_ast(root_node, locals, globals, funcs)
+        if expression.startswith("#{"):
+            program.evaluate_once = False
+        return program
+
+    @staticmethod
+    def compile_shimeji(root_dir: str | pathlib.Path, **kwargs) -> tuple[str, str, str]:
+
+        """
+        root_dir: str | pathlib.Path
+            The root directory of the mascot
+        returns:
+            programs: str - json serialized programs
+            actions: str - json serialized actions
+            behaviors: str - json serialized behaviors
+            images: list[str] - list of image paths
+        """
+
+        # Is root_dir exists?
+        if not pathlib.Path(root_dir).exists():
+            raise FileNotFoundError(f"Directory {root_dir} does not exist.")
+
+        if not pathlib.Path(root_dir).is_dir():
+            raise NotADirectoryError(f"{root_dir} is not a directory.")
+
+        if not (pathlib.Path(root_dir) / "conf").exists():
+            raise FileNotFoundError(f"Directory {root_dir} does not contain a 'conf' directory.")
+
+        if not (pathlib.Path(root_dir) / "conf").is_dir():
+            raise NotADirectoryError(f"{root_dir}/conf is not a directory.")
+
+        if not (pathlib.Path(root_dir) / "conf" / "actions.xml").exists():
+            raise FileNotFoundError(f"Directory {root_dir}/conf does not contain an 'actions.xml' file.")
+
+        if not (pathlib.Path(root_dir) / "conf" / "actions.xml").is_file():
+            raise FileNotFoundError(f"{root_dir}/conf/actions.xml is not a file.")
+
+        if not (pathlib.Path(root_dir) / "conf" / "behaviors.xml").exists():
+            raise FileNotFoundError(f"Directory {root_dir}/conf does not contain a 'behaviors.xml' file.")
+
+        if not (pathlib.Path(root_dir) / "conf" / "behaviors.xml").is_file():
+            raise FileNotFoundError(f"{root_dir}/conf/behaviors.xml is not a file.")
+
+        with open(pathlib.Path(root_dir) / "conf" / "actions.xml", "r") as f:
+            actions = f.read()
+
+        with open(pathlib.Path(root_dir) / "conf" / "behaviors.xml", "r") as f:
+            behaviors = f.read()
+
+        programs_defintions, actions_defintions, (behaviors_defintions, root_behaviors) = shmconv(actions, behaviors)
+
+        programs = {
+            "programs": []
+        }
+        for index, program_definition in enumerate(programs_defintions):
+            program = Compiler.compile(program_definition, [], [], [])
+            program_serialized = Compiler.emit(program)
+
+            # print("original", program_definition)
+            # print(f"locals {program.local_vars}")
+
+            programs["programs"].append({
+                "name": index,
+                "symtab_l": program.local_vars,
+                "symtab_g": program.global_vars,
+                "symtab_f": program.functions,
+                "instructions": program_serialized["instructions"],
+                "evaluate_once": program.evaluate_once
+            })
+
+        actions = [
+            action_definition for action_definition in actions_defintions.values()
+        ]
+
+        behaviors = {
+            "definitions": [x for x in behaviors_defintions.values()],
+            "root_behavior_list": root_behaviors
+        }
+
+        return json.dumps(programs, indent=kwargs.get("indent", 4)), json.dumps(actions, indent=kwargs.get("indent", 4)), json.dumps(behaviors, indent=kwargs.get("indent", 4))
+
+class ShimejiCtl:
+    def __init__(self):
+        self.parser = argparse.ArgumentParser(description='Control utility for wl_shimeji overlay')
+        # self.parser.add_argument('action', help='Action to perform', choices=['summon', 'dismiss', 'stop', 'load-config', 'info', 'foreground', 'list', "convert"])
+        self.parser.add_argument('--config-path', help='Path to the configurations directory', default=f'{os.environ.get("HOME", "/root")}/.local/share/wl_shimeji')
+
+        # Subparsers
+        self.subparsers = self.parser.add_subparsers(dest='action')
+        self.summon_parser = self.subparsers.add_parser('summon', help='Summon a shimeji')
+        self.summon_parser.add_argument('shimeji', help='Shimeji name')
+        self.summon_parser.add_argument('--select', help='Select a specific spot', action='store_true')
+
+        self.dismiss_parser = self.subparsers.add_parser('dismiss', help='Dismiss a shimeji')
+        self.dismiss_parser.add_argument('--all', help='Dismiss all shimejis', action='store_true')
+        self.dismiss_parser.add_argument('--all-other', help='Dismiss all shimejis except the specified one', action='store_true')
+        self.dismiss_parser.add_argument('--ignore-type', help='Dismiss all shimejis except the specified type', action='store_true')
+
+        self.stop_parser = self.subparsers.add_parser('stop', help='Stop a shimeji')
+
+        self.load_config_parser = self.subparsers.add_parser('load-config', help='Load a configuration')
+        self.load_config_parser.add_argument('config', help='Shimeji config file path')
+
+        self.info_parser = self.subparsers.add_parser('info', help='Get information about a shimeji')
+
+        self.foreground_parser = self.subparsers.add_parser('foreground', help='Launch wl_shimeji in the foreground')
+
+        self.list_parser = self.subparsers.add_parser('list', help='List all shimejis')
+
+        self.converter_parser = self.subparsers.add_parser("convert", help="Convert Shimeji-ee xml format to wl_shimeji json format")
+
+        self.converter_parser.add_argument("root_dir", type=str, help="Root directory of the mascot")
+        self.converter_parser.add_argument("--output", "-o", type=str, help="Output directory")
+        self.converter_parser.add_argument("--indent", "-i", type=int, default=4, help="Indentation level for the output JSON files")
+        self.converter_parser.add_argument("--assets_dir", "-a", type=str, help="Assets directory", default="assets")
+        self.converter_parser.add_argument("--name", type=str, help="Name of the mascot")
+        self.converter_parser.add_argument("--author", type=str, help="Author of the mascot")
+        self.converter_parser.add_argument("--version", type=str, help="Version of the mascot", default="0.0.1")
+        self.converter_parser.add_argument("--description", type=str, help="Description of the mascot")
+        self.converter_parser.add_argument("--display_name", '-n', type=str, help="Display name of the mascot")
+        self.converter_parser.add_argument("--custom_actions_path", type=str, help="Path to custom actions file")
+        self.converter_parser.add_argument("--custom_behaviors_path", type=str, help="Path to custom behaviors file")
+        self.converter_parser.add_argument("--custom_programs_path", type=str, help="Path to custom programs file")
+        self.converter_parser.add_argument("-f", "--force", help="Overwrite mascot", action='store_true')
+
+        self.args = self.parser.parse_args()
+
+        self.config_path = self.args.config_path
+        self.shimeji_path = f'{self.config_path}/shimejis'
+
+        os.makedirs(self.shimeji_path, exist_ok=True)
+
+        self.known_shimejis: Generator[tuple[str,str]] = self.get_known_shimejis()
+
+        self.overlay_process = None
+
+    def get_known_shimejis(self):
+        for name in os.listdir(self.shimeji_path):
+            if os.path.isdir(f'{self.shimeji_path}/{name}'):
+                if os.path.exists(f'{self.shimeji_path}/{name}/manifest.json'):
+                    with open(f'{self.shimeji_path}/{name}/manifest.json', 'r') as f:
+                        try:
+                            manifest = json.load(f)
+                        except json.JSONDecodeError:
+                            continue
+                        names = (manifest.get("name", None), manifest.get("display_name", manifest.get("name", None)))
+                        if names[0] is not None:
+                            yield names
+
+    def connect_to_overlay(self, extra_argv: list[str] = [], exclusive: bool = False, quiet: bool = True, do_not_start: bool = False):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+        try:
+            sock.connect(f'{os.environ.get("XDG_RUNTIME_DIR", "/tmp")}/shimeji-overlayd.sock')
+            if exclusive:
+                return None
+        except ConnectionRefusedError:
+            # Overlay not running, start it
+            if do_not_start:
+                return None
+            sock, childsock = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            self.overlay_process = subprocess.Popen(['shimeji-overlayd', "-c", self.config_path, *extra_argv, "-cfd", str(childsock.fileno())], pass_fds=[childsock.fileno()],
+                stdout=subprocess.DEVNULL if quiet else None,
+                stderr=subprocess.DEVNULL if quiet else None,
+                start_new_session=True
+            )
+            childsock.close()
+            status = sock.recv(1025+8)
+            if status[0] != 0x7f:
+                if status[0] == 0xFF:
+                    print("[ERROR] Overlay failed to start")
+                    error_len = struct.unpack("@Q", status[1:9])[0]
+                    error_msg = status[9:9+error_len].decode("utf-8")
+                    for line in error_msg.split("\n"):
+                        print(f"[ERROR] {line}")
+                    raise SystemExit(1)
+                else:
+                    print("[ERROR] Overlay failed to start")
+                    raise SystemExit(1)
+        return sock
+
+    def run(self):
+        if self.args.action == 'summon':
+            self.summon()
+        elif self.args.action == 'dismiss':
+            self.dismiss()
+        elif self.args.action == 'stop':
+            self.stop()
+        elif self.args.action == 'load-config':
+            self.load_config()
+        elif self.args.action == 'info':
+            self.info()
+        elif self.args.action == 'foreground':
+            self.foreground()
+        elif self.args.action == 'list':
+            self.list()
+        elif self.args.action == "convert":
+            self.convert()
+
+    def summon(self):
+        extra_argv = []
+
+        if self.args.shimeji == "all":
+            extra_argv.append("-se")
+            self.connect_to_overlay(extra_argv=extra_argv, exclusive=True)
+            return
+        elif self.args.shimeji not in [name[0] for name in self.known_shimejis]:
+            print(f"[ERROR] Shimeji {self.args.shimeji} not found")
+            raise SystemExit(1)
+        message = b""
+
+        if self.args.select:
+            message = b"\x01"+len(self.args.shimeji).to_bytes(1, "big")+self.args.shimeji.encode("utf-8")
+        else:
+            message = b"\x0e"+len(self.args.shimeji).to_bytes(1, "big")+self.args.shimeji.encode("utf-8")
+
+        sock = self.connect_to_overlay(extra_argv=extra_argv)
+        if sock is None:
+            return
+
+        sock.send(message)
+        response = sock.recv(2)
+
+        if response[0] != 0x3:
+            print("[ERROR] Failed to summon shimeji: Invalid response")
+            raise SystemExit(1)
+
+        if response[1] != 0:
+            print("[ERROR] Failed to summon shimeji: ", end="")
+            if response[1] == 0x1:
+                print("Shimeji prototype not found")
+            elif response[1] == 0x2:
+                print("Somehow environment is NULL")
+            elif response[1] == 0x3:
+                print("Failed to create mascot")
+            else:
+                print("Unknown error")
+            raise SystemExit(1)
+
+    def dismiss(self):
+        sock = self.connect_to_overlay(do_not_start=True)
+        if sock is None:
+            print("[ERROR] Overlay not running")
+            raise SystemExit(1)
+
+        # TODO: All modes, not only select
+        message = b"\x02\x00"
+        sock.send(message)
+        status = sock.recv(2)
+        if status[0] != 0x4:
+            print("[ERROR] Failed to dismiss shimeji: Invalid response")
+            raise SystemExit(1)
+
+        if status[1] != 0:
+            print("[ERROR] Failed to dismiss shimeji: ", end="")
+            if status[1] == 0x2:
+                print("Somehow subsurface is NULL")
+            elif status[1] == 0x3:
+                print("Clicked not on mascot")
+            else:
+                print("Unknown error")
+            raise SystemExit(1)
+
+    def stop(self):
+        sock = self.connect_to_overlay(do_not_start=True)
+        if sock is None:
+            print("[ERROR] Overlay not running")
+            raise SystemExit(1)
+
+        message = b"\x04\x00"
+        sock.send(message)
+        status = sock.recv(2)
+
+    def load_config(self):
+        print("Not implemented")
+
+    def info(self):
+        print("Not implemented")
+
+    def foreground(self):
+        sock = self.connect_to_overlay(exclusive=True, quiet=False)
+        if sock is None:
+            print("[ERROR] Overlay is already running")
+            raise SystemExit(1)
+
+        try:
+            while True: time.sleep(1)
+        except KeyboardInterrupt:
+            sock.close()
+            if self.overlay_process.wait(1) is None:
+                self.overlay_process.terminate()
+                if self.overlay_process.wait(1) is None:
+                    self.overlay_process.kill()
+
+    def list(self):
+        for name in self.known_shimejis:
+            print(f"{name[1]} (\"{name[0]}\")")
+
+    def convert(self):
+        try:
+            programs, actions, behaviors = Compiler.compile_shimeji(self.args.root_dir, indent=self.args.indent)
+        except Exception as e:
+            raise e
+            print(f"Error: {e}")
+            raise SystemExit(1)
+
+        output_path = f"{self.shimeji_path}/{pathlib.Path(self.args.root_dir).name}"
+
+        if self.args.output:
+            output_path = self.args.output
+
+        if os.path.exists(output_path) and not self.args.force:
+            print("Following directory already exists, aborting...")
+            raise SystemExit(1)
+
+        os.makedirs(pathlib.Path(output_path), exist_ok=True)
+        manifest = {}
+        if self.args.name:
+            manifest["name"] = self.args.name
+        else:
+            manifest["name"] = f"Shimeji.{pathlib.Path(self.args.root_dir).name}"
+        if self.args.author:
+            manifest["author"] = self.args.author
+        if self.args.version:
+            manifest["version"] = self.args.version
+        if self.args.description:
+            manifest["description"] = self.args.description
+        if self.args.display_name:
+            manifest["display_name"] = self.args.display_name
+        manifest["programs"] = "programs.json" or self.args.custom_programs_path
+        manifest["actions"] = "actions.json" or self.args.custom_actions_path
+        manifest["behaviors"] = "behaviors.json" or self.args.custom_behaviors_path
+        manifest["assets"] = self.args.assets_dir or "assets"
+
+        with open(pathlib.Path(output_path) / "manifest.json", "w") as f:
+            f.write(json.dumps(manifest, indent=self.args.indent))
+
+        with open(pathlib.Path(output_path) / "programs.json", "w") as f:
+            f.write(programs)
+
+        with open(pathlib.Path(output_path) / "actions.json", "w") as f:
+            f.write(actions)
+
+        with open(pathlib.Path(output_path) / "behaviors.json", "w") as f:
+            f.write(behaviors)
+
+        os.makedirs(pathlib.Path(output_path) / self.args.assets_dir, exist_ok=True)
+        for file in pathlib.Path(self.args.root_dir).glob("*.png"):
+            if file.is_file():
+                shutil.copy(file, pathlib.Path(output_path) / self.args.assets_dir)
+
+        print(f"Compilation successful. Output files are in {output_path}")
+
+
+if __name__ == "__main__":
+    ShimejiCtl().run()
