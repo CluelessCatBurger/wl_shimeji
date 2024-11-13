@@ -979,6 +979,8 @@ def parse_action(action: ElementTree.Element, action_definitions: dict, programs
             action_object["behavior"] = attrib_value
         if attrib_name == "BornMascot":
             action_object["born_mascot"] = attrib_value
+        if attrib_name == "TargetLook":
+            action_object["target_look"] = {"true": True, "false": False}.get(attrib_value, False)
 
     if action_object["name"] in action_definitions:
         raise SyntaxError(f"Action {action_object['name']} redefinition")
@@ -1409,7 +1411,7 @@ class ShimejiCtl:
 
         os.makedirs(self.shimeji_path, exist_ok=True)
 
-        self.known_shimejis: Generator[tuple[str,str]] = self.get_known_shimejis()
+        self.known_shimejis: list[tuple[str,str]] = list(self.get_known_shimejis())
 
         self.overlay_process = None
 
@@ -1474,6 +1476,8 @@ class ShimejiCtl:
             self.list()
         elif self.args.action == "convert":
             self.convert()
+        else:
+            self.parser.print_help()
 
     def summon(self):
         extra_argv = []
@@ -1482,7 +1486,7 @@ class ShimejiCtl:
             extra_argv.append("-se")
             self.connect_to_overlay(extra_argv=extra_argv, exclusive=True)
             return
-        elif self.args.shimeji not in [name[0] for name in self.known_shimejis]:
+        if self.args.shimeji not in [name[0] for name in self.known_shimejis] and f"Shimeji.{self.args.shimeji}" not in [name[0] for name in self.known_shimejis]:
             print(f"[ERROR] Shimeji {self.args.shimeji} not found")
             raise SystemExit(1)
         message = b""

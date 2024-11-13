@@ -289,7 +289,7 @@ struct mascot_action {
     const char* transform_target; // prototype to transform to
     const char* born_mascot; // Mascot to be born
     const char* behavior; // Behavior to be set
-
+    bool target_look; // Invert looking direction of target mascot if it matches ours
 };
 
 enum mascot_tick_result {

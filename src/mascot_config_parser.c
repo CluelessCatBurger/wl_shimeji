@@ -1519,6 +1519,14 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
             struct json_string_s* transform_target = (struct json_string_s*)celement->value->payload;
             action_obj->transform_target = strndup(transform_target->string, transform_target->string_size);
         }
+        // Get target_look
+        if (!strncmp("target_look", celement->name->string, celement->name->string_size) && strlen("target_look") == celement->name->string_size) {
+            if (celement->value->type != json_type_true && celement->value->type != json_type_false) {
+                WARN("Target look target must be a boolean");
+                goto action_generator_fail;
+            }
+            action_obj->target_look = celement->value->type == json_type_true;
+        }
         // Get content array, content is array of objects
         if (!strncmp("content", celement->name->string, celement->name->string_size) && strlen("content") == celement->name->string_size) {
             if (celement->value->type != json_type_array) {

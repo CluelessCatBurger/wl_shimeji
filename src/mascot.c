@@ -150,11 +150,13 @@ bool mascot_interact(struct mascot* mascot, struct mascot* target, const char* a
 
     pthread_mutex_lock(&target->tick_lock);
     mascot_announce_affordance(target, NULL);
-    mascot_set_behavior(mascot, my_behavior_ptr);
-    mascot_set_behavior(target, your_behavior_ptr);
     target->X->value = mascot->X->value;
     target->Y->value = mascot->Y->value;
-    target->LookingRight->value.i = mascot->LookingRight->value.i;
+    mascot_set_behavior(mascot, my_behavior_ptr);
+    mascot_set_behavior(target, your_behavior_ptr);
+    if (mascot->current_action.action->target_look && mascot->LookingRight->value.i == target->LookingRight->value.i) {
+        target->LookingRight->value.i = !mascot->LookingRight->value.i;
+    }
     pthread_mutex_unlock(&target->tick_lock);
     mascot_unlink(target);
     return true;
