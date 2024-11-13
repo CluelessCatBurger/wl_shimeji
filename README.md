@@ -5,8 +5,8 @@ This is a reimplementation of the [Shimeji](https://kilkakon.com/shimeji/) for W
 <p align="center">
   <img src="./docs/screenshot.png" style="width: 100%;">
 </p>
-##### Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](https://x.com/Monikaphobia)
 
+Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](https://x.com/Monikaphobia)
 
 # Requirements
 
