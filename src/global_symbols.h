@@ -369,18 +369,8 @@ bool math_trunc(struct expression_vm_state* state)
 bool mascot_anchor(struct expression_vm_state* state)
 {
     if (state->sp + 2 >= 255) return false;
-    if (!state->ref_mascot->current_animation) goto mascot_ancor_fail;
-    if (state->ref_mascot->current_animation->frame_count > state->ref_mascot->frame_index) {
-        if (state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]) {
-            state->stack[state->sp] = state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]->anchor_x;
-            state->stack[state->sp + 1] = state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]->anchor_y;
-            state->sp += 2;
-            return true;
-        }
-    }
-mascot_ancor_fail:
-    state->stack[state->sp] = 0;
-    state->stack[state->sp + 1] = 0;
+    state->stack[state->sp] = state->ref_mascot->X->value.i;
+    state->stack[state->sp + 1] = state->ref_mascot->Y->value.i;
     state->sp += 2;
     return true;
 }
@@ -389,16 +379,7 @@ mascot_ancor_fail:
 bool mascot_anchor_x(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    if (!state->ref_mascot->current_animation) return mascot_noop(state);
-    if (state->ref_mascot->current_animation->frame_count > state->ref_mascot->frame_index) {
-        if (state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]) {
-            state->stack[state->sp] = state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]->anchor_x;
-            state->sp++;
-            return true;
-        }
-    }
-    state->stack[state->sp] = 0;
-    state->sp++;
+    state->stack[state->sp++] = state->ref_mascot->X->value.i;
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ANCHOR_X { "mascot.anchor.x", mascot_anchor_x }
@@ -406,16 +387,7 @@ bool mascot_anchor_x(struct expression_vm_state* state)
 bool mascot_anchor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    if (!state->ref_mascot->current_animation) return mascot_noop(state);
-    if (state->ref_mascot->current_animation->frame_count > state->ref_mascot->frame_index) {
-        if (state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]) {
-            state->stack[state->sp] = state->ref_mascot->current_animation->frames[state->ref_mascot->frame_index]->anchor_y;
-            state->sp++;
-            return true;
-        }
-    }
-    state->stack[state->sp] = 0;
-    state->sp++;
+    state->stack[state->sp++] = state->ref_mascot->Y->value.i;
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ANCHOR_Y { "mascot.anchor.y", mascot_anchor_y }
@@ -798,10 +770,17 @@ bool mascot_noop(struct expression_vm_state* state)
 bool target_anchor(struct expression_vm_state* state)
 {
     if (state->sp + 2 >= 255) return false;
-    // state->stack[state->sp] = state->ref_mascot->target_anchor;
-    state->stack[state->sp++] = 0.0;
-    state->stack[state->sp] = 0.0;
-    state->sp++;
+    if (state->ref_mascot->target_mascot) {
+        state->stack[state->sp] = state->ref_mascot->target_mascot->X->value.i;
+        state->sp++;
+        state->stack[state->sp] = state->ref_mascot->target_mascot->Y->value.i;
+        state->sp++;
+    } else {
+        state->stack[state->sp] = 0.0;
+        state->sp++;
+        state->stack[state->sp] = 0.0;
+        state->sp++;
+    }
     return true;
 }
 #define GLOBAL_SYM_TARGET_ANCHOR { "target.anchor", target_anchor }
@@ -809,9 +788,11 @@ bool target_anchor(struct expression_vm_state* state)
 bool target_anchor_x(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    // state->stack[state->sp] = state->ref_mascot->target_anchor.x;
-    state->stack[state->sp] = 0.0;
-    state->sp++;
+    if (state->ref_mascot->target_mascot) {
+        state->stack[state->sp++] = state->ref_mascot->target_mascot->X->value.i;
+    } else {
+        state->stack[state->sp++] = 0.0;
+    }
     return true;
 }
 #define GLOBAL_SYM_TARGET_ANCHOR_X { "target.anchor.x", target_anchor_x }
@@ -819,9 +800,11 @@ bool target_anchor_x(struct expression_vm_state* state)
 bool target_anchor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    // state->stack[state->sp] = state->ref_mascot->target_anchor.y;
-    state->stack[state->sp] = 0.0;
-    state->sp++;
+    if (state->ref_mascot->target_mascot) {
+        state->stack[state->sp++] = state->ref_mascot->target_mascot->Y->value.i;
+    } else {
+        state->stack[state->sp++] = 0.0;
+    }
     return true;
 }
 #define GLOBAL_SYM_TARGET_ANCHOR_Y { "target.anchor.y", target_anchor_y }
