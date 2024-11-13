@@ -196,31 +196,15 @@ struct mascot_action_next fall_action_next(struct mascot* mascot, struct mascot_
 
     enum environment_border_type btype = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
 
-    if (mascot->VelocityX->value.f != 0.0) {
-        DEBUG("FALL X CHECK");
-        if (btype == environment_border_type_wall) {
-            if (mascot->LookingRight->value.i && mascot->VelocityX->value.f > 0.0 && mascot->X->value.i != 0) {
-                result.status = mascot_tick_next;
-                return result;
-            } else if (mascot->VelocityX->value.f < 0.0 && mascot->X->value.i != (int32_t)environment_screen_width(mascot->environment)) {
-                result.status = mascot_tick_next;
-                return result;
-            }
-        }
-    } else {
-        if (btype != environment_border_type_none) {
-            result.status = mascot_tick_next;
-            return result;
-        }
+    if (btype == environment_border_type_wall) {
+        result.status = mascot_tick_next;
+        return result;
     }
     if (mascot->VelocityY->value.f != 0.0) {
-        DEBUG("FALL Y CHECK");
         if (btype == environment_border_type_ceiling && mascot->VelocityY->value.f < 0.0) {
-            DEBUG("FALL CEILING");
             result.status = mascot_tick_next;
             return result;
         } else if (btype == environment_border_type_floor && mascot->VelocityY->value.f > 0.0) {
-            DEBUG("FALL FLOOR");
             result.status = mascot_tick_next;
             return result;
         }
