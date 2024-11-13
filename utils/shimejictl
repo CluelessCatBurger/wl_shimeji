@@ -1432,7 +1432,7 @@ class ShimejiCtl:
             sock.connect(f'{os.environ.get("XDG_RUNTIME_DIR", "/tmp")}/shimeji-overlayd.sock')
             if exclusive:
                 return None
-        except ConnectionRefusedError:
+        except (ConnectionRefusedError, FileNotFoundError):
             # Overlay not running, start it
             if do_not_start:
                 return None

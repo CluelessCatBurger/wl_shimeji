@@ -52,6 +52,9 @@
 static mascot_prototype_store* prototype_store = NULL;
 static struct mascot_affordance_manager affordance_manager = {0};
 
+char socket_path[PATH_MAX] = {0};
+char config_path[PATH_MAX] = {0};
+
 struct {
     environment_t** entries;
     uint8_t* entry_states;
@@ -122,7 +125,7 @@ struct {
 } mascot_store = {0};
 
 
-size_t get_config_path(char* pathbuf, size_t pathbuf_len)
+size_t get_default_config_path(char* pathbuf, size_t pathbuf_len)
 {
     // Get home directory
     const char *home = secure_getenv("HOME");
@@ -133,8 +136,6 @@ size_t get_config_path(char* pathbuf, size_t pathbuf_len)
 
 size_t get_mascots_path(char* pathbuf, size_t pathbuf_len)
 {
-    char config_path[PATH_MAX];
-    get_config_path(config_path, sizeof(config_path));
     return snprintf(pathbuf, pathbuf_len, "%s/shimejis", config_path);
 }
 
@@ -751,13 +752,11 @@ void* mascot_manager_thread(void* arg)
 
 int main(int argc, const char** argv)
 {
-    char socket_path[128];
-    char mascots_path[256];
     int inhereted_fd = -1;
     int fds_count = 0;
     bool spawn_everything = false;
 
-    get_mascots_path(mascots_path, 256);
+    get_default_config_path(config_path, 256);
     get_default_socket_path(socket_path, 128);
 
     // Arguments:
@@ -781,7 +780,7 @@ int main(int argc, const char** argv)
                 fprintf(stderr, "Error: missing argument for --config-dir\n");
                 return 1;
             }
-            strncpy(mascots_path, argv[i + 1], 255);
+            strncpy(config_path, argv[i + 1], 255);
             i++;
         } else if (strcmp(argv[i], "-cfd") == 0 || strcmp(argv[i], "--caller-fd") == 0) {
             if (i + 1 >= argc) {
@@ -812,17 +811,9 @@ int main(int argc, const char** argv)
         }
     }
 
-    struct stat st = {0};
-    if (stat(mascots_path, &st) == -1) {
-        mkdir(mascots_path, 0700);
-    }
-    if (stat(mascots_path, &st) == -1) {
-        ERROR("Failed to create mascots directory");
-        return 1;
-    }
-
     char mascots_path_packages[256] = {0};
-    int slen = snprintf(mascots_path_packages, 255, "%s/shimejis", mascots_path);
+    int slen = get_mascots_path(mascots_path_packages, 255);
+    struct stat st = {0};
     if (slen < 0 || slen >= 255) {
         ERROR("Provided config directory path is too long!");
         return 1;
@@ -892,13 +883,13 @@ int main(int argc, const char** argv)
     }
 
     // Load mascot protos
-    DIR* dir = opendir(mascots_path);
+    DIR* dir = opendir(mascots_path_packages);
     if (dir) {
         struct dirent* ent;
         while ((ent = readdir(dir)) != NULL) {
             if (ent->d_type == DT_DIR) {
                 char proto_path[256];
-                int slen = snprintf(proto_path, 255, "%s/%s", mascots_path, ent->d_name);
+                int slen = snprintf(proto_path, 255, "%s/%s", mascots_path_packages, ent->d_name);
                 if (slen < 0 || slen >= 255) {
                     WARN("Mascot prototype path is too long! Skipping...");
                     continue;
@@ -909,11 +900,11 @@ int main(int argc, const char** argv)
         closedir(dir);
     } else {
         char buf[1025+sizeof(size_t)];
-        size_t strlen = snprintf(buf+1+sizeof(size_t), 1024, "Failed to open mascots directory: %s", mascots_path);
+        size_t strlen = snprintf(buf+1+sizeof(size_t), 1024, "Failed to open mascots directory: %s", mascots_path_packages);
         memcpy(buf+1, &strlen, sizeof(size_t));
         buf[0] = 0xFF;
         send(inhereted_fd, buf, 1025+sizeof(size_t), 0);
-        ERROR("Failed to open mascots directory: %s", mascots_path);
+        ERROR("Failed to open mascots directory: %s", mascots_path_packages);
     }
 
     // Spawn mascots if requested
