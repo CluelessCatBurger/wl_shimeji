@@ -119,14 +119,11 @@ struct mascot_action_next scanmove_action_next(struct mascot* mascot, struct mas
         }
     }
 
-    // Check if target is reached
-
-    // Target is reached when target is within 10 px radius
     int32_t distance = sqrt((mascot->target_mascot->X->value.i - mascot->X->value.i) * (mascot->target_mascot->X->value.i - mascot->X->value.i) + (mascot->target_mascot->Y->value.i - mascot->Y->value.i) * (mascot->target_mascot->Y->value.i - mascot->Y->value.i));
-
-    // Now calculate how close target should be by it's velocity (on x and y)
     int32_t target_velocity = sqrt(mascot->target_mascot->VelocityX->value.f * mascot->target_mascot->VelocityX->value.f + mascot->target_mascot->VelocityY->value.f * mascot->target_mascot->VelocityY->value.f)*2;
     int32_t my_velocity = sqrt(mascot->VelocityX->value.f * mascot->VelocityX->value.f + mascot->VelocityY->value.f * mascot->VelocityY->value.f)*2;
+
+    // Destination is reached if distance is less than or equal mascots velocity*2
     if (distance <= fmax(target_velocity, my_velocity)) {
         struct mascot* target = mascot->target_mascot;
         scanmove_action_clean(mascot);
@@ -245,8 +242,9 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
     bool looking_right = mascot->LookingRight->value.i;
 
     if (target_x != INT32_MAX && target_x != -1) {
-        if (posx < target_x) looking_right = true;
-        else if (posx > target_x) looking_right = false;
+        if (target_x != posx) {
+            looking_right = target_x > posx;
+        }
         if (target_x < 0) {
             target_x = 0;
         }

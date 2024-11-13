@@ -101,11 +101,11 @@ struct mascot_action_next scanjump_action_next(struct mascot* mascot, struct mas
         }
     }
 
-    // Target is reached when target is within 10 px radius
     int32_t distance = sqrt((mascot->target_mascot->X->value.i - mascot->X->value.i) * (mascot->target_mascot->X->value.i - mascot->X->value.i) + (mascot->target_mascot->Y->value.i - mascot->Y->value.i) * (mascot->target_mascot->Y->value.i - mascot->Y->value.i));
-
     int32_t target_velocity = sqrt(mascot->target_mascot->VelocityX->value.f * mascot->target_mascot->VelocityX->value.f + mascot->target_mascot->VelocityY->value.f * mascot->target_mascot->VelocityY->value.f)*2;
     int32_t my_velocity = sqrt(mascot->VelocityX->value.f * mascot->VelocityX->value.f + mascot->VelocityY->value.f * mascot->VelocityY->value.f)*2;
+
+    // Destination is reached if distance is less than or equal velocity*2
     if (distance <= fmax(target_velocity, my_velocity)) {
         struct mascot* target = mascot->target_mascot;
         scanjump_action_clean(mascot);
