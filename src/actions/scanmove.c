@@ -223,8 +223,9 @@ struct mascot_action_next scanmove_action_next(struct mascot* mascot, struct mas
 
 enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
-    UNUSED(tick);
     UNUSED(actionref);
+    UNUSED(tick);
+
 
     enum mascot_tick_result oob_check = mascot_out_of_bounds_check(mascot);
     if (oob_check != mascot_tick_ok) {
@@ -242,9 +243,8 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
     bool looking_right = mascot->LookingRight->value.i;
 
     if (target_x != INT32_MAX && target_x != -1) {
-        if (target_x != posx) {
-            looking_right = target_x > posx;
-        }
+        if (posx < target_x) looking_right = true;
+        else if (posx > target_x) looking_right = false;
         if (target_x < 0) {
             target_x = 0;
         }
@@ -267,27 +267,26 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
         }
     }
     if (target_y != INT32_MAX && target_y != -1) {
-        bool down = posy < target_y;
+        bool down = posy > target_y;
 
         if (target_y < 0) {
             mascot->TargetY->value.i = target_y = 0;
-
         }
         else if (target_y > (int32_t)environment_screen_height(mascot->environment)) {
             mascot->TargetY->value.i = target_y = (int32_t)environment_screen_height(mascot->environment);
         }
 
         if (down) {
-            if (posy + velocity_y >= target_y) {
-                posy = target_y;
-            } else {
-                posy += velocity_y;
-            }
-        } else {
             if (posy - velocity_y <= target_y) {
                 posy = target_y;
             } else {
                 posy -= velocity_y;
+            }
+        } else {
+            if (posy + velocity_y >= target_y) {
+                posy = target_y;
+            } else {
+                posy += velocity_y;
             }
        }
     }
@@ -297,16 +296,15 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
         mascot_reattach_pose(mascot);
     }
 
-    if ((posx == target_x) && (posy == target_y)) {
+    if ((posx == target_x || target_x == -1 ) && (posy == target_y || target_y == -1)) {
+        DEBUG("<Mascot:%s:%u> Reached target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, posx, posy, target_x, target_y);
         environment_subsurface_move(mascot->subsurface, posx, posy, true);
         return mascot_tick_reenter;
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
+        DEBUG("<Mascot:%s:%u> Scanmoving towards target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, posx, posy);
         enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true);
-        if (move_result == environment_move_clamped) {
-            return mascot_tick_reenter;
-        }
     }
     return mascot_tick_ok;
 }

@@ -401,7 +401,6 @@ static void environment_on_pointer_button(void* data, struct wl_pointer* pointer
                 if (active_pointer.cursor_shape_device && active_pointer.pointer) {
                     wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
                 }
-                INFO("SELECTED surface %p, at %d,%d", envs, active_pointer.x, yconv(envs->env, active_pointer.y));
             }
         }
     }

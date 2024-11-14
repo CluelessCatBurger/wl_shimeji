@@ -698,7 +698,7 @@ class Program:
             self.instructions.append((OP.JMP, 0))
             self.instructions[branch_instr] = (OP.BQZ, len(self.instructions)-branch_instr)
             self._compile(node.false_expr)
-            self.instructions[jump_instr] = (OP.JMP, len(self.instructions)-jump_instr-1)
+            self.instructions[jump_instr] = (OP.JMP, len(self.instructions)-jump_instr)
 
 
         elif isinstance(node, FunctionCallNode):
@@ -1594,6 +1594,8 @@ class ShimejiCtl:
         if os.path.exists(output_path) and not self.args.force:
             print("Following directory already exists, aborting...")
             raise SystemExit(1)
+        elif os.path.exists(output_path) and self.args.force:
+            shutil.rmtree(output_path, ignore_errors=True)
 
         os.makedirs(pathlib.Path(output_path), exist_ok=True)
         manifest = {}

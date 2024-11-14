@@ -152,11 +152,20 @@ bool mascot_interact(struct mascot* mascot, struct mascot* target, const char* a
     mascot_announce_affordance(target, NULL);
     target->X->value = mascot->X->value;
     target->Y->value = mascot->Y->value;
-    mascot_set_behavior(mascot, my_behavior_ptr);
-    mascot_set_behavior(target, your_behavior_ptr);
+
+    DEBUG("<Mascot:%s:%u> Interact: I: %s, You: %s", mascot->prototype->name, mascot->id, my_behavior, your_behavior);
+    DEBUG("<Mascot:%s:%u> Interact: My looking right: %d, Your looking right: %d", mascot->prototype->name, mascot->id, mascot->LookingRight->value.i, target->LookingRight->value.i);
+
+    // Do it before mascot_set_behavior, as it clears mascot->current_action.action
     if (mascot->current_action.action->target_look && mascot->LookingRight->value.i == target->LookingRight->value.i) {
         target->LookingRight->value.i = !mascot->LookingRight->value.i;
     }
+
+    mascot_set_behavior(mascot, my_behavior_ptr);
+    mascot_set_behavior(target, your_behavior_ptr);
+
+    DEBUG("<Mascot:%s:%u> Interact: My new looking right: %d, Your new looking right: %d", mascot->prototype->name, mascot->id, mascot->LookingRight->value.i, target->LookingRight->value.i);
+
     pthread_mutex_unlock(&target->tick_lock);
     mascot_unlink(target);
     return true;

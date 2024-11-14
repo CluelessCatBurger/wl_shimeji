@@ -132,3 +132,8 @@ enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const st
     }
     return mascot_check_condition(mascot, condition);
 }
+
+int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y)
+{
+    return environment_screen_height(mascot->environment) - screen_y;
+}

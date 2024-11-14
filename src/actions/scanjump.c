@@ -105,7 +105,7 @@ struct mascot_action_next scanjump_action_next(struct mascot* mascot, struct mas
     int32_t target_velocity = sqrt(mascot->target_mascot->VelocityX->value.f * mascot->target_mascot->VelocityX->value.f + mascot->target_mascot->VelocityY->value.f * mascot->target_mascot->VelocityY->value.f)*2;
     int32_t my_velocity = sqrt(mascot->VelocityX->value.f * mascot->VelocityX->value.f + mascot->VelocityY->value.f * mascot->VelocityY->value.f)*2;
 
-    // Destination is reached if distance is less than or equal velocity*2
+    // Destination is reached if distance is less than or equal mascots velocity*2
     if (distance <= fmax(target_velocity, my_velocity)) {
         struct mascot* target = mascot->target_mascot;
         scanjump_action_clean(mascot);

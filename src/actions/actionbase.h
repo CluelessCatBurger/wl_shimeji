@@ -40,5 +40,6 @@ enum mascot_tick_result mascot_check_condition(struct mascot *mascot, const stru
 enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const struct mascot_expression* condition);
 enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot);
 enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot_action_reference* actionref, mascot_action_clean clean_func);
+int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y);
 
 #endif
