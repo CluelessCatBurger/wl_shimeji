@@ -370,7 +370,7 @@ void remove_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
 
     pthread_mutex_unlock(&mascot_store.mutex);
 
-    char buff[2] = {4, 4}; // Command REMOVE_RESULT, result SUCCESS
+    char buff[2] = {4, 0}; // Command REMOVE_RESULT, result SUCCESS
     send(fd, buff, 2, 0);
 }
 

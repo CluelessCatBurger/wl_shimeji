@@ -1540,7 +1540,7 @@ class ShimejiCtl:
             elif status[1] == 0x3:
                 print("Clicked not on mascot")
             else:
-                print("Unknown error")
+                print(f"Unknown error, code is {status[1]}")
             raise SystemExit(1)
 
     def stop(self):
