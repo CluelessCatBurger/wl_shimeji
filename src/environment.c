@@ -375,7 +375,7 @@ static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t s
         {} else {
             if (button == BTN_LEFT) {
                 if (active_pointer.grabbed_surface) {
-                    mascot_drag_ended(active_pointer.grabbed_surface->mascot);
+                    mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
                 }
                 active_pointer.button_state &= ~1;
             } else if (button == BTN_MIDDLE) {
@@ -453,7 +453,7 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
             if (active_pointer.grabbed_surface) {
                 active_pointer.dx = (active_pointer.x - active_pointer.temp_dx);
                 active_pointer.dy = (active_pointer.y - active_pointer.temp_dy);
-                mascot_drag_ended(active_pointer.grabbed_surface->mascot);
+                mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
             }
         } else if (button == BTN_MIDDLE) {
             active_pointer.button_state &= ~2;
@@ -722,7 +722,7 @@ static void on_tool_removed(void* data, struct zwp_tablet_tool_v2* tool)
     UNUSED(data);
     zwp_tablet_tool_v2_destroy(tool);
     if (active_pointer.device_type == CURRENT_DEVICE_TYPE_PEN && active_pointer.button_state & 1 << 4 && active_pointer.grabbed_surface) {
-        mascot_drag_ended(active_pointer.grabbed_surface->mascot);
+        mascot_drag_ended(active_pointer.grabbed_surface->mascot, false);
         active_pointer.button_state &= ~(1 << 4);
         active_pointer.grabbed_surface = NULL;
     }
@@ -748,7 +748,7 @@ static void on_tool_proximity_out(void* data, struct zwp_tablet_tool_v2* tool)
     UNUSED(tool);
 
     if (active_pointer.grabbed_surface) {
-        mascot_drag_ended(active_pointer.grabbed_surface->mascot);
+        mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
         active_pointer.grabbed_surface = NULL;
     }
     active_pointer.above_surface = NULL;
@@ -781,7 +781,7 @@ static void on_tool_up(void* data, struct zwp_tablet_tool_v2* tool)
     UNUSED(tool);
 
     if (active_pointer.grabbed_surface) {
-        mascot_drag_ended(active_pointer.grabbed_surface->mascot);
+        mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
         active_pointer.grabbed_surface = NULL;
         active_pointer.above_surface = NULL;
     }

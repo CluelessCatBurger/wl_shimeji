@@ -459,7 +459,7 @@ enum mascot_tick_result mascot_tick(struct mascot* mascot, uint32_t tick, struct
 void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* behavior);
 
 bool mascot_drag_started(struct mascot* mascot, environment_pointer_t* pointer);
-bool mascot_drag_ended(struct mascot* mascot);
+bool mascot_drag_ended(struct mascot* mascot, bool throw);
 bool mascot_moved(struct mascot* mascot, int32_t x, int32_t y);
 bool mascot_environment_changed(struct mascot* mascot, environment_t* env);
 void mascot_attach_affordance_manager(struct mascot* mascot, struct mascot_affordance_manager* manager);

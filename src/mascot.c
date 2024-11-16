@@ -720,8 +720,7 @@ enum mascot_tick_result mascot_tick(struct mascot* mascot, uint32_t tick, struct
             return mascot_tick_dispose;
         } else if (action_result == mascot_tick_escape) {
             environment_subsurface_release(mascot->subsurface);
-            mascot_drag_ended(mascot);
-            // mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            mascot_drag_ended(mascot, false);
         }
     }
     if (iteration >= 64) {
@@ -759,10 +758,11 @@ bool mascot_drag_started(struct mascot* mascot, environment_pointer_t* pointer)
     return true;
 }
 
-bool mascot_drag_ended(struct mascot* mascot)
+bool mascot_drag_ended(struct mascot* mascot, bool throw)
 {
     mascot->dragged = false;
-    mascot_set_behavior(mascot, mascot->prototype->thrown_behavior);
+    if (throw) mascot_set_behavior(mascot, mascot->prototype->thrown_behavior);
+    else mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
     environment_subsurface_set_offset(mascot->subsurface, 0, 0);
     environment_subsurface_release(mascot->subsurface);
     environment_subsurface_move(mascot->subsurface, mascot->X->value.i, mascot->Y->value.i-120, true);
