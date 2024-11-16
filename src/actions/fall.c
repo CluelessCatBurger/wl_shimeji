@@ -113,9 +113,6 @@ enum mascot_tick_result fall_action_init(struct mascot *mascot, struct mascot_ac
     mascot->action_duration = tick + 5; // Watchdog
 
     mascot_announce_affordance(mascot, actionref->action->affordance);
-
-    INFO("<Mascot:%s:%u> Initialized action %s", mascot->prototype->name, mascot->id, actionref->action->name);
-
     return mascot_tick_ok;
 
 }

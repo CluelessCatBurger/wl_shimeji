@@ -553,6 +553,8 @@ enum mascot_tick_result mascot_behavior_next(struct mascot* mascot, uint32_t tic
         return mascot_tick_ok;
     }
 
+    if (mascot->current_behavior) INFO("<Mascot:%s:%u> Completed behavior \"%s\"", mascot->prototype->name, mascot->id, mascot->current_behavior->name);
+
     mascot_build_behavior_pool(mascot, NULL, false);
     if (mascot->current_behavior) mascot_build_behavior_pool(mascot, mascot->current_behavior, mascot->current_behavior->add_behaviors);
 
@@ -573,6 +575,8 @@ enum mascot_tick_result mascot_behavior_next(struct mascot* mascot, uint32_t tic
     }
 
     mascot_set_behavior(mascot, next_behavior);
+
+    INFO("<Mascot:%s:%u> Initialized behavior \"%s\"", mascot->prototype->name, mascot->id, mascot->current_behavior->name);
 
     return mascot_tick_reenter;
 }
