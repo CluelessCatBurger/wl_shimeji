@@ -2,9 +2,12 @@
 override SRCDIR := src
 override BUILDDIR := build
 override UTILS_DIR := utils
+override ASSETS_DIR := assets
 override TARGET = $(BUILDDIR)/shimeji-overlayd
 
-override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -O2 -Wall -Wextra -fno-strict-aliasing
+PREFIX ?= /usr/local
+
+override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -O2 -Wall -Wextra -fno-strict-aliasing -DWL_SHIMEJI_ASSETS_PATH='"$(PREFIX)/share/wl-shimeji/assets"'
 override LDFLAGS += $(shell pkg-config wayland-client spng --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
@@ -82,15 +85,15 @@ all: $(TARGET)
 clean:
 	@-rm -r $(BUILDDIR) $(TARGET)
 
-PREFIX ?= /usr/local
-
 .NOTPARALLEL: $(WL_PROTO_DIR)/%.o
 
 .PHONY: install
 install: $(TARGET)
 	install -d $(DESTDIR)$(PREFIX)/bin/
+	install -d $(DESTDIR)$(PREFIX)/share/wl-shimeji/assets/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
+	install -m644 $(ASSETS_DIR)/* $(DESTDIR)$(PREFIX)/share/wl-shimeji/assets/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
