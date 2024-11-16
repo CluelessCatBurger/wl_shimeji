@@ -962,16 +962,60 @@ static void mascot_init_(struct mascot* mascot, const struct mascot_prototype* p
 
 }
 
-bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y)
+bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button)
 {
 
     if (!mascot) return false;
-
     if (!mascot->current_animation) return false;
-
     if (!mascot->current_animation->hotspots_count) return false;
 
     pthread_mutex_lock(&mascot->tick_lock);
+
+    struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(mascot, x, y);
+    if (!hotspot) {
+        pthread_mutex_unlock(&mascot->tick_lock);
+        return false;
+    }
+
+    if (hotspot->button != button) {
+        pthread_mutex_unlock(&mascot->tick_lock);
+        return false;
+    }
+
+    const struct mascot_behavior* behavior = mascot_prototype_behavior_by_name(mascot->prototype, hotspot->behavior);
+    if (!behavior) {
+        pthread_mutex_unlock(&mascot->tick_lock);
+        return false;
+    }
+
+    mascot->hotspot_behavior = behavior;
+    mascot_set_behavior(mascot, behavior);
+
+    pthread_mutex_unlock(&mascot->tick_lock);
+    return true;
+}
+
+
+bool mascot_hotspot_hold(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button, bool release) {
+    if (!mascot) return false;
+
+    if (release) {
+        mascot->hotspot_active = false;
+        mascot->hotspot_behavior = NULL;
+        return true;
+    }
+
+    bool res = mascot_hotspot_click(mascot, x, y, button);
+    if (res) {
+        mascot->hotspot_active = true;
+    }
+    return res;
+}
+
+struct mascot_hotspot* mascot_hotspot_by_pos(struct mascot* mascot, int32_t x, int32_t y) {
+    if (!mascot) return NULL;
+    if (!mascot->current_animation) return NULL;
+    if (!mascot->current_animation->hotspots_count) return NULL;
 
     for (uint16_t i = 0; i < mascot->current_animation->hotspots_count; i++)
     {
@@ -993,36 +1037,14 @@ bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y)
                 continue;
             }
         }
-        if (hotspot->behavior) {
-            const struct mascot_behavior* behavior = mascot_prototype_behavior_by_name(mascot->prototype, hotspot->behavior);
-            mascot->hotspot_behavior = behavior;
-            if (behavior) {
-                mascot_set_behavior(mascot, behavior);
-                pthread_mutex_unlock(&mascot->tick_lock);
-                return true;
-            }
-            pthread_mutex_unlock(&mascot->tick_lock);
-            return false;
+        if (!hotspot->behavior) {
+            continue;
         }
+        const struct mascot_behavior* behavior = mascot_prototype_behavior_by_name(mascot->prototype, hotspot->behavior);
+        if (!behavior) {
+            continue;
+        }
+        return hotspot;
     }
-
-    pthread_mutex_unlock(&mascot->tick_lock);
-    return false;
-}
-
-
-bool mascot_hotspot_hold(struct mascot* mascot, int32_t x, int32_t y, bool release) {
-    if (!mascot) return false;
-
-    if (release) {
-        mascot->hotspot_active = false;
-        mascot->hotspot_behavior = NULL;
-        return true;
-    }
-
-    bool res = mascot_hotspot_click(mascot, x, y);
-    if (res) {
-        mascot->hotspot_active = true;
-    }
-    return res;
+    return NULL;
 }

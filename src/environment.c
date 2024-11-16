@@ -347,16 +347,81 @@ static void on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t t
     }
 }
 
+static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
+{
+    UNUSED(pointer);
+    UNUSED(time);
+
+    active_pointer.temp_x = wl_fixed_to_int(x);
+    active_pointer.temp_y = wl_fixed_to_int(y);
+    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
+
+    if (!env_surface || active_pointer.select_active) {
+        active_pointer.x = wl_fixed_to_int(x);
+        active_pointer.y = wl_fixed_to_int(y);
+    } else {
+        active_pointer.mascot_x = wl_fixed_to_int(x);
+        active_pointer.mascot_y = wl_fixed_to_int(y);
+        struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y);
+        if (hotspot) {
+            switch (hotspot->cursor) {
+                case mascot_hotspot_cursor_pointer:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
+                    break;
+
+                case mascot_hotspot_cursor_hand:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
+                    break;
+
+                case mascot_hotspot_cursor_crosshair:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
+                    break;
+
+                case mascot_hotspot_cursor_text:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+                    break;
+
+                case mascot_hotspot_cursor_move:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
+                    break;
+
+                case mascot_hotspot_cursor_wait:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
+                    break;
+
+                case mascot_hotspot_cursor_help:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
+                    break;
+
+                case mascot_hotspot_cursor_progress:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
+                    break;
+
+                case mascot_hotspot_cursor_deny:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+                    break;
+
+                default:
+                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+                    break;
+            }
+            if (active_pointer.cursor_shape_device && active_pointer.pointer) {
+                wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
+            }
+        } else if (!active_pointer.grabbed_surface && !active_pointer.select_active) {
+            active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+            if (active_pointer.cursor_shape_device && active_pointer.pointer) {
+                wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
+            }
+        }
+    }
+
+
+}
+
 static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
     UNUSED(data);
-
-    if (active_pointer.grabbed_surface && state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        return;
-    }
-    if (!active_pointer.grabbed_surface && state == WL_POINTER_BUTTON_STATE_RELEASED && button == BTN_LEFT) {
-        return;
-    }
 
     if (active_pointer.above_surface) {
         struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
@@ -414,9 +479,15 @@ static void mascot_on_pointer_leave(void* data, struct wl_pointer* pointer, uint
 
     environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
 
-    if (active_pointer.button_state & 2) {
-        active_pointer.button_state &= ~2;
-        mascot_hotspot_hold(env_surface->mascot, 0, 0, true);
+    if (!active_pointer.grabbed_surface) {
+        active_pointer.button_state = 0;
+        mascot_hotspot_hold(env_surface->mascot, 0, 0, 0, true);
+        if (!active_pointer.grabbed_surface && !active_pointer.select_active) {
+            active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+            if (active_pointer.cursor_shape_device && active_pointer.pointer) {
+                wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
+            }
+        }
     }
 }
 
@@ -426,42 +497,103 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
     environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
 
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        enum mascot_hotspot_button pressed_button = -1;
         if (button == BTN_LEFT) {
-            if (env_surface) {
-                if (env_surface->env->root_environment_subsurface != env_surface && !active_pointer.select_active) {
-                    mascot_drag_started(env_surface->mascot, &active_pointer);
-                    active_pointer.button_state |= 1;
-                    active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-                    active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
-                } else {
-                    environment_on_pointer_button(data, pointer, serial, time, button, state);
-                }
-            }
+            pressed_button = mascot_hotspot_button_left;
+            active_pointer.button_state |= 1;
         } else if (button == BTN_MIDDLE) {
-            if (env_surface) {
-                if (env_surface->env->root_environment_subsurface != env_surface) {
-                    mascot_hotspot_hold(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, false);
-                    active_pointer.button_state |= 2;
-                    active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-                    active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
+            pressed_button = mascot_hotspot_button_middle;
+            active_pointer.button_state |= 2;
+        } else if (button == BTN_RIGHT) {
+            pressed_button = mascot_hotspot_button_right;
+            active_pointer.button_state |= 4;
+        }
+        if (env_surface) {
+            if (env_surface->mascot) {
+                active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
+                active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
+            }
+            if (env_surface->env->root_environment_subsurface != env_surface && !active_pointer.select_active) {
+                bool hotspot_press_result = mascot_hotspot_hold(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, pressed_button, false);
+                if (!hotspot_press_result && pressed_button == mascot_hotspot_button_left) {
+                    mascot_drag_started(env_surface->mascot, &active_pointer);
                 }
+            } else {
+                environment_on_pointer_button(data, pointer, serial, time, button, state);
             }
         }
     } else {
+        enum mascot_hotspot_button released_button = -1;
         if (button == BTN_LEFT) {
             active_pointer.button_state &= ~1;
-            if (active_pointer.grabbed_surface) {
-                active_pointer.dx = (active_pointer.x - active_pointer.temp_dx);
-                active_pointer.dy = (active_pointer.y - active_pointer.temp_dy);
-                mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
-            }
+            released_button = mascot_hotspot_button_left;
         } else if (button == BTN_MIDDLE) {
             active_pointer.button_state &= ~2;
-            mascot_hotspot_hold(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, true);
+            released_button = mascot_hotspot_button_middle;
+        } else if (button == BTN_RIGHT) {
+            active_pointer.button_state &= ~4;
+            released_button = mascot_hotspot_button_right;
+        }
+
+        if (active_pointer.grabbed_surface && released_button == mascot_hotspot_button_left) {
+            active_pointer.dx = (active_pointer.x - active_pointer.temp_dx);
+            active_pointer.dy = (active_pointer.y - active_pointer.temp_dy);
+            mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
+        } else {
+            if (env_surface->mascot) {
+                if (env_surface->mascot->hotspot_active) {
+                    mascot_hotspot_hold(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, released_button, true);
+                    struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y);
+                    if (hotspot) {
+                        switch (hotspot->cursor) {
+                            case mascot_hotspot_cursor_pointer:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
+                                break;
+
+                            case mascot_hotspot_cursor_hand:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
+                                break;
+
+                            case mascot_hotspot_cursor_crosshair:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
+                                break;
+
+                            case mascot_hotspot_cursor_text:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+                                break;
+
+                            case mascot_hotspot_cursor_move:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
+                                break;
+
+                            case mascot_hotspot_cursor_wait:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
+                                break;
+
+                            case mascot_hotspot_cursor_help:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
+                                break;
+
+                            case mascot_hotspot_cursor_progress:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
+                                break;
+
+                            case mascot_hotspot_cursor_deny:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+                                break;
+
+                            default:
+                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+                                break;
+                        }
+                        if (active_pointer.cursor_shape_device && active_pointer.pointer) {
+                            wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
+                        }
+                    }
+                }
+            }
         }
     }
-
-
 }
 
 static void on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
@@ -587,7 +719,7 @@ static void mascot_on_pointer_axis(void* data, struct wl_pointer* pointer, uint3
     UNUSED(value);
     environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
     if (env_surface) {
-        mascot_hotspot_click(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y);
+        mascot_hotspot_click(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, mascot_hotspot_button_middle);
     }
 }
 
@@ -646,7 +778,8 @@ static const struct wl_pointer_listener mascot_pointer_listener = {
     .button = mascot_on_pointer_button,
     .frame = mascot_on_pointer_frame,
     .axis = mascot_on_pointer_axis,
-    .leave = mascot_on_pointer_leave
+    .leave = mascot_on_pointer_leave,
+    .motion = mascot_on_pointer_motion,
 };
 
 static void on_seat_capabilities(void* data, struct wl_seat* seat, uint32_t capabilities)
@@ -1589,6 +1722,11 @@ void environment_subsurface_drag(environment_subsurface_t* surface, environment_
     surface->drag_pointer = pointer;
     pointer->grabbed_surface = surface;
 
+    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
+    if (active_pointer.cursor_shape_device && active_pointer.pointer) {
+        wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
+    }
+
     active_pointer.temp_dx = active_pointer.x;
     active_pointer.temp_dy = active_pointer.y;
     active_pointer.last_tick = 0;
@@ -1607,6 +1745,11 @@ void environment_subsurface_release(environment_subsurface_t* surface) {
 
     if (surface->drag_pointer) {
         surface->drag_pointer->grabbed_surface = NULL;
+    }
+
+    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+    if (active_pointer.cursor_shape_device && active_pointer.pointer) {
+        wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
     }
 
     surface->env->pending_commit = true;

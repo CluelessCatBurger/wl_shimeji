@@ -861,6 +861,9 @@ struct mascot_hotspot* parse_hotspot(struct json_object_s* hotspot)
 
     char behavior[128] = {0};
 
+    hotspot_obj->button = mascot_hotspot_button_middle;
+    hotspot_obj->cursor = mascot_hotspot_cursor_hand;
+
     struct json_object_element_s* element = hotspot->start;
     while (element) {
         struct json_object_element_s* celement = element;
@@ -932,6 +935,54 @@ struct mascot_hotspot* parse_hotspot(struct json_object_s* hotspot)
                 hotspot_obj->shape = mascot_hotspot_shape_rectangle;
             } else {
                 WARN("Unknown shape type");
+                goto hotspot_generator_fail;
+            }
+        }
+        else if (!strncmp("button", celement->name->string, celement->name->string_size) && strlen("button") == celement->name->string_size) {
+            if (celement->value->type != json_type_string) {
+                WARN("button must be a string");
+                goto hotspot_generator_fail;
+            }
+
+            struct json_string_s* type = (struct json_string_s*)celement->value->payload;
+            if (strncasecmp("Left", type->string, type->string_size) == 0) {
+                hotspot_obj->button = mascot_hotspot_button_left;
+            } else if (strncasecmp("Middle", type->string, type->string_size) == 0) {
+                hotspot_obj->button = mascot_hotspot_button_middle;
+            } else if (strncasecmp("Right", type->string, type->string_size) == 0) {
+                hotspot_obj->button = mascot_hotspot_button_right;
+            } else {
+                WARN("Unknown button type");
+                goto hotspot_generator_fail;
+            }
+        }
+        else if (!strncmp("cursor", celement->name->string, celement->name->string_size) && strlen("cursor") == celement->name->string_size) {
+            if (celement->value->type != json_type_string) {
+                WARN("cursor must be a string");
+                goto hotspot_generator_fail;
+            }
+
+            struct json_string_s* type = (struct json_string_s*)celement->value->payload;
+            if (strncasecmp("Default", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_hand;
+            } else if (strncasecmp("Hand", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_hand;
+            } else if (strncasecmp("Crosshair", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_crosshair;
+            } else if (strncasecmp("Move", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_move;
+            } else if (strncasecmp("Text", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_text;
+            } else if (strncasecmp("Wait", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_wait;
+            } else if (strncasecmp("Help", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_help;
+            } else if (strncasecmp("Progress", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_progress;
+            } else if (strncasecmp("NotAllowed", type->string, type->string_size) == 0) {
+                hotspot_obj->cursor = mascot_hotspot_cursor_deny;
+            } else {
+                WARN("Unknown cursor type");
                 goto hotspot_generator_fail;
             }
         }

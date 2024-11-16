@@ -203,6 +203,24 @@ struct mascot_pose {
     uint32_t duration; // Default duration of the frame is 1/40 of a second (??? maybe faster)
 };
 
+enum mascot_hotspot_cursor {
+    mascot_hotspot_cursor_pointer,
+    mascot_hotspot_cursor_hand,
+    mascot_hotspot_cursor_crosshair,
+    mascot_hotspot_cursor_move,
+    mascot_hotspot_cursor_text,
+    mascot_hotspot_cursor_wait,
+    mascot_hotspot_cursor_help,
+    mascot_hotspot_cursor_progress,
+    mascot_hotspot_cursor_deny
+};
+
+enum mascot_hotspot_button {
+    mascot_hotspot_button_left,
+    mascot_hotspot_button_middle,
+    mascot_hotspot_button_right
+};
+
 struct mascot_hotspot {
     enum {
         mascot_hotspot_shape_ellipse,
@@ -211,6 +229,8 @@ struct mascot_hotspot {
     int32_t x, y;
     int32_t width, height;
     const char* behavior;
+    enum mascot_hotspot_cursor cursor;
+    enum mascot_hotspot_button button;
 };
 
 // Animation is a sequence of frames, possibly with conditions
@@ -393,6 +413,7 @@ struct mascot {
     bool force_pop_next_action;
 
     bool hotspot_active;
+    const struct mascot_hotspot* hotspot;
     const struct mascot_behavior* hotspot_behavior;
 
     environment_t* environment; // opaque pointer to the environment
@@ -451,29 +472,45 @@ struct mascot* mascot_new(
     float air_drag_x, float air_drag_y, bool looking_right, environment_t* env
 );
 
-void mascot_unlink(struct mascot* mascot);
+// Reference counting
+void mascot_unlink(struct mascot* mascot); // When refcounter is 0, mascot is destroyed
 void mascot_link(struct mascot* mascot);
 
+// Standard tick routine
 enum mascot_tick_result mascot_tick(struct mascot* mascot, uint32_t tick, struct mascot_tick_return* tick_return);
 
+// Behavior management
 void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* behavior);
 
+// Dragging
 bool mascot_drag_started(struct mascot* mascot, environment_pointer_t* pointer);
-bool mascot_drag_ended(struct mascot* mascot, bool throw);
+bool mascot_drag_ended(struct mascot* mascot, bool throw); // throw - if true, sets behavior to thrown
+
+// Callback for position change
 bool mascot_moved(struct mascot* mascot, int32_t x, int32_t y);
+
+// Callback for environment change (For example when mascot is moved to another output, WIP)
 bool mascot_environment_changed(struct mascot* mascot, environment_t* env);
+
+// Affordance management, used for interaction between mascots
 void mascot_attach_affordance_manager(struct mascot* mascot, struct mascot_affordance_manager* manager);
 void mascot_detach_affordance_manager(struct mascot* mascot);
 void mascot_announce_affordance(struct mascot* mascot, const char* affordance);
 struct mascot* mascot_get_target_by_affordance(struct mascot* mascot, const char* affordance);
+
+// Interact with target mascot
 bool mascot_interact(struct mascot* mascot, struct mascot* target, const char* affordance, const char* my_behavior, const char* your_behavior);
 
+// Attaches new image as mascot's buffer. Also sets velocity and etc.
 void mascot_attach_pose(struct mascot* mascot, const struct mascot_pose* pose, uint32_t tick);
-void mascot_reattach_pose(struct mascot* mascot);
+void mascot_reattach_pose(struct mascot* mascot); // Reattaches current pose, mainly used for cases where LookRight is changed
 
-bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y);
-bool mascot_hotspot_hold(struct mascot* mascot, int32_t x, int32_t y, bool release);
+// Hotspot management
+bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button);
+bool mascot_hotspot_hold(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button, bool release);
+struct mascot_hotspot* mascot_hotspot_by_pos(struct mascot* mascot, int32_t x, int32_t y);
 
+// Set action, not recommended to use directly
 enum action_set_result mascot_set_action(struct mascot* mascot, struct mascot_action_reference* actionref, bool push_stack, uint32_t tick);
 
 #endif
