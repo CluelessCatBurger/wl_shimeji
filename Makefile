@@ -1,6 +1,7 @@
 
 override SRCDIR := src
 override BUILDDIR := build
+override UTILS_DIR := utils
 override TARGET = $(BUILDDIR)/shimeji-overlayd
 
 override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -O2 -Wall -Wextra -fno-strict-aliasing
@@ -87,8 +88,9 @@ PREFIX ?= /usr/local
 
 .PHONY: install
 install: $(TARGET)
-	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(TARGET)
-	install -Dm755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
+	install -d $(DESTDIR)$(PREFIX)/bin/
+	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
+	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
