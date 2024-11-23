@@ -10,6 +10,8 @@
 #ifndef MASTER_HEADER
 #define MASTER_HEADER
 
+#define WL_SHIMEJI_VERSION "0.0.0"
+
 #if defined(GNU_EXTS) && defined(__has_attribute)
 #define GNU_ATTRIBUTE(attr) __has_attribute(attr)
 #else

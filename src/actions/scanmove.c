@@ -248,8 +248,8 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
         if (target_x < 0) {
             target_x = 0;
         }
-        else if (target_x > (int32_t)environment_screen_width(mascot->environment)) {
-            target_x = (int32_t)environment_screen_width(mascot->environment);
+        else if (target_x > (int32_t)environment_workarea_width(mascot->environment)) {
+            target_x = (int32_t)environment_workarea_width(mascot->environment);
         }
 
         if (looking_right) {
@@ -272,8 +272,8 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
         if (target_y < 0) {
             mascot->TargetY->value.i = target_y = 0;
         }
-        else if (target_y > (int32_t)environment_screen_height(mascot->environment)) {
-            mascot->TargetY->value.i = target_y = (int32_t)environment_screen_height(mascot->environment);
+        else if (target_y > (int32_t)environment_workarea_height(mascot->environment)) {
+            mascot->TargetY->value.i = target_y = (int32_t)environment_workarea_height(mascot->environment);
         }
 
         if (down) {
@@ -304,7 +304,7 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
         DEBUG("<Mascot:%s:%u> Scanmoving towards target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, posx, posy);
-        enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        environment_subsurface_move(mascot->subsurface, posx, posy, true);
     }
     return mascot_tick_ok;
 }

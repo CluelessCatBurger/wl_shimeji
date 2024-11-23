@@ -38,6 +38,7 @@
 #include <signal.h>
 #include <setjmp.h>
 #include <string.h>
+#include "plugins.h"
 
 #define MASCOT_OVERLAYD_INSTANCE_EXISTS -1
 #define MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR -2
@@ -52,8 +53,11 @@
 static mascot_prototype_store* prototype_store = NULL;
 static struct mascot_affordance_manager affordance_manager = {0};
 
-char socket_path[PATH_MAX] = {0};
-char config_path[PATH_MAX] = {0};
+char socket_path[256] = {0};
+char config_path[256] = {0};
+char plugins_path[256] = {0};
+
+struct plugin* plugins[256] = {0};
 
 struct {
     environment_t** entries;
@@ -62,6 +66,10 @@ struct {
     size_t used_count;
     pthread_mutex_t mutex;
 } environment_store = {0};
+
+jmp_buf recovery_point;
+bool should_exit = false;
+int32_t signal_code = 0;
 
 void env_new(environment_t* environment)
 {
@@ -124,6 +132,22 @@ struct {
     pthread_mutex_t mutex;
 } mascot_store = {0};
 
+// Sigaction handler for SIGSEGV and SIGINT
+void sigaction_handler(int signum, siginfo_t* info, void* context)
+{
+    UNUSED(context);
+    if (signum == SIGSEGV) {
+        WARN("Segmentation fault occurred at address %p", info->si_addr);
+        longjmp(recovery_point, 1);
+        signal_code = signum;
+    } else if (signum == SIGINT) {
+        INFO("Received SIGINT, shutting down...");
+        should_exit = true;
+    }
+    else {
+        ERROR("Unexpected signal %d received!", signum);
+    }
+}
 
 size_t get_default_config_path(char* pathbuf, size_t pathbuf_len)
 {
@@ -137,6 +161,11 @@ size_t get_default_config_path(char* pathbuf, size_t pathbuf_len)
 size_t get_mascots_path(char* pathbuf, size_t pathbuf_len)
 {
     return snprintf(pathbuf, pathbuf_len, "%s/shimejis", config_path);
+}
+
+size_t get_plugins_path(char* pathbuf, size_t pathbuf_len)
+{
+    return snprintf(pathbuf, pathbuf_len, "%s/plugins", config_path);
 }
 
 size_t get_default_socket_path(char* pathbuf, size_t pathbuf_len)
@@ -677,6 +706,13 @@ void* mascot_manager_thread(void* arg)
     UNUSED(arg);
     for (uint32_t tick = 0; ; tick++) {
         struct mascot_tick_return result = {};
+        for (size_t i = 0; i < environment_store.entry_count; i++) {
+            // if (tick % 5 != 0) break;
+            if (environment_store.entry_states[i]) {
+                struct environment* environment = environment_store.entries[i];
+                environment_pre_tick(environment, tick);
+            }
+        }
         for (size_t i = 0; i < mascot_store.entry_count; i++) {
             if (mascot_store.entry_states[i] == 0) continue;
             struct mascot* mascot = mascot_store.entries[i];
@@ -747,7 +783,20 @@ void* mascot_manager_thread(void* arg)
         pthread_mutex_unlock(&mascot_store.mutex);
         pthread_mutex_unlock(&environment_store.mutex);
         usleep(40000);
+        if (should_exit) {
+            break;
+        }
     }
+    pthread_mutex_lock(&mascot_store.mutex);
+    pthread_mutex_lock(&environment_store.mutex);
+
+    for (int i = 0; i < 256; i++) {
+        if (plugins[i]) {
+            plugin_deinit(plugins[i]);
+            plugin_close(plugins[i]);
+        }
+    }
+    exit(0);
 };
 
 int main(int argc, const char** argv)
@@ -755,16 +804,35 @@ int main(int argc, const char** argv)
     int inhereted_fd = -1;
     int fds_count = 0;
     bool spawn_everything = false;
+    int env_init_flags = 0;
+    bool disable_plugins = false;
 
     get_default_config_path(config_path, 256);
     get_default_socket_path(socket_path, 128);
+
+    if (get_plugins_path(plugins_path, 256) == 0) {
+        fprintf(stderr, "Failed to get plugins path\n");
+        return 1;
+    }
+
+    // Setup SIGINT handler early
+    sigaction(SIGINT, &(struct sigaction) {
+        .sa_sigaction = sigaction_handler,
+    }, NULL);
 
     // Arguments:
     // -s, --socket-path <path> - path to the socket (optional)
     // -c, --config-dir <path> - path to the mascots folder (optional)
     // -cfd, --caller-fd <fd> - inhereted fd (optional)
     // -se, --spawn-everything - spawn all known mascots (optional)
+    // -p, --plugins-path <path> - path to the plugins folder (optional)
     // -h, --help - show help
+    // -v, --version - show version
+    // --no-tablets - disable tablet_v2 protocol
+    // --no-viewporter - disable viewporter protocol
+    // --no-fractional-scale - disable fractional scale protocol
+    // --no-cursor-shape - disable cursor shape protocol
+    // --no-plugins - disable plugins
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -795,13 +863,40 @@ int main(int argc, const char** argv)
             }
             fds_count++;
             i++;
+        } else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--plugins-path") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: missing argument for --plugins-path\n");
+                return 1;
+            }
+            strncpy(plugins_path, argv[i + 1], 255);
+            i++;
+        } else if (strcmp(argv[i], "--no-tablets") == 0) {
+            env_init_flags |= ENV_DISABLE_TABLETS;
+        } else if (strcmp(argv[i], "--no-viewporter") == 0) {
+            env_init_flags |= ENV_DISABLE_VIEWPORTER | ENV_DISABLE_FRACTIONAL_SCALE;
+        } else if (strcmp(argv[i], "--no-fractional-scale") == 0) {
+            env_init_flags |= ENV_DISABLE_FRACTIONAL_SCALE;
+        } else if (strcmp(argv[i], "--no-cursor-shape") == 0) {
+            env_init_flags |= ENV_DISABLE_CURSOR_SHAPE;
+        } else if (strcmp(argv[i], "--no-plugins") == 0) {
+            disable_plugins = true;
+        } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
+            printf("%s\n", WL_SHIMEJI_VERSION);
+            return 0;
         } else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
             printf("Usage: %s [options]\n", argv[0]);
             printf("Options:\n");
             printf("  -s, --socket-path <path> - path to the socket (optional)\n");
             printf("  -c, --config-dir <path> - path to the mascots folder (optional)\n");
             printf("  -cfd, --caller-fd <fd> - inhereted fd (optional)\n");
+            printf("  -p, --plugins-path <path> - path to the plugins folder (optional)\n");
             printf("  -h, --help - show help\n");
+            printf("  -v, --version - show version\n");
+            printf("  --no-tablets - disable tablet_v2 protocol\n");
+            printf("  --no-viewporter - disable viewporter protocol\n");
+            printf("  --no-fractional-scale - disable fractional scale protocol\n");
+            printf("  --no-cursor-shape - disable cursor shape protocol\n");
+            printf("  --no-plugins - disable plugins\n");
             return 0;
         } else if (strcmp(argv[i], "-se") == 0 || strcmp(argv[i], "--spawn-everything") == 0) {
             spawn_everything = true;
@@ -872,7 +967,7 @@ int main(int argc, const char** argv)
     affordance_manager.slot_state = calloc(MASCOT_OVERLAYD_INSTANCE_DEFAULT_MASCOT_COUNT, sizeof(uint8_t));
 
     // Initialize environment
-    enum environment_init_status env_init = environment_init(env_new, env_delete);
+    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete);
     if (env_init != ENV_INIT_OK) {
         char buf[1025+sizeof(size_t)];
         size_t strlen = snprintf(buf+1+sizeof(size_t), 1024, "Failed to initialize environment:\n%s", environment_get_error());
@@ -880,6 +975,61 @@ int main(int argc, const char** argv)
         buf[0] = 0xFF;
         send(inhereted_fd, buf, 1025+sizeof(size_t), 0);
         ERROR("Failed to initialize environment: %s", environment_get_error());
+    }
+
+    size_t plugin_count = 0;
+
+    // Load plugins
+    if (!disable_plugins){
+        DIR *plugins_dir = opendir(plugins_path);
+        if (plugins_dir) {
+            struct dirent *ent;
+            while ((ent = readdir(plugins_dir)) != NULL) {
+                if (ent->d_type == DT_REG) {
+                    char plugin_path[256];
+                    int slen = snprintf(plugin_path, 255, "%s/%s", plugins_path, ent->d_name);
+                    if (slen < 0 || slen >= 255) {
+                        WARN("Plugin path is too long! Skipping...");
+                        continue;
+                    }
+                    struct plugin* plugin = plugin_open(plugin_path);
+                    if (!plugin) {
+                        WARN("Failed to load plugin %s", plugin_path);
+                        continue;
+                    }
+                    const char* error = NULL;
+                    enum plugin_initialization_result init_status = plugin_init(plugin, PLUGIN_PROVIDES_CURSOR_POSITION | PLUGIN_PROVIDES_IE_POSITION | PLUGIN_PROVIDES_IE_MOVE, &error);
+                    if (init_status != PLUGIN_INIT_OK) {
+                        WARN("Failed to initialize plugin %s: %s", plugin_path, error);
+                        plugin_deinit(plugin);
+                        plugin_close(plugin);
+                        continue;
+                    }
+                    plugins[plugin_count++] = plugin;
+                }
+            }
+            closedir(plugins_dir);
+        }
+
+        // Assign plugins to environments
+        for (size_t i = 0; i < environment_store.entry_count; i++) {
+            if (environment_store.entry_states[i]) {
+                environment_t* env = environment_store.entries[i];
+                for (size_t j = 0; j < plugin_count; j++) {
+                    struct plugin* plugin = plugins[j];
+                    struct ie_object* ie = NULL;
+                    enum plugin_execution_result exec_res = plugin_get_ie_for_environment(plugin, env, &ie);
+                    if (exec_res == PLUGIN_EXEC_SEGFAULT) {
+                        WARN("Plugin %s segfaulted while getting IE for environment %d", plugin->name, i);
+                    } else if (exec_res == PLUGIN_EXEC_ERROR) {
+                        WARN("Plugin %s returned an error while getting IE for environment %d", plugin->name, i);
+                    } else if (exec_res == PLUGIN_EXEC_OK) {
+                        environment_set_ie(env, ie);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Load mascot protos
@@ -932,8 +1082,8 @@ int main(int argc, const char** argv)
             if (env == NULL) {
                 continue;
             }
-            int x = rand() % environment_screen_width(env);
-            int y = environment_screen_height(env) - 256;
+            int x = rand() % environment_workarea_width(env);
+            int y = environment_workarea_height(env) - 256;
             spawn_mascot(env, x, y, NULL, data);
         }
     }
@@ -1015,7 +1165,8 @@ int main(int argc, const char** argv)
         struct epoll_event events[16];
         int nfds = epoll_wait(epfd, events, 16, -1);
         if (nfds == -1) {
-            ERROR("Failed to epoll_wait");
+            WARN("Failed to epoll_wait");
+            continue;
         }
 
         for (int i = 0; i < nfds; i++) {

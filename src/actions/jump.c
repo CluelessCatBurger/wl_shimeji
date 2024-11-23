@@ -101,19 +101,9 @@ enum mascot_tick_result jump_action_init(struct mascot *mascot, struct mascot_ac
         return mascot_tick_next;
     }
 
-    // Precompute gravity, You can't physically jump from bottom to top of screen
-    // So for long jumps we change TargetY
-
-    float distance_x = abs(mascot->TargetX->value.i - mascot->X->value.i);
-    float distance_y = abs(mascot->TargetY->value.i - mascot->Y->value.i);
-    float distance = sqrt(distance_x * distance_x + distance_y * distance_y);
-
-    float gravity_factor = distance / ((float)environment_screen_width(mascot->environment) / 100.0);
-    if (gravity_factor > 1.0) {
-        mascot->TargetY->value.i = mascot->Y->value.i + (mascot->TargetY->value.i - mascot->Y->value.i) / gravity_factor;
+    if (mascot->TargetY->value.i != -1) {
+        mascot->TargetY->value.i = mascot_screen_y_to_mascot_y(mascot, mascot->TargetY->value.i);
     }
-
-
 
     mascot->state = mascot_state_jump;
 
@@ -221,26 +211,24 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
 
     if (target_x < 0) {
         mascot->TargetX->value.i = target_x = 0;
-    } else if (target_x > (int)environment_screen_width(mascot->environment)) {
-        mascot->TargetX->value.i = target_x = environment_screen_width(mascot->environment);
+    } else if (target_x > (int)environment_workarea_width(mascot->environment)) {
+        mascot->TargetX->value.i = target_x = environment_workarea_width(mascot->environment);
     }
 
     if (target_y == -1) {
         mascot->TargetY->value.i = target_y = posy;
     } else if (target_y < 0) {
         mascot->TargetY->value.i = target_y = 0;
-    } else if (target_y > (int)environment_screen_height(mascot->environment)) {
-        mascot->TargetY->value.i = target_y = environment_screen_height(mascot->environment);
+    } else if (target_y > (int)environment_workarea_height(mascot->environment)) {
+        mascot->TargetY->value.i = target_y = environment_workarea_height(mascot->environment);
     }
-
-    target_y = environment_screen_height(mascot->environment) - target_y;
 
     // Calculate distances
     float distance_x = target_x - posx;
 
     // Check if posy has reached the screen height and make the object slide
-    if (posy >= (int32_t)environment_screen_height(mascot->environment)) {
-        posy = environment_screen_height(mascot->environment); // Cap the y-coordinate
+    if (posy >= (int32_t)environment_workarea_height(mascot->environment)) {
+        posy = environment_workarea_height(mascot->environment); // Cap the y-coordinate
         velocity_y = 0; // Stop vertical movement to slide horizontally
     } else {
         // Calculate the vertical distance to the peak based on the current position
@@ -268,12 +256,10 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
         }
     }
 
-    // Stop movement when reaching the target or sliding to the edge
-    if (abs(target_x - posx) < fabs(velocity_x) && abs(target_y - posy) < fabs(velocity_y)) {
+
+    if (fabs(distance_x) < fabs(velocity_x)) {
         posx = target_x;
         posy = target_y;
-        velocity_x = 0;
-        velocity_y = 0; // Reset velocities when target is reached
     }
 
     DEBUG("<Mascot:%s:%u> JUMP: moving to %d, %d", mascot->prototype->name, mascot->id, target_x, target_y);

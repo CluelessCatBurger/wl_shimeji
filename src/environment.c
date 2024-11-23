@@ -30,12 +30,7 @@
 #include <linux/input-event-codes.h>
 #include <wayland-util.h>
 #include <errno.h>
-
-static void block_until_synced();
-
-static char error_m[1024] = {0};
-static uint16_t error_offt = 0;
-static enum environment_init_status init_status = ENV_NOT_INITIALIZED;
+#include "plugins.h"
 
 struct wl_display* display = NULL;
 struct wl_registry* registry = NULL;
@@ -57,14 +52,10 @@ struct wp_viewporter* viewporter = NULL;
 struct wp_fractional_scale_manager_v1* fractional_manager = NULL;
 struct wp_cursor_shape_manager_v1* cursor_shape_manager = NULL;
 
-static uint32_t wl_refcounter = 0;
-
 void (*new_environment)(environment_t*) = NULL;
 void (*rem_environment)(environment_t*) = NULL;
 
 struct wl_buffer* anchor_buffer = NULL;
-
-static uint32_t display_id = 0;
 
 struct wl_region* empty_region = NULL;
 
@@ -107,8 +98,9 @@ struct environment {
     environment_subsurface_t* grabbed_surface;
     environment_subsurface_t* root_environment_subsurface;
     bool pending_commit;
-    bool has_active_window;
     int32_t interactive_window_count;
+
+    struct ie_object* ie;
 };
 
 struct environment_subsurface {
@@ -132,6 +124,7 @@ struct environment_pointer {
     wl_fixed_t mascot_x, mascot_y;
     wl_fixed_t temp_dx, temp_dy;
     wl_fixed_t dx, dy;
+    int32_t public_x, public_y;
     uint32_t last_tick;
     environment_subsurface_t* grabbed_surface;
     uint8_t device_type;
@@ -164,9 +157,149 @@ static uint32_t yconv(environment_t* env, uint32_t y);
 // Helper structs -----------------------------------------------------------
 
 struct envs_queue {
+    int32_t flags;
     uint8_t envs_count;
     environment_t* envs[16];
 };
+
+// Helper functions ---------------------------------------------------------
+
+enum environment_border_type environment_try_ie_collision(environment_t *env, int32_t from_x, int32_t from_y, int32_t to_x, int32_t to_y, int32_t *out_x, int32_t *out_y)
+{
+    // This function is used to check if the line from (from_x, from_y) to (to_x, to_y) intersects with the interactive window borders
+    // If it does, it returns the border type that was intersected
+    // If it doesn't, it returns environment_border_type_invalid
+
+    if (!env->is_ready) return environment_border_type_invalid;
+    if (!env->ie) return environment_border_type_invalid;
+    if (!env->ie->active) return environment_border_type_invalid;
+
+    // Handle the case where the line is a point (from_x == to_x && from_y == to_y)
+    if (from_x == to_x && from_y == to_y) {
+        // Check if the point is on the "floor" (top border, treated as floor)
+        if (from_y == env->ie->y && from_x >= env->ie->x && from_x <= env->ie->x + env->ie->width) {
+            *out_x = from_x;
+            *out_y = from_y;
+            return environment_border_type_floor;  // Treat top as floor
+        }
+
+        // Check if the point is on the "ceiling" (bottom border, treated as ceiling)
+        if (from_y == env->ie->y + env->ie->height && from_x >= env->ie->x && from_x <= env->ie->x + env->ie->width) {
+            *out_x = from_x;
+            *out_y = from_y;
+            return environment_border_type_ceiling;  // Treat bottom as ceiling
+        }
+
+        // Check if the point is on the left border
+        if (from_x == env->ie->x && from_y >= env->ie->y && from_y <= env->ie->y + env->ie->height) {
+            *out_x = from_x;
+            *out_y = from_y;
+            return environment_border_type_wall;
+        }
+
+        // Check if the point is on the right border
+        if (from_x == env->ie->x + env->ie->width && from_y >= env->ie->y && from_y <= env->ie->y + env->ie->height) {
+            *out_x = from_x;
+            *out_y = from_y;
+            return environment_border_type_wall;
+        }
+
+        // If no border is hit, return invalid
+        return environment_border_type_invalid;
+    }
+
+    enum environment_border_type result = environment_border_type_invalid;
+
+    // Check for floor (top border, treated as floor): Movement from above to below (falling onto the top border)
+    if (from_y < to_y && from_y < env->ie->y && to_y >= env->ie->y) {
+        // The line is moving downwards (falling onto the top of the box)
+        int32_t x = from_x + (env->ie->y - from_y) * (to_x - from_x) / (to_y - from_y);
+        if (x >= env->ie->x && x <= env->ie->x + env->ie->width) {
+            *out_x = x;
+            *out_y = env->ie->y;
+            result = environment_border_type_floor;  // Treat top as floor
+        }
+    }
+
+    // Check for ceiling (bottom border, treated as ceiling): Movement from below to above (moving upward to hit the bottom)
+    else if (from_y > to_y && from_y > env->ie->y + env->ie->height && to_y <= env->ie->y + env->ie->height) {
+        // The line is moving upwards (hitting the bottom of the box)
+        int32_t x = from_x + (env->ie->y + env->ie->height - from_y) * (to_x - from_x) / (to_y - from_y);
+        if (x >= env->ie->x && x <= env->ie->x + env->ie->width) {
+            *out_x = x;
+            *out_y = env->ie->y + env->ie->height;
+            result = environment_border_type_ceiling;  // Treat bottom as ceiling
+        }
+    }
+
+    // Check for left side (wall) collision: Movement from left to right, and the line intersects with the left border
+    else if (from_x < env->ie->x && to_x > env->ie->x) {
+        int32_t y = from_y + (env->ie->x - from_x) * (to_y - from_y) / (to_x - from_x);
+        if (y >= env->ie->y && y <= env->ie->y + env->ie->height) {
+            *out_x = env->ie->x;
+            *out_y = y;
+            result = environment_border_type_wall;
+        }
+    }
+
+    // Check for right side (wall) collision: Movement from right to left, and the line intersects with the right border
+    else if (from_x > env->ie->x + env->ie->width && to_x < env->ie->x + env->ie->width) {
+        int32_t y = from_y + (env->ie->x + env->ie->width - from_x) * (to_y - from_y) / (to_x - from_x);
+        if (y >= env->ie->y && y <= env->ie->y + env->ie->height) {
+            *out_x = env->ie->x + env->ie->width;
+            *out_y = y;
+            result = environment_border_type_wall;
+        }
+    }
+
+    // Check for movement entirely along the floor (top border)
+    else if (from_y == env->ie->y && to_y == env->ie->y &&
+        (from_x <= env->ie->x + env->ie->width && to_x >= env->ie->x)) {
+        *out_x = from_x;  // or a midpoint if you need specific coordinates
+        *out_y = env->ie->y;
+        result = environment_border_type_floor;
+    }
+
+    // Check for movement entirely along the ceiling (bottom border)
+    else if (from_y == env->ie->y + env->ie->height && to_y == env->ie->y + env->ie->height &&
+        (from_x <= env->ie->x + env->ie->width && to_x >= env->ie->x)) {
+        *out_x = from_x;  // or a midpoint if you need specific coordinates
+        *out_y = env->ie->y + env->ie->height;
+        result = environment_border_type_ceiling;
+    }
+
+    // Check for movement entirely along the left wall
+    else if (from_x == env->ie->x && to_x == env->ie->x &&
+        (from_y <= env->ie->y + env->ie->height && to_y >= env->ie->y)) {
+        *out_x = env->ie->x;
+        *out_y = from_y;  // or a midpoint if you need specific coordinates
+        result = environment_border_type_wall;
+    }
+
+    // Check for movement entirely along the right wall
+    else if (from_x == env->ie->x + env->ie->width && to_x == env->ie->x + env->ie->width &&
+        (from_y <= env->ie->y + env->ie->height && to_y >= env->ie->y)) {
+        *out_x = env->ie->x + env->ie->width;
+        *out_y = from_y;  // or a midpoint if you need specific coordinates
+        result = environment_border_type_wall;
+    }
+    return result;
+}
+
+uint32_t yconv(environment_t* env, uint32_t y)
+{
+    return (int32_t)(env->output.height / env->scale) - y;
+}
+
+#ifndef PLUGINSUPPORT_IMPLEMENTATION
+
+static void block_until_synced();
+static char error_m[1024] = {0};
+static uint16_t error_offt = 0;
+static enum environment_init_status init_status = ENV_NOT_INITIALIZED;
+static uint32_t display_id = 0;
+static uint32_t wl_refcounter = 0;
+
 
 // Wayland callbacks ----------------------------------------------------------
 
@@ -237,7 +370,7 @@ static void on_output_name(void* data, struct wl_output* output, const char* nam
 {
     UNUSED(output);
     environment_t* env = (environment_t*)data;
-    env->output.name = name;
+    env->output.name = strdup(name);
 }
 
 static void on_output_description(void* data, struct wl_output* output, const char* desc)
@@ -1135,6 +1268,9 @@ static void handle_cursor_shape(void* data, uint32_t id, uint32_t version)
 static void on_global (void* data, struct wl_registry* registry, uint32_t id, const char* iface_name, uint32_t version)
 {
     UNUSED(registry);
+
+    struct envs_queue* envs = (struct envs_queue*)data;
+
     if (!strcmp(iface_name, wl_compositor_interface.name)) {
         handle_compositor(data, id, version);
     } else if (!strcmp(iface_name, wl_shm_interface.name)) {
@@ -1143,17 +1279,17 @@ static void on_global (void* data, struct wl_registry* registry, uint32_t id, co
         handle_subcompositor(data, id, version);
     } else if (!strcmp(iface_name, zwlr_layer_shell_v1_interface.name)) {
         handle_wlr_layer_shell(data, id, version);
-    } else if (!strcmp(iface_name, zwp_tablet_manager_v2_interface.name)) {
+    } else if (!strcmp(iface_name, zwp_tablet_manager_v2_interface.name) && !(envs->flags & ENV_DISABLE_TABLETS)) {
         handle_tablet_manager(data, id, version);
     } else if (!strcmp(iface_name, wl_output_interface.name)) {
         handle_output(data, id, version);
     } else if (!strcmp(iface_name, wl_seat_interface.name)) {
         handle_seat(data, id, version);
-    } else if (!strcmp(iface_name, wp_viewporter_interface.name)) {
+    } else if (!strcmp(iface_name, wp_viewporter_interface.name) && !(envs->flags & ENV_DISABLE_VIEWPORTER)) {
         handle_viewporter(data, id, version);
-    } else if (!strcmp(iface_name, wp_fractional_scale_manager_v1_interface.name)) {
+    } else if (!strcmp(iface_name, wp_fractional_scale_manager_v1_interface.name) && !(envs->flags & ENV_DISABLE_FRACTIONAL_SCALE)) {
         handle_fractional_scale_manager(data, id, version);
-    } else if (!strcmp(iface_name, wp_cursor_shape_manager_v1_interface.name)) {
+    } else if (!strcmp(iface_name, wp_cursor_shape_manager_v1_interface.name) && !(envs->flags & ENV_DISABLE_CURSOR_SHAPE)) {
         handle_cursor_shape(data, id, version);
     }
 }
@@ -1193,11 +1329,6 @@ static void block_until_synced()
     while(wl_display_dispatch(display) != -1 && lock);
 }
 
-uint32_t yconv(environment_t* env, uint32_t y)
-{
-    return env->height - y;
-}
-
 static void environment_dimensions_changed_callback(uint32_t width, uint32_t height, void* data)
 {
     environment_t* env = (environment_t*)data;
@@ -1207,7 +1338,7 @@ static void environment_dimensions_changed_callback(uint32_t width, uint32_t hei
 
 // Public functions ------------------------------------------------------------
 
-enum environment_init_status environment_init(void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*))
+enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*))
 {
     // Wayland display connection and etc
     display = wl_display_connect(NULL);
@@ -1221,6 +1352,7 @@ enum environment_init_status environment_init(void(*new_listener)(environment_t*
     rem_environment = rem_listener;
 
     struct envs_queue envs = {0};
+    envs.flags = flags;
 
     registry = wl_display_get_registry(display);
     wl_registry_add_listener(registry, &registry_listener, (void*)&envs);
@@ -1301,7 +1433,7 @@ enum environment_init_status environment_init(void(*new_listener)(environment_t*
         environment_commit(env);
     }
 
-    if (tablet_manager) {
+    if (tablet_manager && !(flags & ENV_DISABLE_TABLETS)) {
         tablet_seat = zwp_tablet_manager_v2_get_tablet_seat(tablet_manager, seat);
         if (tablet_seat) {
             zwp_tablet_seat_v2_add_listener(tablet_seat, &zwp_tablet_seat_v2_listener, NULL);
@@ -1349,21 +1481,6 @@ void environment_new_env_listener(void(*listener)(environment_t*))
 void environment_rem_env_listener(void(*listener)(environment_t*))
 {
     rem_environment = listener;
-}
-
-// ENV API ---------------------------------------------------------------------
-
-enum environment_border_type environment_get_border_type(environment_t *env, int32_t x, int32_t y)
-{
-    if (!env->is_ready) return environment_border_type_invalid;
-
-    y = yconv(env, y);
-
-    // Detect type of border by coordinates using output size (width, height)
-    if (y <= 0) return environment_border_type_ceiling;
-    else if (x >= (int32_t)env->width || x <= 0) return environment_border_type_wall;
-    else if (y >= (int32_t)env->height) return environment_border_type_floor;
-    else return environment_border_type_none;
 }
 
 // Surface API -----------------------------------------------------------------
@@ -1484,93 +1601,14 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
             sprite->height / surface->env->scale
         );
         wl_surface_commit(surface->surface);
+    } else {
+        wl_surface_set_buffer_scale(surface->surface, surface->env->scale);
     }
 
     environment_subsurface_move(surface, surface->mascot->X->value.i, surface->mascot->Y->value.i, false);
 
     surface->env->pending_commit = true;
 }
-
-
-bool isCollinearAndMovingAlong(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
-                                int32_t z1, int32_t w1, int32_t z2, int32_t w2) {
-    // Check if points (x1, y1), (x2, y2) and (z1, w1), (z2, w2) are collinear
-    int32_t dx1 = x2 - x1;
-    int32_t dy1 = y2 - y1;
-    int32_t dx2 = z2 - z1;
-    int32_t dy2 = w2 - w1;
-
-    // Collinearity check using cross product
-    if (dx1 * dy2 != dy1 * dx2) {
-        return false; // Not collinear
-    }
-
-    // Check if the second segment is aligned and moving along
-    return (z1 >= x1 && z1 <= x2 && w1 == y1 && w2 == y2) ||
-           (z2 >= x1 && z2 <= x2 && w1 == y1 && w2 == y2) ||
-           (w1 >= y1 && w1 <= y2 && z1 == x1 && z2 == x2);
-}
-
-bool segmentsTouchOrCross(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
-                          int32_t z1, int32_t w1, int32_t z2, int32_t w2) {
-    // Check if the segments touch or cross
-    // This checks if one endpoint of one segment lies on the other segment
-    return ((z1 == x1 && w1 >= y1 && w1 <= y2) || (z1 == x2 && w1 >= y1 && w1 <= y2) ||
-            (z2 == x1 && w2 >= y1 && w2 <= y2) || (z2 == x2 && w2 >= y1 && w2 <= y2));
-}
-
-bool segmentsIntersect(int32_t x1, int32_t y1, int32_t x2, int32_t y2,
-                       int32_t z1, int32_t w1, int32_t z2, int32_t w2,
-                       int32_t* at_x, int32_t* at_y)
-{
-    // Check for collinearity and movement along the line
-    if (isCollinearAndMovingAlong(x1, y1, x2, y2, z1, w1, z2, w2)) {
-        return false; // Don't count overlaps while moving along
-    }
-
-    // Check for touching or crossing segments
-    if (segmentsTouchOrCross(x1, y1, x2, y2, z1, w1, z2, w2)) {
-        return false; // Avoid touching segments
-    }
-
-    // Calculate the direction vectors
-    int32_t dx1 = x2 - x1;
-    int32_t dy1 = y2 - y1;
-    int32_t dx2 = z2 - z1;
-    int32_t dy2 = w2 - w1;
-
-    // Compute the determinant
-    int32_t det = dx1 * dy2 - dy1 * dx2;
-    if (det == 0) {
-        // Lines are parallel
-        return false;
-    }
-
-    // Calculate the parameters t and u using floating-point division
-    float t = (float)((z1 - x1) * dy2 - (w1 - y1) * dx2) / det;
-    float u = (float)((z1 - x1) * dy1 - (w1 - y1) * dx1) / det;
-
-    // Check if the intersection point is within both segments
-    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
-        // Calculate the intersection point
-        *at_x = x1 + (int32_t)(t * dx1);
-        *at_y = y1 + (int32_t)(t * dy1);
-        return true;
-    }
-
-    return false;
-}
-
-struct line {
-    int32_t x, y, x1, x2;
-    void* data;
-};
-
-void environment_fill_active_window_data(environment_t* env, struct line intersection_list[4]) {
-    UNUSED(env);
-    UNUSED(intersection_list);
-}
-
 
 enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback)
 {
@@ -1594,100 +1632,54 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
         result = environment_move_clamped;
     }
 
-
     dy = yconv(surface->env, dy);
 
-    bool has_active_window = surface->env->has_active_window;
-
-    struct line intersection_list[surface->env->interactive_window_count*4];
-
-    if (has_active_window) {
-        environment_fill_active_window_data(surface->env, intersection_list);
+    bool has_active_ie = false;
+    if (surface->env->ie) {
+        has_active_ie = surface->env->ie->active;
     }
 
-    if (surface->mascot && use_callback) mascot_moved(surface->mascot, dx, yconv(surface->env, dy));
+    int current_x = dx;
+    int current_y = dy;
+    if (surface->mascot) {
+        current_x = surface->mascot->X->value.i;
+        current_y = yconv(surface->env, surface->mascot->Y->value.i);
+    }
 
-    for (int i = 0; i < surface->env->interactive_window_count*4; i++) {
-        if (segmentsIntersect(surface->x, surface->y, dx, dy, intersection_list[i].x, intersection_list[i].y, intersection_list[i].x1, intersection_list[i].x2, &dx, &dy)) {
-            result = environment_move_clamped;
+    int32_t ie_out_x = dx;
+    int32_t ie_out_y = dy;
+
+    enum environment_border_type ie_border = environment_try_ie_collision(surface->env, current_x, current_y, dx, dy, &ie_out_x, &ie_out_y);
+
+    if (ie_border != environment_border_type_invalid && has_active_ie && surface->mascot->state != mascot_state_ie_walk && surface->mascot->state != mascot_state_ie_fall && surface->mascot->state != mascot_state_ie_throw) {
+        if (!mascot_is_on_workspace_border(surface->mascot)) {
+            if (!surface->mascot->associated_ie) {
+                plugin_execute_ie_attach_mascot(surface->env->ie->parent_plugin, surface->env->ie, surface->mascot);
+                result = environment_move_clamped;
+            } else {
+                if (current_x == dx && current_y != dy) {
+                    ie_out_y = dy;
+                } else if (current_x != dx && current_y == dy) {
+                    ie_out_x = dx;
+                }
+            }
+            dx = ie_out_x;
+            dy = ie_out_y;
         }
+    } else if (surface->mascot->associated_ie) {
+        plugin_execute_ie_detach_mascot(surface->env->ie->parent_plugin, surface->env->ie, surface->mascot);
     }
-
 
     if (environment_subsurface_set_position(surface, dx, dy) == environment_move_invalid) {
         return environment_move_invalid;
     }
 
-    if (surface->mascot) {
+    if (surface->mascot && use_callback) {
         mascot_moved(surface->mascot, dx, yconv(surface->env, dy));
     }
 
     return result;
-
 }
-
-enum environment_move_result environment_subsurface_set_position(environment_subsurface_t* surface, int32_t dx, int32_t dy)
-{
-    if (!surface->surface) return environment_move_invalid;
-
-    enum environment_move_result result = environment_move_ok;
-
-    if (active_pointer.above_surface) {
-        environment_subsurface_t* above_surface = wl_surface_get_user_data(active_pointer.above_surface);
-        if (above_surface == surface) {
-            active_pointer.mascot_x = active_pointer.x - (dx + surface->pose->anchor_x);
-            active_pointer.mascot_y = active_pointer.y - (dy + surface->pose->anchor_y);
-            if ((int)active_pointer.mascot_x < 0 || (int)active_pointer.mascot_x > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
-                || (int)active_pointer.mascot_y < 0 || (int)active_pointer.mascot_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
-                active_pointer.mascot_x = 0;
-                active_pointer.mascot_y = 0;
-                active_pointer.above_surface = NULL;
-            }
-        }
-    }
-
-    int32_t surface_anchor_x = 0, surface_anchor_y = 0;
-    surface_anchor_x = surface->offset_x;
-    surface_anchor_y = surface->offset_y;
-
-    if (surface->pose) {
-        surface_anchor_x += (surface->mascot->LookingRight->value.i ? -surface->width - surface->pose->anchor_x : surface->pose->anchor_x);
-        surface_anchor_y += surface->pose->anchor_y;
-    }
-
-    surface_anchor_x = (float)surface_anchor_x / surface->env->scale;
-    surface_anchor_y = (float)surface_anchor_y / surface->env->scale;
-
-    wl_subsurface_set_position(surface->subsurface, dx + surface_anchor_x, dy + surface_anchor_y);
-
-    surface->x = dx;
-    surface->y = dy;
-
-    surface->env->pending_commit = true;
-
-    return result;
-}
-
-uint32_t environment_screen_width(environment_t* env)
-{
-    return env->width;
-}
-
-uint32_t environment_screen_height(environment_t* env)
-{
-    return env->height;
-}
-
-uint32_t environment_workarea_width(environment_t* env)
-{
-    return env->width;
-}
-
-uint32_t environment_workarea_height(environment_t* env)
-{
-    return env->height;
-}
-
 
 environment_t* environment_subsurface_get_environment(environment_subsurface_t* surface)
 {
@@ -1777,12 +1769,12 @@ bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface, u
 
 uint32_t environment_cursor_x(environment_t* env) {
     UNUSED(env);
-    return active_pointer.x;
+    return active_pointer.public_x;
 }
 
 uint32_t environment_cursor_y(environment_t* env) {
     UNUSED(env);
-    return active_pointer.y;
+    return active_pointer.public_y;
 }
 
 int32_t environment_cursor_dx(environment_t* env) {
@@ -1854,7 +1846,6 @@ float environment_screen_scale(environment_t* env)
 void environment_subsurface_associate_mascot(environment_subsurface_t* surface, struct mascot* mascot_ptr)
 {
     if (!surface) return;
-    INFO("Associating mascot %p with surface %p", mascot_ptr, surface);
     surface->mascot = mascot_ptr;
 }
 
@@ -1892,7 +1883,6 @@ int environment_get_display_fd() {
 
 struct mascot* environment_subsurface_get_mascot(environment_subsurface_t* surface)
 {
-    INFO("get_mascot %p -> %p", surface, surface->mascot);
     return surface->mascot;
 }
 
@@ -1905,4 +1895,207 @@ const char* environment_get_error() {
     if (init_status == ENV_NOT_INITIALIZED) return "environment_get_error() called before initialization attempt";
     if (init_status == ENV_INIT_OK) return "No error";
     return error_m;
+}
+
+void environment_set_public_cursor_position(environment_t* env, int32_t x, int32_t y)
+{
+    UNUSED(env);
+    active_pointer.public_x = x;
+    active_pointer.public_y = y;
+}
+
+void environment_set_ie(environment_t* env, struct ie_object *ie)
+{
+    if (!env) return;
+    env->ie = ie;
+    env->interactive_window_count = ie ? 1 : 0;
+}
+
+bool environment_pre_tick(environment_t* env, uint32_t tick)
+{
+    if (!env) return false;
+    if (env->ie) {
+        enum plugin_execution_result exec_res = plugin_execute(env->ie->parent_plugin, env->ie, &active_pointer.public_x, &active_pointer.public_y, tick);
+        if (exec_res != PLUGIN_EXEC_OK) {
+            if (exec_res == PLUGIN_EXEC_SEGFAULT) {
+                ERROR("Plugin execution failed with SEGFAULT");
+            }
+        }
+    }
+    return true;
+}
+
+bool environment_ie_allows_move(environment_t* env)
+{
+    if (!env) return false;
+    if (!env->ie) return false;
+    return env->ie->parent_plugin->effective_caps & PLUGIN_PROVIDES_IE_MOVE;
+}
+
+bool environment_ie_throw(environment_t* env, float x_velocity, float y_velocity, float gravity, uint32_t tick)
+{
+    if (!env) return false;
+    if (!env->ie) return false;
+
+    enum plugin_execution_result exec_res = plugin_execute_throw_ie(env->ie->parent_plugin, env->ie, x_velocity, y_velocity, gravity, tick);
+
+    if (exec_res == PLUGIN_EXEC_OK) {
+        return true;
+    } else {
+        if (exec_res == PLUGIN_EXEC_SEGFAULT) {
+            ERROR("Plugin execution failed with SEGFAULT");
+        }
+        return false;
+    }
+}
+
+bool environment_ie_stop_movement(environment_t* env)
+{
+    if (!env) return false;
+    if (!env->ie) return false;
+
+    enum plugin_execution_result exec_res = plugin_execute_stop_ie(env->ie->parent_plugin, env->ie);
+
+    if (exec_res == PLUGIN_EXEC_OK) {
+        return true;
+    } else {
+        if (exec_res == PLUGIN_EXEC_SEGFAULT) {
+            ERROR("Plugin execution failed with SEGFAULT");
+        }
+        return false;
+    }
+}
+
+#endif
+
+bool environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
+{
+    if (!env) return false;
+    if (!env->ie) return false;
+    if (!(env->ie->parent_plugin->effective_caps & PLUGIN_PROVIDES_IE_MOVE)) return false;
+
+    struct ie_object* ie = env->ie;
+
+    // Check if window is not in screen bounds
+    // Right edge is beyond left edge of screen
+
+    if (dx + ie->width < 0) dx = (int32_t)environment_screen_width(env)-1;
+    else if (dx > (int32_t)environment_screen_width(env)) dx = -ie->width+1;
+
+    // If window is out of bounds on y axis, this is error
+    if (dy < 0 || dy > (int32_t)environment_screen_height(env)) return false;
+
+    INFO("Moving window by %d, %d", dx, dy);
+
+    enum plugin_execution_result res = plugin_execute_ie_move(env->ie->parent_plugin, env->ie, dx, dy);
+    if (res != PLUGIN_EXEC_OK) {
+        if (res == PLUGIN_EXEC_SEGFAULT) {
+            ERROR("Plugin execution failed with SEGFAULT");
+        }
+        else {
+            WARN("Plugin execution failed with unknown error");
+            return false;
+        }
+    }
+    return true;
+}
+
+struct ie_object* environment_get_ie(environment_t* env)
+{
+    if (!env) return NULL;
+    return env->ie;
+}
+
+void environment_get_output_id_info(environment_t* env, const char** name, const char** make, const char** model, const char** desc, uint32_t *id)
+{
+    if (!env) return;
+    if (name) *name = env->output.name;
+    if (make) *make = env->output.make;
+    if (model) *model = env->output.model;
+    if (desc) *desc = env->output.desc;
+    if (id) *id = env->output.id;
+}
+
+enum environment_move_result environment_subsurface_set_position(environment_subsurface_t* surface, int32_t dx, int32_t dy)
+{
+    if (!surface->surface) return environment_move_invalid;
+
+    enum environment_move_result result = environment_move_ok;
+
+    if (active_pointer.above_surface) {
+        environment_subsurface_t* above_surface = wl_surface_get_user_data(active_pointer.above_surface);
+        if (above_surface == surface) {
+            active_pointer.mascot_x = active_pointer.x - (dx + surface->pose->anchor_x);
+            active_pointer.mascot_y = active_pointer.y - (dy + surface->pose->anchor_y);
+            if ((int)active_pointer.mascot_x < 0 || (int)active_pointer.mascot_x > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
+                || (int)active_pointer.mascot_y < 0 || (int)active_pointer.mascot_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
+                active_pointer.mascot_x = 0;
+                active_pointer.mascot_y = 0;
+                active_pointer.above_surface = NULL;
+            }
+        }
+    }
+
+    int32_t surface_anchor_x = 0, surface_anchor_y = 0;
+    surface_anchor_x = surface->offset_x;
+    surface_anchor_y = surface->offset_y;
+
+    if (surface->pose) {
+        surface_anchor_x += (surface->mascot->LookingRight->value.i ? -surface->width - surface->pose->anchor_x : surface->pose->anchor_x);
+        surface_anchor_y += surface->pose->anchor_y;
+    }
+
+    surface_anchor_x = (float)surface_anchor_x / surface->env->scale;
+    surface_anchor_y = (float)surface_anchor_y / surface->env->scale;
+
+    wl_subsurface_set_position(surface->subsurface, dx + surface_anchor_x, dy + surface_anchor_y);
+
+    surface->x = dx;
+    surface->y = dy;
+
+    surface->env->pending_commit = true;
+
+    return result;
+}
+
+uint32_t environment_screen_width(environment_t* env)
+{
+    return env->output.width / env->scale;
+}
+
+uint32_t environment_screen_height(environment_t* env)
+{
+    return env->output.height / env->scale;
+}
+
+uint32_t environment_workarea_width(environment_t* env)
+{
+    return env->width;
+}
+
+uint32_t environment_workarea_height(environment_t* env)
+{
+    return env->height;
+}
+
+
+
+enum environment_border_type environment_get_border_type(environment_t *env, int32_t x, int32_t y)
+{
+    if (!env->is_ready) return environment_border_type_invalid;
+
+    y = yconv(env, y);
+
+    int32_t ie_out_x = 0;
+    int32_t ie_out_y = 0;
+    enum environment_border_type ie_border_type = environment_try_ie_collision(env, x, y, x, y, &ie_out_x, &ie_out_y);
+
+    // Detect type of border by coordinates using output size (width, height)
+    if (y <= 0) return environment_border_type_ceiling;
+    else if (x >= (int32_t)env->width || x <= 0) return environment_border_type_wall;
+    else if (y >= (int32_t)env->height) return environment_border_type_floor;
+    else if (ie_border_type == environment_border_type_wall) return environment_border_type_wall;
+    else if (ie_border_type == environment_border_type_ceiling) return environment_border_type_ceiling;
+    else if (ie_border_type == environment_border_type_floor) return environment_border_type_floor;
+    else return environment_border_type_none;
 }

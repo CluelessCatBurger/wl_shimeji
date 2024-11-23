@@ -38,6 +38,8 @@ struct mascot_pose;
 
 #include "mascot_config_parser.h"
 
+#include "plugins.h"
+
 extern uint32_t mascot_total_count;
 extern uint32_t new_mascot_id;
 
@@ -90,6 +92,10 @@ enum mascot_action_embedded_property {
     mascot_action_embedded_property_dispose, // delete mascot
     mascot_action_embedded_property_transform, // transform mascot
     mascot_action_embedded_property_thrown,
+
+    mascot_action_embedded_property_walkwithie,
+    mascot_action_embedded_property_fallwithie,
+    mascot_action_embedded_property_throwie,
 
     mascot_action_embedded_property_unsupported,
     mascot_action_embedded_property_unknown,
@@ -186,7 +192,15 @@ enum mascot_action_embedded_property {
 #define MASCOT_LOCAL_VARIABLE_BORNCOUNT_TYPE  mascot_local_variable_int
 #define MASCOT_LOCAL_VARIABLE_BORNCOUNT_ID    21
 
-#define MASCOT_LOCAL_VARIABLE_COUNT 22
+#define MASCOT_LOCAL_VARIABLE_IEOFFSETX_VALUE "mascot.ieoffsetx"
+#define MASCOT_LOCAL_VARIABLE_IEOFFSETX_TYPE  mascot_local_variable_int
+#define MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID    22
+
+#define MASCOT_LOCAL_VARIABLE_IEOFFSETY_VALUE "mascot.ieoffsety"
+#define MASCOT_LOCAL_VARIABLE_IEOFFSETY_TYPE  mascot_local_variable_int
+#define MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID    23
+
+#define MASCOT_LOCAL_VARIABLE_COUNT 24
 
 struct mascot_behavior;
 struct mascot_prototype;
@@ -391,7 +405,10 @@ enum mascot_state {
     mascot_state_drag, // Drag (mascot is being dragged by the user)
     mascot_state_drag_resist, // Drag resist (mascot is resisting the drag)
     mascot_state_scanmove, // Scanmove (moving to target mascot for interaction)
-    mascot_state_scanjump // Scanjump (jumping to target mascot for interaction)
+    mascot_state_scanjump, // Scanjump (jumping to target mascot for interaction)
+    mascot_state_ie_fall, // Interact with IE
+    mascot_state_ie_walk,
+    mascot_state_ie_throw
 };
 
 struct mascot_affordance_manager {
@@ -405,6 +422,8 @@ struct mascot_affordance_manager {
 struct mascot {
     uint32_t id; // Mascot ID
     const struct mascot_prototype* prototype;
+
+    struct ie_object* associated_ie;
 
     uint32_t next_frame_tick; // Frame when the next tick should be
     uint32_t action_duration; // Duration of the current action
@@ -451,6 +470,8 @@ struct mascot {
     struct mascot_local_variable* Gap;
     struct mascot_local_variable* BornInterval;
     struct mascot_local_variable* BornCount;
+
+    uint32_t action_tick;
 
     uint32_t dragged_tick;
 
@@ -509,6 +530,26 @@ void mascot_reattach_pose(struct mascot* mascot); // Reattaches current pose, ma
 bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button);
 bool mascot_hotspot_hold(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button, bool release);
 struct mascot_hotspot* mascot_hotspot_by_pos(struct mascot* mascot, int32_t x, int32_t y);
+
+// Variable wrappers
+int32_t mascot_get_variable_i(struct mascot* mascot, uint16_t id);
+float   mascot_get_variable_f(struct mascot* mascot, uint16_t id);
+void    mascot_set_variable_i(struct mascot* mascot, uint16_t id, int32_t value);
+void    mascot_set_variable_f(struct mascot* mascot, uint16_t id, float value);
+
+// Behavior shortcuts
+const struct mascot_behavior* mascot_fall_behavior(struct mascot* mascot);
+const struct mascot_behavior* mascot_thrown_behavior(struct mascot* mascot);
+
+// Helper functions
+enum mascot_tick_result mascot_execute_variable(struct mascot *mascot, uint16_t variable_id);
+enum mascot_tick_result mascot_assign_variable(struct mascot *mascot, uint16_t variable_id, struct mascot_local_variable* variable_data);
+enum mascot_tick_result mascot_check_condition(struct mascot *mascot, const struct mascot_expression* condition);
+enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const struct mascot_expression* condition);
+enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot);
+enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot_action_reference* actionref, void (*clean_func)(struct mascot*));
+int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y);
+bool mascot_is_on_workspace_border(struct mascot* mascot);
 
 // Set action, not recommended to use directly
 enum action_set_result mascot_set_action(struct mascot* mascot, struct mascot_action_reference* actionref, bool push_stack, uint32_t tick);

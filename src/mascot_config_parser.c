@@ -329,6 +329,8 @@ struct string_int_int locals[] = {
     (struct string_int_int){MASCOT_LOCAL_VARIABLE_GAP_VALUE, MASCOT_LOCAL_VARIABLE_GAP_ID, MASCOT_LOCAL_VARIABLE_GAP_TYPE},
     (struct string_int_int){MASCOT_LOCAL_VARIABLE_BORNINTERVAL_VALUE, MASCOT_LOCAL_VARIABLE_BORNINTERVAL_ID, MASCOT_LOCAL_VARIABLE_BORNINTERVAL_TYPE},
     (struct string_int_int){MASCOT_LOCAL_VARIABLE_BORNCOUNT_VALUE, MASCOT_LOCAL_VARIABLE_BORNCOUNT_ID, MASCOT_LOCAL_VARIABLE_BORNCOUNT_TYPE},
+    (struct string_int_int){MASCOT_LOCAL_VARIABLE_IEOFFSETX_VALUE, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID, MASCOT_LOCAL_VARIABLE_IEOFFSETX_TYPE},
+    (struct string_int_int){MASCOT_LOCAL_VARIABLE_IEOFFSETY_VALUE, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID, MASCOT_LOCAL_VARIABLE_IEOFFSETY_TYPE}
 };
 
 struct string_ptr_pair globals_n_funcs[] = {
@@ -1430,6 +1432,12 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
                 embedded_type = mascot_action_embedded_property_transform;
             } else if (!strncasecmp("thrown", embedded_type_str, embedded_type_str_len)) {
                 embedded_type = mascot_action_embedded_property_thrown;
+            } else if (!strncasecmp("walkwithie", embedded_type_str, embedded_type_str_len)) {
+                embedded_type = mascot_action_embedded_property_walkwithie;
+            } else if (!strncasecmp("fallwithie", embedded_type_str, embedded_type_str_len)) {
+                embedded_type = mascot_action_embedded_property_fallwithie;
+            } else if (!strncasecmp("throwie", embedded_type_str, embedded_type_str_len)) {
+                embedded_type = mascot_action_embedded_property_throwie;
             } else {
                 WARN("Unknown embedded type: %s", embedded_type_str);
                 embedded_type = mascot_action_embedded_property_unknown;

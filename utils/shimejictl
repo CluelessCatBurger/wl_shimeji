@@ -492,7 +492,8 @@ OP = enum.Enum("OP", [
 
 FORCED_EXTERNAL = [
     "mascot.anchor",
-    "mascot.totalCount"
+    "mascot.totalcount",
+    "mascot.count"
 ]
 FORCED_LOCAL = [
     "Name",
@@ -608,7 +609,7 @@ class Program:
             self.instructions.append((OP.STORE, node.value))
         elif isinstance(node, VariableNode):
             name = node.name
-            symlist = self.local_vars if not name in FORCED_EXTERNAL else self.global_vars
+            symlist = self.local_vars if not name.lower() in FORCED_EXTERNAL else self.global_vars
             name = SYMNAME_REMAP.get(name.lower(), name)
             if name not in symlist:
                 symlist.append(name)
@@ -617,7 +618,7 @@ class Program:
         elif isinstance(node, MemberAccessNode):
             name = str(node)
             name = SYMNAME_REMAP.get(name.lower(), name)
-            if name.count(".") != 1 or name in FORCED_EXTERNAL and name not in FORCED_LOCAL:
+            if name.count(".") != 1 or name.lower() in FORCED_EXTERNAL and name not in FORCED_LOCAL:
                 if name not in self.global_vars:
                     self.global_vars.append(name)
                 self.instructions.append((OP.LOADE, self.global_vars.index(name)))

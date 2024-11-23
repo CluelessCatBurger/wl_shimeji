@@ -47,8 +47,8 @@
 #define OP_SHR 0x35 // Bitwise shift right from stack
 
 #define OP_LT 0x40 // Less than
-#define OP_GT 0x41 // Greater than
-#define OP_LE 0x42 // Less or equal
+#define OP_LE 0x41 // Greater than
+#define OP_GT 0x42 // Less or equal
 #define OP_GE 0x43 // Greater or equal
 #define OP_EQ 0x44 // Equal
 #define OP_NE 0x45 // Not equal

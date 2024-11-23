@@ -18,11 +18,6 @@
 */
 
 #include "mascot.h"
-#include "actions/actionbase.h"
-#include "actions/jump.h"
-#include "actions/offset.h"
-#include "actions/sequence.h"
-#include "actions/simple.h"
 #include "environment.h"
 #include "expressions.h"
 #include "mascot_config_parser.h"
@@ -31,7 +26,10 @@
 #include <string.h>
 #include <math.h>
 
+#ifndef PLUGINSUPPORT_IMPLEMENTATION
+
 #include "actions/actions.h"
+#include "actions/actionbase.h"
 
 uint32_t mascot_total_count = 0;
 uint32_t new_mascot_id = 0;
@@ -182,7 +180,7 @@ void mascot_attach_pose(struct mascot* mascot, const struct mascot_pose* pose, u
     environment_subsurface_attach(mascot->subsurface, pose);
     DEBUG("<Mascot:%s:%u> Attaching pose %d, with velocity = (%d,%d), anchor = (%d,%d)", mascot->prototype->name, mascot->id, mascot->frame_index ? mascot->frame_index -1 : 0, pose->velocity_x, pose->velocity_y, pose->anchor_x, pose->anchor_y);
     mascot->next_frame_tick = tick + pose->duration;
-    if (mascot->state != mascot_state_fall && mascot->state != mascot_state_jump) {
+    if (mascot->state != mascot_state_fall && mascot->state != mascot_state_jump && mascot->state != mascot_state_ie_fall) {
         mascot->VelocityX->value.f = pose->velocity_x;
         mascot->VelocityY->value.f = pose->velocity_y;
     }
@@ -229,6 +227,13 @@ struct action_funcs embedded_funcs[mascot_embedded_property_count] = {
     {interact_action_init, simple_action_tick, simple_action_next, interact_action_clean},
     {dispose_action_init, simple_action_tick, dispose_action_next, simple_action_clean},
     {transform_action_init, simple_action_tick, transform_action_next, transform_action_clean},
+
+    {0},
+
+    {walkwithie_action_init, walkwithie_action_tick, walkwithie_action_next, walkwithie_action_clean},
+    {fallwithie_action_init, fallwithie_action_tick, fallwithie_action_next, fallwithie_action_clean},
+    {throwie_action_init, throwie_action_tick, throwie_action_next, throwie_action_clean},
+
 
     {0},
     {0},
@@ -293,6 +298,8 @@ enum action_set_result mascot_set_action_internal(struct mascot* mascot, struct 
     if (res == mascot_tick_error) return ACTION_SET_ERROR;
     if (res == mascot_tick_reenter) return ACTION_SET_ACTION_REENTER;
     if (res == mascot_tick_next) return ACTION_SET_ACTION_NEXT;
+
+    mascot->action_tick = tick;
 
     return ACTION_SET_RESULT_OK;
 }
@@ -437,7 +444,7 @@ static enum mascot_tick_result mascot_action_get_next(struct mascot* mascot, uin
 
         bool nested = false;
         if (actionref.action && mascot->current_action.action != actionref.action) {
-            nested = mascot->current_action.action->type == mascot_action_type_sequence;
+            nested = mascot->current_action.action ? mascot->current_action.action->type == mascot_action_type_sequence: false;
             enum action_set_result set_result = mascot_set_action_internal(
                 mascot,
                 &actionref,
@@ -463,78 +470,6 @@ static enum mascot_tick_result mascot_action_get_next(struct mascot* mascot, uin
     }
     LOG("ERROR", RED, "<Mascot:%s:%u> Action iterator reached maximum iterations", mascot->prototype->name, mascot->id);
     return mascot_tick_error;
-}
-
-void mascot_build_behavior_pool(struct mascot* mascot, const struct mascot_behavior* behavior, bool add) {
-    if (!mascot) return;
-    if (!add) {
-        mascot->behavior_pool_len = 0;
-        memset(mascot->behavior_pool, 0, sizeof(struct mascot_behavior_reference) * 128);
-    }
-
-    const struct mascot_behavior_reference* next_behavior_list;
-    uint16_t behavior_count = 0;
-    if (behavior) {
-        next_behavior_list = behavior->next_behavior_list;
-        behavior_count = behavior->next_behaviors_count;
-    }
-    else {
-        next_behavior_list = (struct mascot_behavior_reference*)mascot->prototype->root_behavior_list;
-        behavior_count = mascot->prototype->root_behavior_list_count;
-    }
-
-    for (uint16_t i = 0; i < behavior_count; i++) {
-        const struct mascot_behavior_reference* behavior_ref = &next_behavior_list[i];
-        if (behavior_ref->behavior->is_condition) {
-            if (behavior_ref->behavior->condition) {
-                float result = 0.0;
-                enum expression_execution_result execution_status = expression_vm_execute(behavior_ref->behavior->condition->body, mascot, &result);
-                if (execution_status == EXPRESSION_EXECUTION_ERROR) {
-                    WARN("<Mascot:%s:%u> Error while executing condition expression", mascot->prototype->name, mascot->id);
-                    continue;
-                }
-                if (result == 0.0) {
-                    continue;
-                }
-            }
-            mascot_build_behavior_pool(mascot, behavior_ref->behavior, true);
-            continue;
-        }
-        if (behavior_ref->frequency == 0) continue;
-        if (behavior_ref->behavior->action->border_type != environment_border_type_any) {
-            if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) != behavior_ref->behavior->action->border_type) {
-                continue;
-            }
-        }
-        if (mascot->behavior_pool_len >= 128) {
-            break;
-        }
-        DEBUG("<Mascot:%s:%u> Adding behavior %s to pool", mascot->prototype->name, mascot->id, behavior_ref->behavior->name);
-        mascot->behavior_pool[mascot->behavior_pool_len++] = (struct mascot_behavior_reference){.behavior = behavior_ref->behavior, .frequency = behavior_ref->frequency};
-    }
-}
-
-// Set behavior (resets behavior pool and action stacks)
-void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* behavior)
-{
-    mascot->current_behavior = behavior;
-    mascot->current_action = (struct mascot_action_reference){0};
-    mascot->current_condition = (struct mascot_expression_value){0};
-    mascot->current_animation = NULL;
-    mascot->animation_index = 0;
-    mascot->frame_index = 0;
-    mascot->action_index = 0;
-    mascot->as_p = 0;
-
-    if (behavior) {
-        if (behavior->is_condition) {
-            WARN("<Mascot:%s:%u> Behavior is a condition, not a behavior", mascot->prototype->name, mascot->id);
-            return;
-        }
-        mascot_build_behavior_pool(mascot, behavior, behavior->add_behaviors);
-    }
-    else mascot_build_behavior_pool(mascot, NULL, false);
-
 }
 
 // Behavior iterator
@@ -676,8 +611,8 @@ enum mascot_tick_result mascot_tick(struct mascot* mascot, uint32_t tick, struct
 
     if (!mascot->current_behavior) {
         DEBUG("<Mascot:%s:%u> No behavior set, trying to set fall", mascot->prototype->name, mascot->id);
-        if (mascot->prototype->fall_behavior) {
-            mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        if (mascot_fall_behavior(mascot)) {
+            mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
         } else {
             WARN("<Mascot:%s:%u> No behavior set", mascot->prototype->name, mascot->id);
             mascot_build_behavior_pool(mascot, NULL, false);
@@ -765,21 +700,15 @@ bool mascot_drag_started(struct mascot* mascot, environment_pointer_t* pointer)
 bool mascot_drag_ended(struct mascot* mascot, bool throw)
 {
     mascot->dragged = false;
-    if (throw) mascot_set_behavior(mascot, mascot->prototype->thrown_behavior);
-    else mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    if (throw) mascot_set_behavior(mascot, mascot_thrown_behavior(mascot));
+    else mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
     environment_subsurface_set_offset(mascot->subsurface, 0, 0);
     environment_subsurface_release(mascot->subsurface);
     environment_subsurface_move(mascot->subsurface, mascot->X->value.i, mascot->Y->value.i-120, true);
     return true;
 }
 
-// Move the mascot to the specified position
-bool mascot_moved(struct mascot* mascot, int32_t x, int32_t y)
-{
-    mascot->X->value.i = x;
-    mascot->Y->value.i = y;
-    return true;
-}
+
 
 // Set the environment of the mascot
 bool mascot_environment_changed(struct mascot* mascot, environment_t* env)
@@ -964,6 +893,8 @@ static void mascot_init_(struct mascot* mascot, const struct mascot_prototype* p
     mascot->hotspot_active = false;
     mascot->hotspot_behavior = NULL;
 
+    mascot->associated_ie = NULL;
+
 }
 
 bool mascot_hotspot_click(struct mascot* mascot, int32_t x, int32_t y, enum mascot_hotspot_button button)
@@ -1051,4 +982,296 @@ struct mascot_hotspot* mascot_hotspot_by_pos(struct mascot* mascot, int32_t x, i
         return hotspot;
     }
     return NULL;
+}
+
+#endif
+
+bool mascot_moved(struct mascot* mascot, int32_t x, int32_t y)
+{
+    mascot->X->value.i = x;
+    mascot->Y->value.i = y;
+    return true;
+}
+
+float mascot_get_variable_f(struct mascot *mascot, uint16_t id)
+{
+    if (!mascot) {
+        return 0.0;
+    }
+
+    struct mascot_local_variable* var = &mascot->local_variables[id];
+    if (var->kind == mascot_local_variable_int) {
+        return (float)var->value.i;
+    }
+    return var->value.f;
+}
+
+int32_t mascot_get_variable_i(struct mascot *mascot, uint16_t id)
+{
+    if (!mascot) {
+        return 0;
+    }
+
+    struct mascot_local_variable* var = &mascot->local_variables[id];
+    if (var->kind == mascot_local_variable_float) {
+        return (int32_t)var->value.f;
+    }
+    return var->value.i;
+}
+
+void mascot_set_variable_f(struct mascot *mascot, uint16_t id, float value)
+{
+    if (!mascot) {
+        return;
+    }
+
+    struct mascot_local_variable* var = &mascot->local_variables[id];
+    var->value.f = value;
+}
+
+void mascot_set_variable_i(struct mascot *mascot, uint16_t id, int32_t value)
+{
+    if (!mascot) {
+        return;
+    }
+
+    struct mascot_local_variable* var = &mascot->local_variables[id];
+    var->value.i = value;
+}
+
+const struct mascot_behavior* mascot_fall_behavior(struct mascot* mascot)
+{
+    if (!mascot) {
+        return NULL;
+    }
+
+    return mascot->prototype->fall_behavior;
+}
+
+const struct mascot_behavior* mascot_thrown_behavior(struct mascot* mascot)
+{
+    if (!mascot) {
+        return NULL;
+    }
+
+    return mascot->prototype->thrown_behavior;
+}
+
+void mascot_build_behavior_pool(struct mascot* mascot, const struct mascot_behavior* behavior, bool add) {
+    if (!mascot) return;
+    if (!add) {
+        mascot->behavior_pool_len = 0;
+        memset(mascot->behavior_pool, 0, sizeof(struct mascot_behavior_reference) * 128);
+    }
+
+    const struct mascot_behavior_reference* next_behavior_list;
+    uint16_t behavior_count = 0;
+    if (behavior) {
+        next_behavior_list = behavior->next_behavior_list;
+        behavior_count = behavior->next_behaviors_count;
+    }
+    else {
+        next_behavior_list = (struct mascot_behavior_reference*)mascot->prototype->root_behavior_list;
+        behavior_count = mascot->prototype->root_behavior_list_count;
+    }
+
+    for (uint16_t i = 0; i < behavior_count; i++) {
+        const struct mascot_behavior_reference* behavior_ref = &next_behavior_list[i];
+        if (behavior_ref->behavior->is_condition) {
+            if (behavior_ref->behavior->condition) {
+                float result = 0.0;
+                enum expression_execution_result execution_status = expression_vm_execute(behavior_ref->behavior->condition->body, mascot, &result);
+                if (execution_status == EXPRESSION_EXECUTION_ERROR) {
+                    WARN("<Mascot:%s:%u> Error while executing condition expression", mascot->prototype->name, mascot->id);
+                    continue;
+                }
+                if (result == 0.0) {
+                    continue;
+                }
+            }
+            mascot_build_behavior_pool(mascot, behavior_ref->behavior, true);
+            continue;
+        }
+        if (behavior_ref->frequency == 0) continue;
+        if (behavior_ref->behavior->action->border_type != environment_border_type_any) {
+            if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) != behavior_ref->behavior->action->border_type) {
+                continue;
+            }
+        }
+        enum mascot_tick_result cond_res = mascot_check_condition(mascot, behavior_ref->behavior->condition);
+        if (cond_res == mascot_tick_error) {
+            return;
+        }
+        if (cond_res == mascot_tick_next) {
+            continue;
+        }
+        if (mascot->behavior_pool_len >= 128) {
+            break;
+        }
+        DEBUG("<Mascot:%s:%u> Adding behavior %s to pool", mascot->prototype->name, mascot->id, behavior_ref->behavior->name);
+        mascot->behavior_pool[mascot->behavior_pool_len++] = (struct mascot_behavior_reference){.behavior = behavior_ref->behavior, .frequency = behavior_ref->frequency};
+    }
+}
+
+// Set behavior (resets behavior pool and action stacks)
+void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* behavior)
+{
+#ifndef PLUGINSUPPORT_IMPLEMENTATION
+    if (mascot->current_action.action) {
+        struct action_funcs* funcs = mascot_get_handlers(mascot);
+        if (funcs) {
+            if (funcs->clean) {
+                funcs->clean(mascot);
+            }
+        }
+    }
+#endif
+
+    mascot->current_behavior = behavior;
+    mascot->current_action = (struct mascot_action_reference){0};
+    mascot->current_condition = (struct mascot_expression_value){0};
+    mascot->current_animation = NULL;
+    mascot->animation_index = 0;
+    mascot->frame_index = 0;
+    mascot->action_index = 0;
+    mascot->as_p = 0;
+
+    if (behavior) {
+        if (behavior->is_condition) {
+            WARN("<Mascot:%s:%u> Behavior is a condition, not a behavior", mascot->prototype->name, mascot->id);
+            return;
+        }
+        mascot_build_behavior_pool(mascot, behavior, behavior->add_behaviors);
+    }
+    else mascot_build_behavior_pool(mascot, NULL, false);
+}
+
+enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
+{
+    if (
+        mascot->X->value.i < 0 || mascot->X->value.i > (int32_t)environment_screen_width(mascot->environment) ||
+        mascot->Y->value.i < 0 || mascot->Y->value.i > (int32_t)environment_screen_height(mascot->environment)
+    ) {
+        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_screen_width(mascot->environment), environment_screen_height(mascot->environment));
+        mascot->X->value.i = rand() % environment_screen_width(mascot->environment);
+        mascot->Y->value.i = environment_screen_height(mascot->environment) - 256;
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+    return mascot_tick_ok;
+}
+
+enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot_action_reference* actionref, void (*clean_func)(struct mascot*))
+{
+    // Check if action border requirements are met
+    enum environment_border_type border_type = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+    if (actionref->action->border_type != environment_border_type_any) {
+        if (
+            border_type
+            != actionref->action->border_type
+        ) {
+            if (border_type != environment_border_type_floor) {
+                mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+                clean_func(mascot);
+                return mascot_tick_reenter;
+            }
+
+            return mascot_tick_next;
+        }
+    }
+    return mascot_tick_ok;
+}
+
+enum mascot_tick_result mascot_execute_variable(struct mascot *mascot, uint16_t variable_id)
+{
+    if (variable_id > MASCOT_LOCAL_VARIABLE_COUNT) {
+        LOG("ERROR", RED, "<Mascot:%s:%u> Variable %u out of bounds", mascot->prototype->name, mascot->id, variable_id);
+        return mascot_tick_error;
+    }
+    if (mascot->local_variables[variable_id].used) {
+        float vmres = 0.0;
+        enum expression_execution_result res = expression_vm_execute(
+            mascot->local_variables[variable_id].expr.expression_prototype->body,
+            mascot,
+            &vmres
+        );
+        if (res == EXPRESSION_EXECUTION_ERROR) {
+            LOG("ERROR", RED, "<Mascot:%s:%u> Variable %u errored for init in action \"%s\"", mascot->prototype->name, mascot->id, variable_id, mascot->current_action.action->name);
+            return mascot_tick_error;
+        }
+        if (mascot->local_variables[variable_id].kind == mascot_local_variable_float) {
+            DEBUG("<Mascot:%s:%u> Variable %u set to %f", mascot->prototype->name, mascot->id, variable_id, vmres);
+            mascot->local_variables[variable_id].value.f = vmres;
+        } else if (mascot->local_variables[variable_id].kind == mascot_local_variable_int) {
+            DEBUG("<Mascot:%s:%u> Variable %u set to %d", mascot->prototype->name, mascot->id, variable_id, (int)vmres);
+            mascot->local_variables[variable_id].value.i = (int)vmres;
+        } else {
+            LOG("ERROR", RED, "<Mascot:%s:%u> Variable %u kind not supported", mascot->prototype->name, mascot->id, variable_id);
+            return mascot_tick_error;
+        }
+    }
+    return mascot_tick_ok;
+}
+
+enum mascot_tick_result mascot_assign_variable(struct mascot *mascot, uint16_t variable_id, struct mascot_local_variable* variable_data)
+{
+    if (variable_id > MASCOT_LOCAL_VARIABLE_COUNT) {
+        LOG("ERROR", RED, "<Mascot:%s:%u> Variable %u out of bounds", mascot->prototype->name, mascot->id, variable_id);
+        return mascot_tick_error;
+    }
+    DEBUG("<Mascot:%s:%u> Variable %u assigned", mascot->prototype->name, mascot->id, variable_id);
+    mascot->local_variables[variable_id] = (struct mascot_local_variable){
+        .kind = mascot->local_variables[variable_id].kind,
+        .used = variable_data->used,
+        .expr = variable_data->expr,
+        .value = variable_data->value
+    };
+    return mascot_execute_variable(mascot, variable_id);
+}
+
+enum mascot_tick_result mascot_check_condition(struct mascot *mascot, const struct mascot_expression* condition)
+{
+    if (!condition) {
+        return mascot_tick_ok;
+    }
+    float vmres = 0.0;
+    enum expression_execution_result res = expression_vm_execute(
+        condition->body,
+        mascot,
+        &vmres
+    );
+    if (res == EXPRESSION_EXECUTION_ERROR) {
+        LOG("ERROR", RED, "<Mascot:%s:%u> Condition errored for next in action \"%s\"", mascot->prototype->name, mascot->id, mascot->current_action.action->name);
+        return mascot_tick_error;
+    }
+    if (vmres == 0.0) {
+        return mascot_tick_next;
+    }
+    return mascot_tick_ok;
+}
+
+enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const struct mascot_expression* condition)
+{
+    if (condition) {
+        if (condition->evaluate_once) {
+            return mascot_tick_ok;
+        }
+    }
+    return mascot_check_condition(mascot, condition);
+}
+
+int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y)
+{
+    if (screen_y == -1) return -1;
+    return environment_workarea_height(mascot->environment) - screen_y;
+}
+
+bool mascot_is_on_workspace_border(struct mascot* mascot)
+{
+    return (
+        mascot->X->value.i == 0 ||
+        mascot->X->value.i == (int32_t)environment_screen_width(mascot->environment) ||
+        mascot->Y->value.i == 0 ||
+        mascot->Y->value.i == mascot_screen_y_to_mascot_y(mascot, environment_workarea_height(mascot->environment))
+    );
 }

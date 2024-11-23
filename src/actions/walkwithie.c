@@ -1,30 +1,30 @@
-/*
-    move.c - wl_shimeji's move action implementation
-
-    Copyright (C) 2024  CluelessCatBurger <github.com/CluelessCatBurger>
-
-    This program is free software; you can redistribute it and/or
-    modify it under the terms of the GNU General Public License
-    as published by the Free Software Foundation; either version 2
-    of the License, or (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, see <https://www.gnu.org/licenses/>.
-*/
-
+#include "walkwithie.h"
 #include "move.h"
-#include "actionbase.h"
 
-enum mascot_tick_result move_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
+enum mascot_tick_result walkwithie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     if (!actionref->action->length) {
         LOG("ERROR", RED, "<Mascot:%s:%u> Move action has no length", mascot->prototype->name, mascot->id);
         return mascot_tick_error;
+    }
+
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (!ie) {
+        DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
+    if (!ie->active) {
+        DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
+    if (!environment_ie_allows_move(mascot->environment)) {
+        DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
     }
 
     enum mascot_tick_result actionref_cond = mascot_check_condition(mascot, actionref->condition);
@@ -65,14 +65,22 @@ enum mascot_tick_result move_action_init(struct mascot *mascot, struct mascot_ac
     mascot->VelocityX->value.i = 0;
     mascot->VelocityY->value.i = 0;
 
-    // Execute variables variables TargetX, TargetY
+    // Execute variables variables TargetX, TargetY, IEOffsetX, IEOffsetY
     struct mascot_local_variable* target_x = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_TARGETX_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_TARGETX_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_TARGETX_ID];
     struct mascot_local_variable* target_y = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_TARGETY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_TARGETY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_TARGETY_ID];
+    struct mascot_local_variable* ie_offt_x = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID];
+    struct mascot_local_variable* ie_offt_y = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID];
 
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_TARGETX_ID, target_x) == mascot_tick_error) {
         return mascot_tick_error;
     }
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_TARGETY_ID, target_y) == mascot_tick_error) {
+        return mascot_tick_error;
+    }
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID, ie_offt_x) == mascot_tick_error) {
+        return mascot_tick_error;
+    }
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID, ie_offt_y) == mascot_tick_error) {
         return mascot_tick_error;
     }
 
@@ -95,15 +103,14 @@ enum mascot_tick_result move_action_init(struct mascot *mascot, struct mascot_ac
         }
     }
 
-    mascot->state = mascot_state_move;
+    mascot->state = mascot_state_ie_walk;
 
     mascot_announce_affordance(mascot, actionref->action->affordance);
 
     return mascot_tick_ok;
-
 }
 
-struct mascot_action_next move_action_next(struct mascot* mascot, struct mascot_action_reference *actionref, uint32_t tick)
+struct mascot_action_next walkwithie_action_next(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     struct mascot_action_next result = {0};
 
@@ -124,11 +131,51 @@ struct mascot_action_next move_action_next(struct mascot* mascot, struct mascot_
         }
     }
 
-    DEBUG("<Mascot:%s:%u> Move action next, TargetX, TargetY: %d, %d", mascot->prototype->name, mascot->id, mascot->TargetX->value.i, mascot->TargetY->value.i);
-    DEBUG("<Mascot:%s:%u> Move action next, X, Y: %d, %d", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i);
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (!ie) {
+        WARN("<Mascot:%s:%u> Attached environment lost IE", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        walkwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+    if (!ie->active) {
+        INFO("<Mascot:%s:%u> IE is no longer active", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        walkwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+    if (ie->state == IE_STATE_MOVED) {
+        INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        walkwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+
+    int32_t mascot_x = mascot->X->value.i;
+    int32_t mascot_y = mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i);
+    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID);
+    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID);
+
+    int32_t ie_corner_x = mascot->LookingRight->value.i ? ie->x : ie->x + ie->width;
+    int32_t distance_x = abs((mascot_x + (mascot->LookingRight->value.i ? -ie_offt_x : ie_offt_x)) - ie_corner_x);
+    int32_t distance_y = abs((mascot_y + ie_offt_y) - (ie->y + ie->height));
+
+    if (distance_x > 50 || distance_y > 50) {
+        WARN("<Mascot:%s:%u> IE is too far away, values: %d %d, %d %d, %d %d, %d", mascot->prototype->name, mascot->id, mascot_x, mascot_y, ie_corner_x, ie->y + ie->height, distance_x, distance_y, mascot->LookingRight->value.i);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        walkwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+
+    DEBUG("<Mascot:%s:%u> WalkWithIE action next, TargetX, TargetY: %d, %d", mascot->prototype->name, mascot->id, mascot->TargetX->value.i, mascot->TargetY->value.i);
+    DEBUG("<Mascot:%s:%u> WalkWithIE action next, X, Y: %d, %d", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i);
     // Check if target is reached
-    if ((mascot->X->value.i == mascot->TargetX->value.i || mascot->TargetX->value.i == -1) &&
-        (mascot->Y->value.i == mascot_screen_y_to_mascot_y(mascot, mascot->TargetY->value.i) || mascot->TargetY->value.i == -1)) {
+    if ((mascot_x == mascot->TargetX->value.i || mascot->TargetX->value.i == -1) &&
+        (mascot_y == mascot->TargetY->value.i || mascot->TargetY->value.i == -1)) {
         result.status = mascot_tick_next;
         return result;
     }
@@ -198,7 +245,7 @@ struct mascot_action_next move_action_next(struct mascot* mascot, struct mascot_
     return result;
 }
 
-enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
+enum mascot_tick_result walkwithie_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     UNUSED(actionref);
     UNUSED(tick);
@@ -214,6 +261,9 @@ enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_ac
     int32_t target_y = mascot_screen_y_to_mascot_y(mascot, mascot->TargetY->value.i);
     int32_t posx = mascot->X->value.i;
     int32_t posy = mascot->Y->value.i;
+
+    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID);
+    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID);
 
     float velocity_x = mascot->VelocityX->value.f;
     float velocity_y = mascot->VelocityY->value.f;
@@ -240,8 +290,8 @@ enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_ac
     }
     if (target_y != INT32_MAX && target_y != -1) {
         bool down = posy > target_y;
-        DEBUG("<Mascot:%s:%u> Move action tick, posy, target_y, down: %d, %d, %d", mascot->prototype->name, mascot->id, posy, target_y, down);
-        DEBUG("<Mascot:%s:%u> Move action tick, velocity = %f,%f", mascot->prototype->name, mascot->id, velocity_x, velocity_y);
+        DEBUG("<Mascot:%s:%u> WalkWithIE action tick, posy, target_y, down: %d, %d, %d", mascot->prototype->name, mascot->id, posy, target_y, down);
+        DEBUG("<Mascot:%s:%u> WalkWithIE action tick, velocity = %f,%f", mascot->prototype->name, mascot->id, velocity_x, velocity_y);
         if (target_y < 0) {
             mascot->TargetY->value.i = target_y = 0;
         }
@@ -278,13 +328,25 @@ enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_ac
             return mascot_tick_reenter;
         }
     }
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            bool move_res = false;
+            if (looking_right) {
+                move_res = environment_ie_move(mascot->environment, posx + ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+            } else {
+                move_res = environment_ie_move(mascot->environment, posx - ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+            }
+            if (!move_res) {
+                mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
+                return mascot_tick_reenter;
+            }
+        }
+    }
     return mascot_tick_ok;
 }
 
-void move_action_clean(struct mascot *mascot) {
-    mascot->TargetX->value.i = 0;
-    mascot->TargetY->value.i = 0;
-    mascot->VelocityX->value.f = 0;
-    mascot->VelocityY->value.f = 0;
-    mascot_announce_affordance(mascot, NULL);
+void walkwithie_action_clean(struct mascot *mascot)
+{
+    move_action_clean(mascot);
 }

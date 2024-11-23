@@ -23,6 +23,11 @@
 #include "master_header.h"
 #include "wayland_includes.h"
 
+#define ENV_DISABLE_TABLETS 1
+#define ENV_DISABLE_FRACTIONAL_SCALE 2
+#define ENV_DISABLE_VIEWPORTER 4
+#define ENV_DISABLE_CURSOR_SHAPE 8
+
 typedef struct environment environment_t;
 typedef struct environment_subsurface environment_subsurface_t;
 typedef struct environment_pointer environment_pointer_t; // Any pointers, including tablets
@@ -66,8 +71,9 @@ enum environment_init_status {
 };
 
 #include "mascot.h"
+#include "plugins.h"
 
-enum environment_init_status environment_init(void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*));
+enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*));
 void environment_dispatch();
 void environment_new_env_listener(void(*listener)(environment_t*));
 void environment_rem_env_listener(void(*listener)(environment_t*));
@@ -119,5 +125,17 @@ float environment_screen_scale(environment_t* env);
 bool environment_is_ready(environment_t* env);
 bool environment_commit(environment_t* env);
 void enviroment_wait_until_ready(environment_t* env);
+bool environment_pre_tick(environment_t* env, uint32_t tick);
+
+void environment_set_public_cursor_position(environment_t* env, int32_t x, int32_t y);
+void environment_set_ie(environment_t* env, struct ie_object *ie);
+struct ie_object* environment_get_ie(environment_t* env);
+void environment_get_output_id_info(environment_t* env, const char** name, const char** make, const char** model, const char** desc, uint32_t *id);
+
+// IE's
+bool environment_ie_move(environment_t* env, int32_t dx, int32_t dy);
+bool environment_ie_allows_move(environment_t* env);
+bool environment_ie_throw(environment_t* env, float x_velocity, float y_velocity, float gravity, uint32_t tick);
+bool environment_ie_stop_movement(environment_t* env);
 
 #endif

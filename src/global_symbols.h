@@ -20,11 +20,13 @@
 #ifndef GLOBAL_SYMS_H
 #define GLOBAL_SYMS_H
 
+#include <fcntl.h>
 #include <stdbool.h>
 
 #include "environment.h"
 #include "mascot.h"
 #include "expressions.h"
+#include "plugins.h"
 
 bool mascot_noop(struct expression_vm_state* state);
 
@@ -370,7 +372,7 @@ bool mascot_anchor(struct expression_vm_state* state)
 {
     if (state->sp + 2 >= 255) return false;
     state->stack[state->sp] = state->ref_mascot->X->value.i;
-    state->stack[state->sp + 1] = state->ref_mascot->Y->value.i;
+    state->stack[state->sp + 1] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->Y->value.i;
     state->sp += 2;
     return true;
 }
@@ -387,7 +389,7 @@ bool mascot_anchor_x(struct expression_vm_state* state)
 bool mascot_anchor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp++] = state->ref_mascot->Y->value.i;
+    state->stack[state->sp++] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->Y->value.i;
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ANCHOR_Y { "mascot.anchor.y", mascot_anchor_y }
@@ -507,12 +509,8 @@ bool mascot_environment_floor_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_floor) {
-        state->stack[state->sp] = 1;
-    } else {
-        state->stack[state->sp] = 0;
-    }
-    state->sp++;
+    state->stack[state->sp-2] = border == environment_border_type_floor;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_FLOOR_ISON { "mascot.environment.floor.ison", mascot_environment_floor_ison }
@@ -521,12 +519,8 @@ bool mascot_environment_ceiling_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_ceiling) {
-        state->stack[state->sp] = 1;
-    } else {
-        state->stack[state->sp] = 0;
-    }
-    state->sp++;
+    state->stack[state->sp-2] = border == environment_border_type_ceiling;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_CEILING_ISON { "mascot.environment.ceiling.ison", mascot_environment_ceiling_ison }
@@ -535,12 +529,8 @@ bool mascot_environment_wall_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_wall) {
-        state->stack[state->sp] = 1;
-    } else {
-        state->stack[state->sp] = 0;
-    }
-    state->sp++;
+    state->stack[state->sp-2] = border == environment_border_type_wall;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_WALL_ISON { "mascot.environment.wall.ison", mascot_environment_wall_ison }
@@ -549,12 +539,12 @@ bool mascot_environment_left_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_wall && state->ref_mascot->X->value.i == 0) {
-        state->stack[state->sp] = 1;
-    } else {
-        state->stack[state->sp] = 0;
-    }
-    state->sp++;
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (border == environment_border_type_wall) {
+        int anchor_x = state->stack[state->sp-2];
+        state->stack[state->sp-2] = anchor_x == 0 || anchor_x == ie->x;
+    } else state->stack[state->sp-2] = 0;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_LEFT_ISON { "mascot.environment.left.ison", mascot_environment_left_ison }
@@ -563,12 +553,12 @@ bool mascot_environment_right_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_wall && state->ref_mascot->X->value.i == (int32_t)environment_screen_width(state->ref_mascot->environment)) {
-        state->stack[state->sp] = 1;
-    } else {
-        state->stack[state->sp] = 0;
-    }
-    state->sp++;
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (border == environment_border_type_wall) {
+        int anchor_x = state->stack[state->sp-2];
+        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_width(state->ref_mascot->environment) || anchor_x == ie->x+ie->width;
+    } else state->stack[state->sp-2] = 0;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_RIGHT_ISON { "mascot.environment.right.ison", mascot_environment_right_ison }
@@ -578,11 +568,12 @@ bool mascot_environment_work_area_left_border_ison(struct expression_vm_state* s
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
     if (border == environment_border_type_wall && state->ref_mascot->X->value.i == 0) {
-        state->stack[state->sp] = 1;
+        int anchor_x = state->stack[state->sp-2];
+        state->stack[state->sp-2] = anchor_x == 0;
     } else {
-        state->stack[state->sp] = 0;
+        state->stack[state->sp-2] = 0;
     }
-    state->sp++;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_WORK_AREA_LEFT_BORDER_ISON { "mascot.environment.workarea.leftborder.ison", mascot_environment_work_area_left_border_ison }
@@ -592,11 +583,12 @@ bool mascot_environment_work_area_right_border_ison(struct expression_vm_state* 
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
     if (border == environment_border_type_wall && state->ref_mascot->X->value.i == (int32_t)environment_screen_width(state->ref_mascot->environment)) {
-        state->stack[state->sp] = 1;
+        int anchor_x = state->stack[state->sp-2];
+        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_width(state->ref_mascot->environment);
     } else {
-        state->stack[state->sp] = 0;
+        state->stack[state->sp-2] = 0;
     }
-    state->sp++;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_WORK_AREA_RIGHT_BORDER_ISON { "mascot.environment.workarea.rightborder.ison", mascot_environment_work_area_right_border_ison }
@@ -606,11 +598,12 @@ bool mascot_environment_work_area_top_border_ison(struct expression_vm_state* st
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
     if (border == environment_border_type_ceiling) {
-        state->stack[state->sp] = 1;
+        int anchor_y = state->stack[state->sp-1];
+        state->stack[state->sp-2] = anchor_y == 0;
     } else {
-        state->stack[state->sp] = 0;
+        state->stack[state->sp-2] = 0;
     }
-    state->sp++;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_WORK_AREA_CEILING_BORDER_ISON { "mascot.environment.workarea.topborder.ison", mascot_environment_work_area_top_border_ison }
@@ -620,11 +613,12 @@ bool mascot_environment_work_area_bottom_border_ison(struct expression_vm_state*
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
     if (border == environment_border_type_floor) {
-        state->stack[state->sp] = 1;
+        int anchor_y = state->stack[state->sp-1];
+        state->stack[state->sp-2] = anchor_y == (int32_t)environment_screen_height(state->ref_mascot->environment);
     } else {
-        state->stack[state->sp] = 0;
+        state->stack[state->sp-2] = 0;
     }
-    state->sp++;
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_WORK_AREA_FLOOR_BORDER_ISON { "mascot.environment.workarea.bottomborder.ison", mascot_environment_work_area_bottom_border_ison }
@@ -635,7 +629,18 @@ bool mascot_environment_work_area_bottom_border_ison(struct expression_vm_state*
 bool mascot_environment_active_ie_right(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -1;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            state->stack[state->sp] = ie->x + ie->width;
+        } else {
+            state->stack[state->sp] = -1;
+        }
+    } else {
+        state->stack[state->sp] = -1;
+    }
+
     state->sp++;
     return true;
 }
@@ -644,7 +649,18 @@ bool mascot_environment_active_ie_right(struct expression_vm_state* state)
 bool mascot_environment_active_ie_left(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -1;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            state->stack[state->sp] = ie->x;
+        } else {
+            state->stack[state->sp] = -1;
+        }
+    } else {
+        state->stack[state->sp] = -1;
+    }
+
     state->sp++;
     return true;
 }
@@ -653,7 +669,18 @@ bool mascot_environment_active_ie_left(struct expression_vm_state* state)
 bool mascot_environment_active_ie_top(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -1;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            state->stack[state->sp] = ie->y;
+        } else {
+            state->stack[state->sp] = -1;
+        }
+    } else {
+        state->stack[state->sp] = -1;
+    }
+
     state->sp++;
     return true;
 }
@@ -662,7 +689,18 @@ bool mascot_environment_active_ie_top(struct expression_vm_state* state)
 bool mascot_environment_active_ie_bottom(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -1;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            state->stack[state->sp] = (ie->y + ie->height);
+        } else {
+            state->stack[state->sp] = -1;
+        }
+    } else {
+        state->stack[state->sp] = -1;
+    }
+
     state->sp++;
     return true;
 }
@@ -671,7 +709,18 @@ bool mascot_environment_active_ie_bottom(struct expression_vm_state* state)
 bool mascot_environment_active_ie_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -1;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            state->stack[state->sp] = ie->width;
+        } else {
+            state->stack[state->sp] = 0;
+        }
+    } else {
+        state->stack[state->sp] = 0;
+    }
+
     state->sp++;
     return true;
 }
@@ -680,7 +729,18 @@ bool mascot_environment_active_ie_width(struct expression_vm_state* state)
 bool mascot_environment_active_ie_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -1;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        if (ie->active) {
+            state->stack[state->sp] = ie->height;
+        } else {
+            state->stack[state->sp] = 0;
+        }
+    } else {
+        state->stack[state->sp] = 0;
+    }
+
     state->sp++;
     return true;
 }
@@ -689,7 +749,14 @@ bool mascot_environment_active_ie_height(struct expression_vm_state* state)
 bool mascot_environment_active_ie_visible(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    if (ie) {
+        state->stack[state->sp] = ie->active;
+    } else {
+        state->stack[state->sp] = 0;
+    }
+
     state->sp++;
     return true;
 }
@@ -697,9 +764,22 @@ bool mascot_environment_active_ie_visible(struct expression_vm_state* state)
 
 bool mascot_environment_active_ie_top_border_ison(struct expression_vm_state* state)
 {
-    if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
-    state->sp++;
+    if (state->sp - 2 <= 0) return false;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
+
+    if (ie) {
+        if (border == environment_border_type_floor) {
+            int32_t anchor_y = state->stack[state->sp-1];
+            state->stack[state->sp-2] = (ie->y == anchor_y) && ie->y + ie->width != 0;
+        }
+        else state->stack[state->sp-2] = 0;
+    } else {
+        state->stack[state->sp-2] = 0;
+    }
+
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_ACTIVE_IE_TOP_BORDER_ISON { "mascot.environment.activeie.topborder.ison", mascot_environment_active_ie_top_border_ison }
@@ -707,8 +787,22 @@ bool mascot_environment_active_ie_top_border_ison(struct expression_vm_state* st
 bool mascot_environment_active_ie_bottom_border_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
-    state->sp++;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    enum environment_border_type border = (int32_t)environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
+
+    if (ie) {
+        if (border == environment_border_type_ceiling) {
+            int anchor_y = state->stack[state->sp-1];
+            state->stack[state->sp-2] = (ie->y + ie->height == anchor_y) && ie->y + ie->height != (int32_t)environment_screen_height(state->ref_mascot->environment);
+        }
+        else state->stack[state->sp-2] = 0;
+    } else {
+        state->stack[state->sp-2] = 0;
+    }
+
+    state->sp--;
+
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_ACTIVE_IE_BOTTOM_BORDER_ISON { "mascot.environment.activeie.bottomborder.ison", mascot_environment_active_ie_bottom_border_ison }
@@ -716,8 +810,21 @@ bool mascot_environment_active_ie_bottom_border_ison(struct expression_vm_state*
 bool mascot_environment_active_ie_left_border_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
-    state->sp++;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
+
+    if (ie) {
+        if (border == environment_border_type_wall) {
+            int anchor_x = state->stack[state->sp-2];
+            state->stack[state->sp-2] = (ie->x == anchor_x) && ie->x != 0;
+        }
+        else state->stack[state->sp-2] = 0;
+    } else {
+        state->stack[state->sp-2] = 0;
+    }
+
+    state->sp--;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_ACTIVE_IE_LEFT_BORDER_ISON { "mascot.environment.activeie.leftborder.ison", mascot_environment_active_ie_left_border_ison }
@@ -725,8 +832,22 @@ bool mascot_environment_active_ie_left_border_ison(struct expression_vm_state* s
 bool mascot_environment_active_ie_right_border_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
-    state->sp++;
+
+    struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
+    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
+
+    if (ie) {
+        if (border == environment_border_type_wall) {
+            int anchor_x = state->stack[state->sp-2];
+            state->stack[state->sp-2] = (ie->x + ie->width == anchor_x) && ie->x + ie->width != (int32_t)environment_workarea_width(state->ref_mascot->environment);
+        }
+        else state->stack[state->sp-2] = 0;
+    } else {
+        state->stack[state->sp-2] = 0;
+    }
+
+    state->sp--;
+
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_ACTIVE_IE_RIGHT_BORDER_ISON { "mascot.environment.activeie.rightborder.ison", mascot_environment_active_ie_right_border_ison }
@@ -734,8 +855,15 @@ bool mascot_environment_active_ie_right_border_ison(struct expression_vm_state* 
 bool mascot_environment_active_ie_border_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
-    state->sp++;
+
+    mascot_environment_active_ie_top_border_ison(state);
+    mascot_environment_active_ie_bottom_border_ison(state);
+    mascot_environment_active_ie_left_border_ison(state);
+    mascot_environment_active_ie_right_border_ison(state);
+
+    state->stack[state->sp-4] = state->stack[state->sp-4] || state->stack[state->sp-3] || state->stack[state->sp-2] || state->stack[state->sp-1];
+
+    state->sp -= 3;
     return true;
 }
 #define FUNC_MASCOT_ENVIRONMENT_ACTIVE_IE_BORDER_ISON { "mascot.environment.activeie.border.ison", mascot_environment_active_ie_border_ison }
@@ -753,6 +881,7 @@ bool mascot_count_total(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     state->stack[state->sp] = mascot_total_count;
+    INFO("mascot_count_total: %d", mascot_total_count);
     state->sp++;
     return true;
 }
@@ -773,7 +902,7 @@ bool target_anchor(struct expression_vm_state* state)
     if (state->ref_mascot->target_mascot) {
         state->stack[state->sp] = state->ref_mascot->target_mascot->X->value.i;
         state->sp++;
-        state->stack[state->sp] = state->ref_mascot->target_mascot->Y->value.i;
+        state->stack[state->sp] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i;
         state->sp++;
     } else {
         state->stack[state->sp] = 0.0;
@@ -801,7 +930,7 @@ bool target_anchor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     if (state->ref_mascot->target_mascot) {
-        state->stack[state->sp++] = state->ref_mascot->target_mascot->Y->value.i;
+        state->stack[state->sp++] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i;
     } else {
         state->stack[state->sp++] = 0.0;
     }

@@ -16,6 +16,9 @@
 #include "scanjump.h"
 #include "interact.h"
 #include "dispose.h"
+#include "walkwithie.h"
+#include "fallwithie.h"
+#include "throwie.h"
 
 // Add new actions here
 // for example, #include "example.h"
