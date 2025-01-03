@@ -6,6 +6,7 @@
 #include <setjmp.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <execinfo.h>
 
 // Signal handler for SIGSEGV to ensure that plugin execution does not crash the main program
 
@@ -14,6 +15,16 @@ static jmp_buf last_okay_state;
 static void signal_handler(int sig)
 {
     UNUSED(sig);
+
+    void *backtrace_buf[50] = {0};
+    int backtrace_size = backtrace(backtrace_buf, 50);
+
+    TRACE("Segfault occuried in plugin!");
+    TRACE("Backtrace:");
+    fputs(CYAN, stderr);
+    backtrace_symbols_fd(backtrace_buf, backtrace_size, STDERR_FILENO);
+    TRACE("End of stack trace");
+
     longjmp(last_okay_state, 0);
 }
 
