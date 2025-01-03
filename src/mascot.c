@@ -1151,10 +1151,16 @@ enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
         mascot->X->value.i < 0 || mascot->X->value.i > (int32_t)environment_workarea_width(mascot->environment) ||
         mascot->Y->value.i < 0 || mascot->Y->value.i > (int32_t)environment_workarea_height(mascot->environment)
     ) {
-        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
-        mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
-        mascot->Y->value.i = environment_workarea_height(mascot->environment) - 256;
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), clamping!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
+        // mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
+        // mascot->Y->value.i = environment_workarea_height(mascot->environment) - 256;
+        // mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+
+        if (mascot->X->value.i < 0) mascot->X->value.i = 0;
+        if (mascot->X->value.i > (int32_t)environment_workarea_width(mascot->environment)) mascot->X->value.i = environment_workarea_width(mascot->environment);
+        if (mascot->Y->value.i < 0) mascot->Y->value.i = 0;
+        if (mascot->Y->value.i > (int32_t)environment_workarea_height(mascot->environment)) mascot->Y->value.i = environment_workarea_height(mascot->environment);
+
         return mascot_tick_reenter;
     }
     return mascot_tick_ok;
