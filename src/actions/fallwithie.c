@@ -17,15 +17,33 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "fall.h"
+#include "fallwithie.h"
 #include "actionbase.h"
-#include <stdint.h>
 
-enum mascot_tick_result fall_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
+enum mascot_tick_result fallwithie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     if (!actionref->action->length) {
         LOG("ERROR", RED, "<Mascot:%s:%u> Fall action has no length", mascot->prototype->name, mascot->id);
         return mascot_tick_error;
+    }
+
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (!ie) {
+        DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
+    if (!ie->active) {
+        DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
+    if (!environment_ie_allows_move(mascot->environment)) {
+        DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
     }
 
     enum mascot_tick_result actionref_cond = mascot_check_condition(mascot, actionref->condition);
@@ -75,40 +93,24 @@ enum mascot_tick_result fall_action_init(struct mascot *mascot, struct mascot_ac
     struct mascot_local_variable* airdragx = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_AIRDRAGX_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_AIRDRAGX_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_AIRDRAGX_ID];
     struct mascot_local_variable* airdragy = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_AIRDRAGY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_AIRDRAGY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_AIRDRAGY_ID];
     struct mascot_local_variable* gravity = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_GRAVITY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_GRAVITY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_GRAVITY_ID];
+    struct mascot_local_variable* ie_offt_x = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID];
+    struct mascot_local_variable* ie_offt_y = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID];
 
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_INITIALVELX_ID, initialvx) == mascot_tick_error) return mascot_tick_error;
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_INITIALVELY_ID, initialvy) == mascot_tick_error) return mascot_tick_error;
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_AIRDRAGX_ID, airdragx) == mascot_tick_error) return mascot_tick_error;
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_AIRDRAGY_ID, airdragy) == mascot_tick_error) return mascot_tick_error;
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_GRAVITY_ID, gravity) == mascot_tick_error) return mascot_tick_error;
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID, ie_offt_x) == mascot_tick_error) return mascot_tick_error;
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID, ie_offt_y) == mascot_tick_error) return mascot_tick_error;
     if (!airdragx->used) mascot->AirDragX->value.f = 0.05;
     if (!airdragy->used) mascot->AirDragY->value.f = 0.1;
     if (!gravity->used) mascot->Gravity->value.f = 2.0;
 
-
-    if (mascot->InitialVelY->value.f < 0.0) {
-        if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) == environment_border_type_ceiling) {
-            fall_action_clean(mascot);
-            return mascot_tick_next;
-        }
-    } else {
-        if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) != environment_border_type_none) {
-            fall_action_clean(mascot);
-            return mascot_tick_next;
-        }
-    }
-
-    if (mascot->InitialVelX->value.f == 0.0) {
-        if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) == environment_border_type_wall) {
-            fall_action_clean(mascot);
-            return mascot_tick_next;
-        }
-    }
-
     mascot->VelocityX->value.f = mascot->InitialVelX->value.f;
     mascot->VelocityY->value.f = mascot->InitialVelY->value.f;
 
-    mascot->state = mascot_state_fall;
+    mascot->state = mascot_state_ie_fall;
 
     mascot->action_duration = tick + 5; // Watchdog
 
@@ -117,7 +119,7 @@ enum mascot_tick_result fall_action_init(struct mascot *mascot, struct mascot_ac
 
 }
 
-enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
+enum mascot_tick_result fallwithie_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     UNUSED(actionref);
 
@@ -137,6 +139,8 @@ enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_ac
     float gravity = mascot->Gravity->value.f;
     int32_t posx = mascot->X->value.i;
     int32_t posy = mascot->Y->value.i;
+    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
+    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
 
     bool looking_right = mascot->LookingRight->value.i;
 
@@ -155,14 +159,10 @@ enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_ac
     new_x = velocity_x + mod_x;
     new_y = velocity_y + mod_y;
 
-    mascot->ModX->value.f = fmod(mod_x, 1.0);
-    mascot->ModY->value.f = fmod(mod_y, 1.0);
-
-    int32_t dev = (int32_t)fmax(abs(new_x), abs(new_y));
-    if (dev < 1) dev = 1;
-
     posx += new_x;
     posy -= new_y;
+
+    INFO("FallWithIE TICK, modx mody newx newy velx vely posx posy %f %f %d %d %f %f %d %d", mod_x, mod_y, new_x, new_y, velocity_x, velocity_y, posx, posy);
 
     if (mascot->LookingRight->value.i != looking_right) {
         mascot->LookingRight->value.i = looking_right;
@@ -180,12 +180,27 @@ enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_ac
             return mascot_tick_reenter;
         }
         mascot->action_duration = tick + 5;
+        struct ie_object* ie = environment_get_ie(mascot->environment);
+        if (ie) {
+            if (ie->active) {
+                bool move_res = false;
+                if (looking_right) {
+                    move_res = environment_ie_move(mascot->environment, posx - ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+                } else {
+                    move_res = environment_ie_move(mascot->environment, posx + ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+                }
+                if (!move_res) {
+                    mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
+                    return mascot_tick_reenter;
+                }
+            }
+        }
     }
 
     return mascot_tick_ok;
 }
 
-struct mascot_action_next fall_action_next(struct mascot* mascot, struct mascot_action_reference *actionref, uint32_t tick)
+struct mascot_action_next fallwithie_action_next(struct mascot* mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     struct mascot_action_next result = {0};
     result.next_action = *actionref;
@@ -196,6 +211,47 @@ struct mascot_action_next fall_action_next(struct mascot* mascot, struct mascot_
         result.status = mascot_tick_next;
         return result;
     }
+
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (!ie) {
+        WARN("<Mascot:%s:%u> Attached environment lost IE", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        fallwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+    if (!ie->active) {
+        INFO("<Mascot:%s:%u> IE is no longer active", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        fallwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+    if (ie->state == IE_STATE_MOVED) {
+        INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        fallwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+
+
+    int32_t mascot_x = mascot->X->value.i;
+    int32_t mascot_y = mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i);
+    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
+    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
+
+    int32_t ie_corner_x = mascot->LookingRight->value.i ? ie->x : ie->x + ie->width;
+    int32_t distance_x = abs((mascot_x + (mascot->LookingRight->value.i ? ie_offt_x : -ie_offt_x)) - ie_corner_x);
+    int32_t distance_y = abs((mascot_y + ie_offt_y) - (ie->y + ie->height));
+
+    if (distance_x > 50 || distance_y > 50) {
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        fallwithie_action_clean(mascot);
+        result.status = mascot_tick_next;
+        return result;
+    }
+
     if (mascot->VelocityY->value.f != 0.0) {
         if (btype == environment_border_type_ceiling && mascot->VelocityY->value.f < 0.0) {
             result.status = mascot_tick_next;
@@ -278,7 +334,7 @@ struct mascot_action_next fall_action_next(struct mascot* mascot, struct mascot_
     return result;
 }
 
-void fall_action_clean(struct mascot *mascot)
+void fallwithie_action_clean(struct mascot *mascot)
 {
     mascot->VelocityX->value.f = 0;
     mascot->VelocityY->value.f = 0;

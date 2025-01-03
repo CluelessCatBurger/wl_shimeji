@@ -10,6 +10,9 @@ import subprocess
 from typing import Generator
 import struct
 import time
+import tempfile
+
+import zipfile
 
 # Shimeji VM compiler -----------
 import enum
@@ -492,7 +495,8 @@ OP = enum.Enum("OP", [
 
 FORCED_EXTERNAL = [
     "mascot.anchor",
-    "mascot.totalCount"
+    "mascot.totalcount",
+    "mascot.count"
 ]
 FORCED_LOCAL = [
     "Name",
@@ -608,7 +612,7 @@ class Program:
             self.instructions.append((OP.STORE, node.value))
         elif isinstance(node, VariableNode):
             name = node.name
-            symlist = self.local_vars if not name in FORCED_EXTERNAL else self.global_vars
+            symlist = self.local_vars if not name.lower() in FORCED_EXTERNAL else self.global_vars
             name = SYMNAME_REMAP.get(name.lower(), name)
             if name not in symlist:
                 symlist.append(name)
@@ -617,7 +621,7 @@ class Program:
         elif isinstance(node, MemberAccessNode):
             name = str(node)
             name = SYMNAME_REMAP.get(name.lower(), name)
-            if name.count(".") != 1 or name in FORCED_EXTERNAL and name not in FORCED_LOCAL:
+            if name.count(".") != 1 or name.lower() in FORCED_EXTERNAL and name not in FORCED_LOCAL:
                 if name not in self.global_vars:
                     self.global_vars.append(name)
                 self.instructions.append((OP.LOADE, self.global_vars.index(name)))
@@ -1297,6 +1301,8 @@ class Compiler:
             images: list[str] - list of image paths
         """
 
+        conf_path = pathlib.Path(kwargs.get("conf_path", pathlib.Path(root_dir) / "conf"))
+
         # Is root_dir exists?
         if not pathlib.Path(root_dir).exists():
             raise FileNotFoundError(f"Directory {root_dir} does not exist.")
@@ -1304,28 +1310,28 @@ class Compiler:
         if not pathlib.Path(root_dir).is_dir():
             raise NotADirectoryError(f"{root_dir} is not a directory.")
 
-        if not (pathlib.Path(root_dir) / "conf").exists():
+        if not conf_path.exists():
             raise FileNotFoundError(f"Directory {root_dir} does not contain a 'conf' directory.")
 
-        if not (pathlib.Path(root_dir) / "conf").is_dir():
+        if not conf_path.is_dir():
             raise NotADirectoryError(f"{root_dir}/conf is not a directory.")
 
-        if not (pathlib.Path(root_dir) / "conf" / "actions.xml").exists():
+        if not (conf_path / "actions.xml").exists():
             raise FileNotFoundError(f"Directory {root_dir}/conf does not contain an 'actions.xml' file.")
 
-        if not (pathlib.Path(root_dir) / "conf" / "actions.xml").is_file():
+        if not (conf_path / "actions.xml").is_file():
             raise FileNotFoundError(f"{root_dir}/conf/actions.xml is not a file.")
 
-        if not (pathlib.Path(root_dir) / "conf" / "behaviors.xml").exists():
+        if not (conf_path / "behaviors.xml").exists():
             raise FileNotFoundError(f"Directory {root_dir}/conf does not contain a 'behaviors.xml' file.")
 
-        if not (pathlib.Path(root_dir) / "conf" / "behaviors.xml").is_file():
+        if not (conf_path / "behaviors.xml").is_file():
             raise FileNotFoundError(f"{root_dir}/conf/behaviors.xml is not a file.")
 
-        with open(pathlib.Path(root_dir) / "conf" / "actions.xml", "r") as f:
+        with open(conf_path / "actions.xml", "r") as f:
             actions = f.read()
 
-        with open(pathlib.Path(root_dir) / "conf" / "behaviors.xml", "r") as f:
+        with open(conf_path / "behaviors.xml", "r") as f:
             behaviors = f.read()
 
         programs_defintions, actions_defintions, (behaviors_defintions, root_behaviors) = shmconv(actions, behaviors)
@@ -1388,7 +1394,7 @@ class ShimejiCtl:
 
         self.list_parser = self.subparsers.add_parser('list', help='List all shimejis')
 
-        self.converter_parser = self.subparsers.add_parser("convert", help="Convert Shimeji-ee xml format to wl_shimeji json format")
+        self.converter_parser = self.subparsers.add_parser("convert", help="Convert Shimeji-ee mascot xml format to wl_shimeji mascot json format")
 
         self.converter_parser.add_argument("root_dir", type=str, help="Root directory of the mascot")
         self.converter_parser.add_argument("--output", "-o", type=str, help="Output directory")
@@ -1404,6 +1410,16 @@ class ShimejiCtl:
         self.converter_parser.add_argument("--custom_programs_path", type=str, help="Path to custom programs file")
         self.converter_parser.add_argument("-f", "--force", help="Overwrite mascot", action='store_true')
 
+        self.importer_parser = self.subparsers.add_parser("import", help="Import shimeji pack to wl_shimeji. Supports both Shimeji-ee instance and wl_shimeji pack formats")
+        self.importer_parser.add_argument("path", type=str, help="path to root directory of the Shimeji-EE instance or zip archive")
+        self.importer_parser.add_argument("--shimeji-ee", "-e", action="store_true", help="Treat path as Shimeji-EE intance")
+        self.importer_parser.add_argument("--wl_shimeji", "-w", action="store_true", help="Treat path as wl_shimeji pack")
+        self.importer_parser.add_argument("--force", "-f", action="store_true", help="Overwrite existing shimejis with same name")
+
+        self.exporter_parser = self.subparsers.add_parser("export", help="Export wl_shimeji pack to wl_shimeji pack format")
+        self.exporter_parser.add_argument("shimejis", type=str, nargs="+", help="Shimeji names to export")
+        self.exporter_parser.add_argument("--output", "-o", type=str, help="Output path")
+
         self.args = self.parser.parse_args()
 
         self.config_path = self.args.config_path
@@ -1411,7 +1427,7 @@ class ShimejiCtl:
 
         os.makedirs(self.shimeji_path, exist_ok=True)
 
-        self.known_shimejis: list[tuple[str,str]] = list(self.get_known_shimejis())
+        self.known_shimejis: list[tuple[str,str,str]] = list(self.get_known_shimejis())
 
         self.overlay_process = None
 
@@ -1424,7 +1440,7 @@ class ShimejiCtl:
                             manifest = json.load(f)
                         except json.JSONDecodeError:
                             continue
-                        names = (manifest.get("name", None), manifest.get("display_name", manifest.get("name", None)))
+                        names = (manifest.get("name", None), manifest.get("display_name", manifest.get("name", None)), f'{self.shimeji_path}/{name}')
                         if names[0] is not None:
                             yield names
 
@@ -1476,8 +1492,195 @@ class ShimejiCtl:
             self.list()
         elif self.args.action == "convert":
             self.convert()
+        elif self.args.action == "import":
+            self.import_shimeji()
+        elif self.args.action == "export":
+            self.export_shimeji()
         else:
             self.parser.print_help()
+
+    def import_shimeji(self):
+        def guess_format() -> str:
+            if self.args.shimeji_ee:
+                return "shimeji-ee"
+            elif self.args.wl_shimeji:
+                return "wl_shimeji"
+            if os.path.isfile(self.args.path):
+                if self.args.path.endswith(".wlshm"):
+                    return "wl_shimeji"
+                elif self.args.path.endswith(".zip"):
+                    with zipfile.ZipFile(self.args.path, "r") as zipf:
+                        if "pack_manifest.json" in zipf.namelist():
+                            return "wl_shimeji"
+                        else:
+                            root_dirs = [name for name in zipf.namelist() if name.endswith("/") and name.count("/") == 1]
+                            root_files = [name for name in zipf.namelist() if not name.count("/")]
+
+                            if len(root_dirs) == 1 and not len(root_files):
+                                if f"{root_dirs[0]}conf/" in zipf.namelist() and f"{root_dirs[0]}img/" in zipf.namelist():
+                                    return "shimeji-ee"
+                                else:
+                                    return "unknown"
+                            elif len(root_dirs) >= 2 and len(root_files) >= 1:
+                                if "conf/" in root_dirs and "img/" in root_dirs:
+                                    return "shimeji-ee"
+                                else:
+                                    return "unknown"
+                            else:
+                                return "unknown"
+                    return "unknown"
+            elif os.path.isdir(self.args.path):
+                root_dirs = [name for name in os.listdir(self.args.path) if os.path.isdir(f"{self.args.path}/{name}")]
+                root_files = [name for name in os.listdir(self.args.path) if os.path.isfile(f"{self.args.path}/{name}")]
+                if len(root_dirs) == 1 and not len(root_files):
+                    self.args.path = f"{self.args.path}/{root_dirs[0]}"
+                elif os.path.exists(f"{self.args.path}/conf") and os.path.exists(f"{self.args.path}/img"):
+                    return "shimeji-ee"
+                else:
+                    return "unknown"
+            else:
+                return "unknown"
+            return "unknown"
+
+        if self.args.shimeji_ee and self.args.wl_shimeji:
+            print("Error: Both Shimeji-ee and wl_shimeji formats cannot be specified at the same time")
+            raise SystemExit(1)
+
+        format = guess_format()
+
+        if format == "unknown":
+            print("Provided path is not a valid Shimeji-ee instance or wl_shimeji pack")
+            raise SystemExit(1)
+
+        if format == "shimeji-ee":
+            temp_dir = tempfile.mkdtemp()
+            if os.path.isfile(self.args.path):
+                with zipfile.ZipFile(self.args.path, "r") as zipf:
+                    root_dirs = [name for name in zipf.namelist() if name.endswith("/") and name.count("/") == 1]
+                    if len(root_dirs) == 1:
+                        root_dir = root_dirs[0]
+                    else:
+                        root_dir = ""
+                    zipf.extractall(temp_dir)
+                    self.args.path = f"{temp_dir}/{root_dir}"
+
+            for prototype in os.listdir(f"{self.args.path}/img"):
+                if prototype == "unused": continue
+                if os.path.isdir(f"{self.args.path}/img/{prototype}"):
+                    if os.path.exists(f"{self.shimeji_path}/{prototype}"):
+                        if not self.args.force:
+                            print(f"Shimeji {prototype} already exists, use -f to overwrite")
+                            raise SystemExit(1)
+                        else:
+                            shutil.rmtree(f"{self.shimeji_path}/{prototype}", ignore_errors=True)
+
+                    conf_dir = f"{self.args.path}/img/{prototype}/conf" if os.path.exists(f"{self.args.path}/img/{prototype}/conf") else f"{self.args.path}/conf"
+                    self.args.root_dir = f"{self.args.path}/img/{prototype}"
+
+                    # Compile the prototype
+                    programs, actions, behaviors = Compiler.compile_shimeji(f"{self.args.path}/img/{prototype}", indent=4, conf_path = conf_dir)
+
+                    manifest = {}
+
+                    manifest["name"] = f"Shimeji.{pathlib.Path(self.args.root_dir).name}"
+
+                    # TODO
+
+                    # if self.args.author:
+                    manifest["author"] = ""
+                    # if self.args.version:
+                    manifest["version"] = "0.0.0"
+                    # if self.args.description:
+                    manifest["description"] = ""
+                    # if self.args.display_name:
+                    manifest["display_name"] = pathlib.Path(self.args.root_dir).name
+                    manifest["programs"] = "programs.json"
+                    manifest["actions"] = "actions.json"
+                    manifest["behaviors"] = "behaviors.json"
+                    manifest["assets"] = "assets"
+
+                    os.makedirs(f"{self.shimeji_path}/{prototype}/assets", exist_ok=True)
+                    with open(f"{self.shimeji_path}/{prototype}/programs.json", "w") as f:
+                        f.write(programs)
+                    with open(f"{self.shimeji_path}/{prototype}/actions.json", "w") as f:
+                        f.write(actions)
+                    with open(f"{self.shimeji_path}/{prototype}/behaviors.json", "w") as f:
+                        f.write(behaviors)
+                    with open(f"{self.shimeji_path}/{prototype}/manifest.json", "w") as f:
+                        f.write(json.dumps(manifest, indent=4))
+
+
+                    for file in pathlib.Path(self.args.root_dir).glob("*.png"):
+                        if file.is_file():
+                            shutil.copy(file, pathlib.Path(f"{self.shimeji_path}/{prototype}") / "assets")
+
+                    print(f"Imported {prototype}")
+
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        elif format == "wl_shimeji":
+            with zipfile.ZipFile(self.args.path, "r") as zipf:
+                pack_manifest = json.load(zipf.open("pack_manifest.json"))
+                for shimeji in pack_manifest["shimejis"]:
+                    if os.path.exists(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}"):
+                        if not self.args.force:
+                            print(f"Shimeji {shimeji['name']} already exists, use -f to overwrite")
+                            raise SystemExit(1)
+                        else:
+                            shutil.rmtree(f"{self.shimeji_path}/{shimeji['name']}", ignore_errors=True)
+
+                    for file in zipf.namelist():
+                        if file.startswith(f"prototypes/{shimeji['name'].strip('Shimeji.')}/"):
+                            if file.endswith('/'): continue
+                            prototype_prefix = f"prototypes/{shimeji['name'].strip('Shimeji.')}/"
+                            filename = file.replace(prototype_prefix, "")
+                            basedir = os.path.dirname(filename)
+                            os.makedirs(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}/{basedir}", exist_ok=True)
+                            with open(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}/{filename}", "wb") as f:
+                                f.write(zipf.read(file))
+                    print(f"Imported {shimeji['name']}")
+        else:
+            print("Unknown format")
+            raise SystemExit(1)
+
+    def export_shimeji(self):
+        if not self.args.shimejis:
+            print("No shimejis specified")
+            raise SystemExit(1)
+
+        if not self.args.output:
+            self.args.output = os.curdir + "/export.wlshm"
+
+        if os.path.isdir(self.args.output):
+            self.args.output = f"{self.args.output}/export.wlshm"
+
+        if self.args.shimejis == ["all"]:
+            self.args.shimejis = [name[0] for name in self.known_shimejis]
+
+        pack_manifest = {}
+        pack_manifest["version"] = "0.0.0"
+        pack_manifest["shimejis"] = []
+
+        with zipfile.ZipFile(self.args.output, "w") as zipf:
+            for prototype in self.args.shimejis:
+                if not prototype.count("."):
+                    prototype = f"Shimeji.{prototype}"
+
+                dirname = prototype.strip("Shimeji.")
+
+                if prototype in [name[0] for name in self.known_shimejis]:
+                    # Find prototype directory
+                    prototype_dir = [name[2] for name in self.known_shimejis if name[0] == prototype][0]
+                    zipf.write(prototype_dir, f"prototypes/{dirname}/")
+                    for path, dirs, files in os.walk(prototype_dir):
+                        for file in files:
+                            zipf.write(f"{path}/{file}", f"prototypes/{dirname}/{path.lstrip(prototype_dir)}/{file}")
+                    pack_manifest["shimejis"].append(json.load(open(f"{prototype_dir}/manifest.json")))
+                    continue
+
+                print(f"Shimeji {prototype} not found")
+
+            zipf.writestr("pack_manifest.json", json.dumps(pack_manifest, indent=4))
+
 
     def summon(self):
         extra_argv = []

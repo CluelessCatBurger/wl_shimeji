@@ -10,6 +10,8 @@
 #ifndef MASTER_HEADER
 #define MASTER_HEADER
 
+#define WL_SHIMEJI_VERSION "0.0.0"
+
 #if defined(GNU_EXTS) && defined(__has_attribute)
 #define GNU_ATTRIBUTE(attr) __has_attribute(attr)
 #else
@@ -38,6 +40,7 @@ PRINT_FORMAT void __clog(const char*, const char*, const char*, int, const char*
 #define BLUE "\033[94m"
 #define MAGENTA "\033[95m"
 #define CYAN "\033[96m"
+#define GRAY "\033[97m"
 #define RESET "\033[0m"
 
 #define ERROR(x, ...) __error(__FILE__, __LINE__, x, ##__VA_ARGS__)

@@ -4,6 +4,7 @@ override BUILDDIR := build
 override UTILS_DIR := utils
 override ASSETS_DIR := assets
 override TARGET = $(BUILDDIR)/shimeji-overlayd
+override PLUGINS_TARGET = $(BUILDDIR)/libpluginsupport.so
 
 PREFIX ?= /usr/local
 
@@ -45,6 +46,9 @@ override OBJS := $(OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 override DEPS := $(OBJS:.o=.d)
 override DIRS := $(sort $(BUILDDIR) $(dir $(OBJS)))
 
+override PLUGINS_SRC := src/environment.c src/mascot.c src/expressions.c src/utils.c src/plugins.c
+override PLUGINS_OBJS := $(SHARED_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
+
 override _ := $(shell mkdir -p $(DIRS))
 
 # Ignore deleted header files
@@ -74,12 +78,15 @@ $(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c $(WL_HEADERS) Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
+$(PLUGINS_TARGET): $(PLUGINS_OBJS)
+	$(CC) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
+
 # Rule to build the binary
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 .PHONY: all
-all: $(TARGET)
+all: $(TARGET) $(PLUGINS_TARGET)
 
 .PHONY: clean
 clean:
@@ -88,11 +95,13 @@ clean:
 .NOTPARALLEL: $(WL_PROTO_DIR)/%.o
 
 .PHONY: install
-install: $(TARGET)
+install: $(TARGET) $(PLUGINS_TARGET)
 	install -d $(DESTDIR)$(PREFIX)/bin/
+	install -d $(DESTDIR)$(PREFIX)/lib/
 	install -d $(DESTDIR)$(PREFIX)/share/wl-shimeji/assets/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
+	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
 	install -m644 $(ASSETS_DIR)/* $(DESTDIR)$(PREFIX)/share/wl-shimeji/assets/
 
 # Handle header dependency rebuild

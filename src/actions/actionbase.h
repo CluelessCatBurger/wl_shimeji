@@ -34,12 +34,4 @@ typedef struct mascot_action_next (*mascot_action_next)(struct mascot *mascot, s
 typedef enum mascot_tick_result   (*mascot_action_tick)(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick);
 typedef void (*mascot_action_clean)(struct mascot *mascot);
 
-enum mascot_tick_result mascot_execute_variable(struct mascot *mascot, uint16_t variable_id);
-enum mascot_tick_result mascot_assign_variable(struct mascot *mascot, uint16_t variable_id, struct mascot_local_variable* variable_data);
-enum mascot_tick_result mascot_check_condition(struct mascot *mascot, const struct mascot_expression* condition);
-enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const struct mascot_expression* condition);
-enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot);
-enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot_action_reference* actionref, mascot_action_clean clean_func);
-int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y);
-
 #endif

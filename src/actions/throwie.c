@@ -17,14 +17,33 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "simple.h"
+#include "throwie.h"
 #include "actionbase.h"
 
-enum mascot_tick_result simple_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
+enum mascot_tick_result throwie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     if (!actionref->action->length) {
-        WARN("<Mascot:%s:%u> Simple action has no length", mascot->prototype->name, mascot->id);
+        WARN("<Mascot:%s:%u> ThrowIE action has no length", mascot->prototype->name, mascot->id);
         return mascot_tick_error;
+    }
+
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (!ie) {
+        DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
+    if (!ie->active) {
+        DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
+    if (!environment_ie_allows_move(mascot->environment)) {
+        DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
     }
 
     DEBUG("<Mascot:%s:%u> Initializing simple action \"%s\"", mascot->prototype->name, mascot->id, actionref->action->name);
@@ -33,7 +52,7 @@ enum mascot_tick_result simple_action_init(struct mascot *mascot, struct mascot_
     DEBUG("<Mascot:%s:%u> - Duration: %p", mascot->prototype->name, mascot->id, actionref->duration_limit);
 
 
-    enum mascot_tick_result ground_check = mascot_ground_check(mascot, actionref, simple_action_clean);
+    enum mascot_tick_result ground_check = mascot_ground_check(mascot, actionref, throwie_action_clean);
     if (ground_check != mascot_tick_ok) {
         return ground_check;
     }
@@ -68,13 +87,33 @@ enum mascot_tick_result simple_action_init(struct mascot *mascot, struct mascot_
         DEBUG("Duration limit for action \"%s\" is %f", actionref->action->name, vmres);
     }
 
+    struct mascot_local_variable* initialvx = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_INITIALVELX_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_INITIALVELX_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_INITIALVELX_ID];
+    struct mascot_local_variable* initialvy = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_INITIALVELY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_INITIALVELY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_INITIALVELY_ID];
+    struct mascot_local_variable* gravity = actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_GRAVITY_ID]->used ? actionref->overwritten_locals[MASCOT_LOCAL_VARIABLE_GRAVITY_ID] : actionref->action->variables[MASCOT_LOCAL_VARIABLE_GRAVITY_ID];
+
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_INITIALVELX_ID, initialvx) == mascot_tick_error) return mascot_tick_error;
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_INITIALVELY_ID, initialvy) == mascot_tick_error) return mascot_tick_error;
+    if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_GRAVITY_ID, gravity) == mascot_tick_error) return mascot_tick_error;
+
+    if (!initialvx->used) mascot->InitialVelX->value.f = 32;
+    if (!initialvy->used) mascot->InitialVelY->value.f = -10;
+    if (!gravity->used) mascot->Gravity->value.f = 0.5;
+
     // Reset action index, frame and animation index
     mascot->action_index = 0;
     mascot->frame_index = 0;
     mascot->next_frame_tick = 0;
     mascot->animation_index = 0;
 
-    mascot->state = mascot_state_stay;
+    mascot->state = mascot_state_ie_throw;
+
+    bool throw_ie = environment_ie_throw(mascot->environment, mascot->InitialVelX->value.f * (mascot->LookingRight->value.i ? 1 : -1), mascot->InitialVelY->value.f, mascot->Gravity->value.f, tick);
+
+    if (!throw_ie) {
+        WARN("<Mascot:%s:%u> Failed to throw mascot in IE", mascot->prototype->name, mascot->id);
+        throwie_action_clean(mascot);
+        return mascot_tick_next;
+    }
 
     // Announce affordance
     mascot_announce_affordance(mascot, actionref->action->affordance);
@@ -82,7 +121,7 @@ enum mascot_tick_result simple_action_init(struct mascot *mascot, struct mascot_
     return mascot_tick_ok;
 }
 
-struct mascot_action_next simple_action_next(struct mascot* mascot, struct mascot_action_reference *actionref, uint32_t tick)
+struct mascot_action_next throwie_action_next(struct mascot* mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     struct mascot_action_next result = {0};
 
@@ -91,7 +130,7 @@ struct mascot_action_next simple_action_next(struct mascot* mascot, struct masco
         return result;
     }
 
-    enum mascot_tick_result ground_check = mascot_ground_check(mascot, actionref, simple_action_clean);
+    enum mascot_tick_result ground_check = mascot_ground_check(mascot, actionref, throwie_action_clean);
     if (ground_check != mascot_tick_ok) {
         result.status = ground_check;
         return result;
@@ -110,6 +149,14 @@ struct mascot_action_next simple_action_next(struct mascot* mascot, struct masco
     if (actionref_cond != mascot_tick_ok)
     {
         result.status = actionref_cond;
+        return result;
+    }
+
+    struct ie_object* ie = environment_get_ie(mascot->environment);
+    if (ie->state == IE_STATE_MOVED) {
+        INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
+        throwie_action_clean(mascot);
+        result.status = mascot_tick_next;
         return result;
     }
 
@@ -152,7 +199,7 @@ struct mascot_action_next simple_action_next(struct mascot* mascot, struct masco
     if (mascot->next_frame_tick <= tick) {
         if (mascot->current_animation) {
             if (mascot->frame_index >= mascot->current_animation->frame_count) {
-                if (actionref->action->loop) {
+                if (mascot->action_duration || actionref->action->loop) {
                     mascot->frame_index = 0;
                 } else {
                     result.status = mascot_tick_next;
@@ -167,7 +214,7 @@ struct mascot_action_next simple_action_next(struct mascot* mascot, struct masco
     return result;
 }
 
-enum mascot_tick_result simple_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
+enum mascot_tick_result throwie_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     UNUSED(tick);
     UNUSED(actionref);
@@ -179,12 +226,12 @@ enum mascot_tick_result simple_action_tick(struct mascot *mascot, struct mascot_
 
     float velx = mascot->VelocityX->value.f;
     float vely = mascot->VelocityY->value.f;
+    bool looking_right = mascot->LookingRight->value.i;
     if (velx != 0.0 || vely != 0.0) {
         int32_t new_x = mascot->X->value.i;
         int32_t new_y = mascot->Y->value.i;
         int32_t x = new_x;
         int32_t y = new_y;
-        bool looking_right = mascot->LookingRight->value.i;
 
         if (velx != 0.0) {
             // new_x += velx;
@@ -206,12 +253,15 @@ enum mascot_tick_result simple_action_tick(struct mascot *mascot, struct mascot_
     return mascot_tick_ok;
 }
 
-void simple_action_clean(struct mascot *mascot)
+void throwie_action_clean(struct mascot *mascot)
 {
-    DEBUG("simple: clean");
     mascot->animation_index = 0;
     mascot->frame_index = 0;
     mascot->next_frame_tick = 0;
     mascot->action_duration = 0;
+    mascot->InitialVelX->value.f = 0;
+    mascot->InitialVelY->value.f = 0;
+    mascot->Gravity->value.f = 0;
+    environment_ie_stop_movement(mascot->environment);
     mascot_announce_affordance(mascot, NULL);
 }

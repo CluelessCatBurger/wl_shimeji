@@ -223,8 +223,8 @@ enum mascot_tick_result scanjump_action_tick(struct mascot *mascot, struct masco
     float distance_x = target_x - posx;
 
     // Check if posy has reached the screen height and make the object slide
-    if (posy >= (int32_t)environment_screen_height(mascot->environment)) {
-        posy = environment_screen_height(mascot->environment); // Cap the y-coordinate
+    if (posy >= (int32_t)environment_workarea_height(mascot->environment)) {
+        posy = environment_workarea_height(mascot->environment); // Cap the y-coordinate
         velocity_y = 0; // Stop vertical movement to slide horizontally
     } else {
         // Calculate the vertical distance to the peak based on the current position
