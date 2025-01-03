@@ -1,0 +1,30 @@
+pkgname=wl_shimeji
+pkgver=0.0.1
+pkgrel=1
+pkgdesc="A Shimeji-EE reimplemtation in C for Wayland Compositors with wlr-layer-shell support."
+arch=(any)
+url="https://github.com/CluelessCatBurger/wl_shimeji"
+license=('GPL-2.0')
+depends=('python' 'wayland' 'wayland-protocols' 'wlr-protocols' 'libspng')
+makedepends=('make' 'gcc' 'git')
+provides=('wl_shimeji')
+conflicts=('wl_shimeji')
+source=("$pkgname::git+https://github.com/CluelessCatBurger/wl_shimeji.git")
+sha256sums=('SKIP')
+
+prepare() {
+	cd "$pkgname"
+	git submodule update --init --recursive
+}
+
+build() {
+    unset CFLAGS
+    CFLAGS+=" -O2 "
+	cd "$pkgname"
+	make all PREFIX=/usr -j1
+}
+
+package() {
+	cd "$pkgname"
+	make DESTDIR="$pkgdir/" PREFIX=/usr install
+}
