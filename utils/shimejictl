@@ -1302,7 +1302,6 @@ class Compiler:
         """
 
         conf_path = pathlib.Path(kwargs.get("conf_path", pathlib.Path(root_dir) / "conf"))
-        print(conf_path)
 
         # Is root_dir exists?
         if not pathlib.Path(root_dir).exists():
@@ -1578,8 +1577,6 @@ class ShimejiCtl:
                     conf_dir = f"{self.args.path}/img/{prototype}/conf" if os.path.exists(f"{self.args.path}/img/{prototype}/conf") else f"{self.args.path}/conf"
                     self.args.root_dir = f"{self.args.path}/img/{prototype}"
 
-                    print(f"{self.args.path}/{prototype}/conf")
-
                     # Compile the prototype
                     programs, actions, behaviors = Compiler.compile_shimeji(f"{self.args.path}/img/{prototype}", indent=4, conf_path = conf_dir)
 
@@ -1617,6 +1614,8 @@ class ShimejiCtl:
                         if file.is_file():
                             shutil.copy(file, pathlib.Path(f"{self.shimeji_path}/{prototype}") / "assets")
 
+                    print(f"Imported {prototype}")
+
             shutil.rmtree(temp_dir, ignore_errors=True)
         elif format == "wl_shimeji":
             with zipfile.ZipFile(self.args.path, "r") as zipf:
@@ -1638,6 +1637,7 @@ class ShimejiCtl:
                             os.makedirs(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}/{basedir}", exist_ok=True)
                             with open(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}/{filename}", "wb") as f:
                                 f.write(zipf.read(file))
+                    print(f"Imported {shimeji['name']}")
         else:
             print("Unknown format")
             raise SystemExit(1)
