@@ -549,7 +549,7 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
 
                     sdresult = sd_bus_message_read(message, "sb", &window_id, &is_full_screen);
                     if (sdresult < 0) {
-                        WARN("[KWINSUPPORT] Failed to read windowFullscreen message: %s\n", strerror(-sdresult));
+                        WARN("[KWINSUPPORT] Failed to read windowFullscreen message: %s", strerror(-sdresult));
                         sd_bus_message_unref(message);
                         continue;
                     }
@@ -568,7 +568,7 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
                         }
                     }
                     if (ie == NULL) {
-                        WARN("[KWINSUPPORT] Window %s fullscreen changed for unknown output\n", window_id);
+                        WARN("[KWINSUPPORT] Window %s fullscreen changed for unknown output", window_id);
                         sd_bus_message_unref(message);
                         continue;
                     }
@@ -581,7 +581,7 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
                 else if (strcmp(member, "cursorPoseChanged") == 0) {
                     sdresult = sd_bus_message_read(message, "ii", x, y);
                     if (sdresult < 0) {
-                        WARN("[KWINSUPPORT] Failed to read cursorPoseChanged message: %s\n", strerror(-sdresult));
+                        WARN("[KWINSUPPORT] Failed to read cursorPoseChanged message: %s", strerror(-sdresult));
                         sd_bus_message_unref(message);
                         continue;
                     }
@@ -589,7 +589,7 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
                 else if (strcmp(member, "deactivate") == 0) {
                     sdresult = sd_bus_message_read(message, "s", x, y);
                     if (sdresult < 0) {
-                        WARN("[KWINSUPPORT] Failed to read deactivate message: %s\n", strerror(-sdresult));
+                        WARN("[KWINSUPPORT] Failed to read deactivate message: %s", strerror(-sdresult));
                         sd_bus_message_unref(message);
                         continue;
                     }
@@ -608,7 +608,7 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
                         }
                     }
                     if (ie == NULL) {
-                        WARN("[KWINSUPPORT] Window %s fullscreen changed for unknown output\n", window_id);
+                        WARN("[KWINSUPPORT] Window %s fullscreen changed for unknown output", window_id);
                         sd_bus_message_unref(message);
                         continue;
                     }
@@ -624,7 +624,7 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
 
                     sdresult = sd_bus_message_read(message, "s", &window_id);
                     if (sdresult < 0) {
-                        WARN("[KWINSUPPORT] Failed to read moveStarted message: %s\n", strerror(-sdresult));
+                        WARN("[KWINSUPPORT] Failed to read moveStarted message: %s", strerror(-sdresult));
                         sd_bus_message_unref(message);
                         continue;
                     }
