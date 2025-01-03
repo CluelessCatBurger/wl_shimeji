@@ -40,6 +40,7 @@ PRINT_FORMAT void __clog(const char*, const char*, const char*, int, const char*
 #define BLUE "\033[94m"
 #define MAGENTA "\033[95m"
 #define CYAN "\033[96m"
+#define GRAY "\033[97m"
 #define RESET "\033[0m"
 
 #define ERROR(x, ...) __error(__FILE__, __LINE__, x, ##__VA_ARGS__)

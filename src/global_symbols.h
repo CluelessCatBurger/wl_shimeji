@@ -22,6 +22,7 @@
 
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "environment.h"
 #include "mascot.h"
@@ -295,7 +296,7 @@ bool math_pow(struct expression_vm_state* state)
 bool math_random(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = (float)rand() / (float)RAND_MAX;
+    state->stack[state->sp] = drand48();
     state->sp++;
     return true;
 }
@@ -435,7 +436,7 @@ bool mascot_environment_cursor_dy(struct expression_vm_state* state)
 bool mascot_environment_screen_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_screen_width(state->ref_mascot->environment);
+    state->stack[state->sp] = environment_workarea_width(state->ref_mascot->environment);
     state->sp++;
     return true;
 }
@@ -444,7 +445,7 @@ bool mascot_environment_screen_width(struct expression_vm_state* state)
 bool mascot_environment_screen_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_screen_height(state->ref_mascot->environment);
+    state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment);
     state->sp++;
     return true;
 }

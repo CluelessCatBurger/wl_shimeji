@@ -221,16 +221,16 @@ enum environment_border_type environment_try_ie_collision(environment_t *env, in
         }
     }
 
-    // Check for ceiling (bottom border, treated as ceiling): Movement from below to above (moving upward to hit the bottom)
-    else if (from_y > to_y && from_y > env->ie->y + env->ie->height && to_y <= env->ie->y + env->ie->height) {
-        // The line is moving upwards (hitting the bottom of the box)
-        int32_t x = from_x + (env->ie->y + env->ie->height - from_y) * (to_x - from_x) / (to_y - from_y);
-        if (x >= env->ie->x && x <= env->ie->x + env->ie->width) {
-            *out_x = x;
-            *out_y = env->ie->y + env->ie->height;
-            result = environment_border_type_ceiling;  // Treat bottom as ceiling
-        }
-    }
+    // // Check for ceiling (bottom border, treated as ceiling): Movement from below to above (moving upward to hit the bottom)
+    // else if (from_y > to_y && from_y > env->ie->y + env->ie->height && to_y <= env->ie->y + env->ie->height) {
+    //     // The line is moving upwards (hitting the bottom of the box)
+    //     int32_t x = from_x + (env->ie->y + env->ie->height - from_y) * (to_x - from_x) / (to_y - from_y);
+    //     if (x >= env->ie->x && x <= env->ie->x + env->ie->width) {
+    //         *out_x = x;
+    //         *out_y = env->ie->y + env->ie->height;
+    //         result = environment_border_type_ceiling;  // Treat bottom as ceiling
+    //     }
+    // }
 
     // Check for left side (wall) collision: Movement from left to right, and the line intersects with the left border
     else if (from_x < env->ie->x && to_x > env->ie->x) {
@@ -288,7 +288,7 @@ enum environment_border_type environment_try_ie_collision(environment_t *env, in
 
 uint32_t yconv(environment_t* env, uint32_t y)
 {
-    return (int32_t)(env->output.height / env->scale) - y;
+    return (int32_t)environment_workarea_height(env) - y;
 }
 
 #ifndef PLUGINSUPPORT_IMPLEMENTATION
@@ -1619,16 +1619,16 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
     if (dy < 0) {
         dy = 0;
         result = environment_move_clamped;
-    } else if (dy > (int32_t)surface->env->height) {
-        dy = surface->env->height;
+    } else if (dy > (int32_t)environment_workarea_height(surface->env)) {
+        dy = environment_workarea_height(surface->env);
         result = environment_move_clamped;
     }
 
     if (dx < 0) {
         dx = 0;
         result = environment_move_clamped;
-    } else if (dx > (int32_t)surface->env->width) {
-        dx = surface->env->width;
+    } else if (dx > (int32_t)environment_workarea_width(surface->env)) {
+        dx = environment_workarea_width(surface->env);
         result = environment_move_clamped;
     }
 
@@ -1769,12 +1769,12 @@ bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface, u
 
 uint32_t environment_cursor_x(environment_t* env) {
     UNUSED(env);
-    return active_pointer.public_x;
+    return active_pointer.grabbed_surface ? active_pointer.x : active_pointer.public_x;
 }
 
 uint32_t environment_cursor_y(environment_t* env) {
     UNUSED(env);
-    return active_pointer.public_y;
+    return active_pointer.grabbed_surface ? active_pointer.y : active_pointer.public_y;
 }
 
 int32_t environment_cursor_dx(environment_t* env) {
@@ -1985,8 +1985,6 @@ bool environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
     // If window is out of bounds on y axis, this is error
     if (dy < 0 || dy > (int32_t)environment_screen_height(env)) return false;
 
-    INFO("Moving window by %d, %d", dx, dy);
-
     enum plugin_execution_result res = plugin_execute_ie_move(env->ie->parent_plugin, env->ie, dx, dy);
     if (res != PLUGIN_EXEC_OK) {
         if (res == PLUGIN_EXEC_SEGFAULT) {
@@ -2092,8 +2090,8 @@ enum environment_border_type environment_get_border_type(environment_t *env, int
 
     // Detect type of border by coordinates using output size (width, height)
     if (y <= 0) return environment_border_type_ceiling;
-    else if (x >= (int32_t)env->width || x <= 0) return environment_border_type_wall;
-    else if (y >= (int32_t)env->height) return environment_border_type_floor;
+    else if (x >= (int32_t)environment_workarea_width(env)|| x <= 0) return environment_border_type_wall;
+    else if (y >= (int32_t)environment_workarea_height(env)) return environment_border_type_floor;
     else if (ie_border_type == environment_border_type_wall) return environment_border_type_wall;
     else if (ie_border_type == environment_border_type_ceiling) return environment_border_type_ceiling;
     else if (ie_border_type == environment_border_type_floor) return environment_border_type_floor;
