@@ -152,7 +152,7 @@ struct mascot_action_next simple_action_next(struct mascot* mascot, struct masco
     if (mascot->next_frame_tick <= tick) {
         if (mascot->current_animation) {
             if (mascot->frame_index >= mascot->current_animation->frame_count) {
-                if (mascot->action_duration || actionref->action->loop) {
+                if (actionref->action->loop) {
                     mascot->frame_index = 0;
                 } else {
                     result.status = mascot_tick_next;
