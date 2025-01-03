@@ -46,12 +46,33 @@ Look `shimeji-overlayd --help` for more information
 
 `shimejictl` is a simple script that allows you to control shimeji overlay daemon, convert Shimeji-ee type mascots to the wl_shimeji format, and more.
 
-### Convert Shimeji-ee mascots
+### Converting individual Shimeji-ee mascots
 
   ```sh
-  shimejictl convert /path/to/original/mascot/directory
+  shimejictl convert .../shimeji-ee/img/mascotname
   ```
-It will write converted mascots to the ${config}/shimejis (usually config == ~/.local/share/wl_shimeji) or in the directory that you specified with `--output` option.
+Converts individual mascot from Shimeji-ee format to the wl_shimeji format. Note: The conf/ directory and .png assets must be included. The converted mascot will be written to the shimejis/ directory, relative to the configuration directory.
+
+### Converting entire Shimeji-ee instance
+
+To convert all mascots at once, you can use `import` subcommand. It accepts path to either a Shimeji-ee instance (as a zip archive or an extracted directory) or a wl_shimeji configuration pack (usually ends with .wlshm).
+
+  ```sh
+    shimejictl import /path/to/instance/file/or/directory
+  ```
+This command will convert all mascots from the Shimeji-ee instance to the wl_shimeji format and write them to the shimejis/ directory, relative to the configuration directory.
+
+### Exporting configurations
+To export already converted mascots to a configuration pack, use the export subcommand. This will create a zip archive containing all mascots and their configurations, named export.wlshm in the current directory.
+
+  ```sh
+    shimejictl export
+  ```
+You can also specify a custom output path by passing it as an argument:
+
+  ```sh
+    shimejictl export /path/to/output/file.wlshm
+  ```
 
 ### Summoning and dismissing
 
@@ -91,8 +112,8 @@ It will write converted mascots to the ${config}/shimejis (usually config == ~/.
 - [x] Affordances - Mascots can interact with each other
 - [x] Hotspots on mascots - Mascots can be patted (My version uses middle click and scrolling for this instead of original left click)
 - [x] Dragging - Mascots can be dragged around the screen
-- [ ] Environment interaction - Mascots can interact with the environment (Foreign windows, pointer, etc)
-- [ ] Plugins - Plugins for environment interaction
+- [x] Environment interaction - Mascots can interact with the environment (Foreign windows, pointer, etc) [EXPERIMENTAL]
+- [x] Plugins - Plugins for environment interaction [EXPERIMENTAL]
 - [ ] Configuration - Configuration for things like cloning, draggability, etc
 
 ## Notes:
