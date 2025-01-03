@@ -1,4 +1,5 @@
 #include "walkwithie.h"
+#include "environment.h"
 #include "move.h"
 
 enum mascot_tick_result walkwithie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
@@ -156,11 +157,11 @@ struct mascot_action_next walkwithie_action_next(struct mascot *mascot, struct m
 
     int32_t mascot_x = mascot->X->value.i;
     int32_t mascot_y = mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i);
-    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID);
-    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID);
+    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
+    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
 
     int32_t ie_corner_x = mascot->LookingRight->value.i ? ie->x : ie->x + ie->width;
-    int32_t distance_x = abs((mascot_x + (mascot->LookingRight->value.i ? -ie_offt_x : ie_offt_x)) - ie_corner_x);
+    int32_t distance_x = abs((mascot_x + (mascot->LookingRight->value.i ? ie_offt_x : -ie_offt_x)) - ie_corner_x);
     int32_t distance_y = abs((mascot_y + ie_offt_y) - (ie->y + ie->height));
 
     if (distance_x > 50 || distance_y > 50) {
@@ -262,8 +263,8 @@ enum mascot_tick_result walkwithie_action_tick(struct mascot *mascot, struct mas
     int32_t posx = mascot->X->value.i;
     int32_t posy = mascot->Y->value.i;
 
-    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID);
-    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID);
+    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
+    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
 
     float velocity_x = mascot->VelocityX->value.f;
     float velocity_y = mascot->VelocityY->value.f;
@@ -333,9 +334,9 @@ enum mascot_tick_result walkwithie_action_tick(struct mascot *mascot, struct mas
         if (ie->active) {
             bool move_res = false;
             if (looking_right) {
-                move_res = environment_ie_move(mascot->environment, posx + ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+                move_res = environment_ie_move(mascot->environment, posx - ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
             } else {
-                move_res = environment_ie_move(mascot->environment, posx - ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+                move_res = environment_ie_move(mascot->environment, posx + ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
             }
             if (!move_res) {
                 mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
