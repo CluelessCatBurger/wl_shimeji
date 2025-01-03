@@ -692,10 +692,9 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
 
         if (ie->state == IE_STATE_THROWN) {
             // Move window
-            float time = (tick - ie->reference_tick) / 25.0f;
-            int32_t new_x = ie->x + ie->x_velocity + (float)(time * ie->gravity);
-            int32_t new_y = ie->y + ie->y_velocity;
-
+            float time = (tick - ie->reference_tick);
+            int32_t new_x = ie->x + ie->x_velocity;
+            int32_t new_y = ie->y + ie->y_velocity + (float)(time * ie->gravity);
             environment_ie_move(ie->environment, new_x, new_y);
         }
 
