@@ -23,6 +23,7 @@
 #include "mascot_config_parser.h"
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -340,15 +341,13 @@ const struct mascot_behavior* select_behavior_from_pool(struct mascot* mascot, c
         if (mascot_check_condition(mascot, pool[i].condition) != mascot_tick_ok) continue;
         total_frequency += pool[i].frequency;
     }
-    int64_t random = (uint32_t)(((float)rand() / (float)RAND_MAX) * (float)total_frequency);
+    int64_t random = drand48() * (double)total_frequency;
     for (int16_t i = 0; i < pool_len; i++)
     {
         if (!pool[i].frequency) continue;
         if (mascot_check_condition(mascot, pool[i].condition) != mascot_tick_ok) continue;
         random -= (int64_t)pool[i].frequency;
-        if (random <= 0) {
-            return pool[i].behavior;
-        }
+        if (random <= 0) return pool[i].behavior;
     }
     return NULL;
 }
@@ -1149,12 +1148,12 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
 enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
 {
     if (
-        mascot->X->value.i < 0 || mascot->X->value.i > (int32_t)environment_screen_width(mascot->environment) ||
-        mascot->Y->value.i < 0 || mascot->Y->value.i > (int32_t)environment_screen_height(mascot->environment)
+        mascot->X->value.i < 0 || mascot->X->value.i > (int32_t)environment_workarea_width(mascot->environment) ||
+        mascot->Y->value.i < 0 || mascot->Y->value.i > (int32_t)environment_workarea_height(mascot->environment)
     ) {
-        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_screen_width(mascot->environment), environment_screen_height(mascot->environment));
-        mascot->X->value.i = rand() % environment_screen_width(mascot->environment);
-        mascot->Y->value.i = environment_screen_height(mascot->environment) - 256;
+        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
+        mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
+        mascot->Y->value.i = environment_workarea_height(mascot->environment) - 256;
         mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
         return mascot_tick_reenter;
     }
@@ -1270,7 +1269,7 @@ bool mascot_is_on_workspace_border(struct mascot* mascot)
 {
     return (
         mascot->X->value.i == 0 ||
-        mascot->X->value.i == (int32_t)environment_screen_width(mascot->environment) ||
+        mascot->X->value.i == (int32_t)environment_workarea_width(mascot->environment) ||
         mascot->Y->value.i == 0 ||
         mascot->Y->value.i == mascot_screen_y_to_mascot_y(mascot, environment_workarea_height(mascot->environment))
     );

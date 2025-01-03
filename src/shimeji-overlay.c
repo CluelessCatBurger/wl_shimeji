@@ -921,7 +921,7 @@ int main(int argc, const char** argv)
         return 1;
     }
 
-    srand(time(NULL));
+    srand48(time(NULL));
 
     // Create socket
     int listenfd = create_socket(socket_path);
