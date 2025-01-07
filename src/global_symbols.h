@@ -624,9 +624,6 @@ bool mascot_environment_work_area_bottom_border_ison(struct expression_vm_state*
 }
 #define FUNC_MASCOT_ENVIRONMENT_WORK_AREA_FLOOR_BORDER_ISON { "mascot.environment.workarea.bottomborder.ison", mascot_environment_work_area_bottom_border_ison }
 
-
-// IE: Not implemented yet
-
 bool mascot_environment_active_ie_right(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
@@ -636,10 +633,10 @@ bool mascot_environment_active_ie_right(struct expression_vm_state* state)
         if (ie->active) {
             state->stack[state->sp] = ie->x + ie->width;
         } else {
-            state->stack[state->sp] = -1;
+            state->stack[state->sp] = 0;
         }
     } else {
-        state->stack[state->sp] = -1;
+        state->stack[state->sp] = 0;
     }
 
     state->sp++;
@@ -656,10 +653,10 @@ bool mascot_environment_active_ie_left(struct expression_vm_state* state)
         if (ie->active) {
             state->stack[state->sp] = ie->x;
         } else {
-            state->stack[state->sp] = -1;
+            state->stack[state->sp] = 0;
         }
     } else {
-        state->stack[state->sp] = -1;
+        state->stack[state->sp] = 0;
     }
 
     state->sp++;
@@ -676,10 +673,10 @@ bool mascot_environment_active_ie_top(struct expression_vm_state* state)
         if (ie->active) {
             state->stack[state->sp] = ie->y;
         } else {
-            state->stack[state->sp] = -1;
+            state->stack[state->sp] = 0;
         }
     } else {
-        state->stack[state->sp] = -1;
+        state->stack[state->sp] = 0;
     }
 
     state->sp++;
@@ -696,10 +693,10 @@ bool mascot_environment_active_ie_bottom(struct expression_vm_state* state)
         if (ie->active) {
             state->stack[state->sp] = (ie->y + ie->height);
         } else {
-            state->stack[state->sp] = -1;
+            state->stack[state->sp] = 0;
         }
     } else {
-        state->stack[state->sp] = -1;
+        state->stack[state->sp] = 0;
     }
 
     state->sp++;
@@ -882,7 +879,6 @@ bool mascot_count_total(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     state->stack[state->sp] = mascot_total_count;
-    INFO("mascot_count_total: %d", mascot_total_count);
     state->sp++;
     return true;
 }

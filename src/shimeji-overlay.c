@@ -39,6 +39,7 @@
 #include <setjmp.h>
 #include <string.h>
 #include "plugins.h"
+#include "config.h"
 
 #define MASCOT_OVERLAYD_INSTANCE_EXISTS -1
 #define MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR -2
@@ -403,21 +404,6 @@ void remove_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
     send(fd, buff, 2, 0);
 }
 
-bool process_remove_mascot_packet(uint8_t* buff, uint8_t len, int fd)
-{
-    UNUSED(buff);
-    if (len < 2) return false;
-    environment_select_position(remove_mascot, (void*)(uintptr_t)fd);
-    pthread_mutex_lock(&environment_store.mutex);
-    for (size_t i = 0; i < environment_store.entry_count; i++) {
-        if (environment_store.entry_states[i]) {
-            environment_set_input_state(environment_store.entries[i], true);
-        }
-    }
-    pthread_mutex_unlock(&environment_store.mutex);
-    return true;
-}
-
 enum mascot_prototype_load_result load_prototype(const char* path)
 {
     struct mascot_prototype* prototype = mascot_prototype_new();
@@ -496,13 +482,13 @@ void select_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
     int fd = (int)(uintptr_t)data;
     struct mascot* mascot = environment_subsurface_get_mascot(subsurface);
     if (!mascot) {
-        char buff[6] = {4, 1, 0, 0, 0, 0}; // Command REMOVE_RESULT, result NO_MASCOT
+        char buff[6] = {4, 1, 0, 0, 0, 0}; // Command SELECT_RESULT, result NO_MASCOT
         send(fd, buff, 2, 0);
         return;
     }
 
     // Write mascot id to buffer
-    char buff[6] = {0}; // Command REMOVE_RESULT, result SUCCESS
+    char buff[6] = {0}; // Command SELECT_RESULT, result SUCCESS
     buff[0] = 4;
     buff[1] = 0;
     // Write uint32_t
@@ -511,6 +497,51 @@ void select_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
     send(fd, buff, 6, 0);
 }
 
+bool process_config_packet(uint8_t* buff, uint8_t len, int fd)
+{
+    INFO("Processing config packet, len %d", len);
+    if (len < 3 || len > 6) return false;
+    uint8_t param = buff[1];
+    int32_t large_param;
+    switch (param) {
+        case CONFIG_PARAM_BREEDING_ID:
+            config_set_breeding(buff[2]);
+            break;
+        case CONFIG_PARAM_DRAGGING_ID:
+            config_set_dragging(buff[2]);
+            break;
+        case CONFIG_PARAM_IE_INTERACTIONS_ID:
+            config_set_ie_interactions(buff[2]);
+            break;
+        case CONFIG_PARAM_IE_THROWING_ID:
+            config_set_ie_throwing(buff[2]);
+            break;
+        case CONFIG_PARAM_CURSOR_DATA_ID:
+            config_set_cursor_data(buff[2]);
+            break;
+        case CONFIG_PARAM_MASCOT_LIMIT_ID:
+            memcpy(&large_param, buff + 2, 4);
+            config_set_mascot_limit(large_param);
+            break;
+        case CONFIG_PARAM_IE_THROW_POLICY_ID:
+            memcpy(&large_param, buff + 2, 4);
+            config_set_ie_throw_policy(large_param);
+            for (size_t i = 0; i < 256; i++) {
+                if (plugins[i]) {
+                    plugin_execute_ie_throw_policy(plugins[i], large_param);
+                }
+            }
+            break;
+        default:
+            return false;
+    }
+    char config_file_path[256] = {0};
+    snprintf(config_file_path, sizeof(config_file_path), "%s/shimeji.conf", config_path);
+    config_write(config_file_path);
+    uint8_t rbuff[2] = {0xf2, 0}; // Command CONFIG_RESULT, result SUCCESS
+    send(fd, rbuff, 2, 0);
+    return true;
+}
 
 bool process_select_mascot_packet(uint8_t* buff, uint8_t len, int fd)
 {
@@ -527,6 +558,30 @@ bool process_select_mascot_packet(uint8_t* buff, uint8_t len, int fd)
     return true;
 }
 
+void write_str(char* buf, uint16_t *len, const char* string)
+{
+    uint8_t slen = strlen(string);
+    buf[(*len)++] = slen;
+    memcpy(buf + *len, string, slen);
+    *len += slen;
+}
+
+void write_variable(char* buf, uint16_t* len, struct mascot_local_variable* var)
+{
+    memcpy(buf + *len, &var->value, 4);
+    *len += 4;
+    buf[(*len)++] = var->kind;
+    buf[(*len)++] = var->used;
+    buf[(*len)++] = var->expr.evaluated;
+    if (var->expr.expression_prototype) {
+        buf[(*len)++] = 1;
+        memcpy(buf + *len, &var->expr.expression_prototype->body->id, 2);
+        *len += 2;
+    } else {
+        buf[(*len)++] = 0;
+    }
+}
+
 bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
 {
     if (len < 6) return false;
@@ -538,8 +593,8 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
     pthread_mutex_lock(&mascot_store.mutex);
     struct mascot* mascot = NULL;
     for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (mascot_store.entry_states[i] == 0) continue;
-        if (mascot->id == id) {
+        if (!mascot_store.entry_states[i]) continue;
+        if (mascot_store.entries[i]->id == id) {
             mascot = mascot_store.entries[i];
             mascot_link(mascot);
             break;
@@ -555,39 +610,27 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
     // Serialize mascot info and send it
     outbuf[1] = 0;
     // Write display name
-    uint8_t display_name_len = strlen(mascot->prototype->display_name);
-    outbuf[2] = display_name_len;
-    memcpy(outbuf + 3, mascot->prototype->display_name, display_name_len);
-    outlen += 1 + display_name_len;
-    // Write name
-    uint8_t name_len = strlen(mascot->prototype->name);
-    outbuf[3 + display_name_len] = name_len;
-    memcpy(outbuf + 4 + display_name_len, mascot->prototype->name, name_len);
-    outlen += 1 + name_len;
+
+    write_str(outbuf, &outlen, mascot->prototype->display_name);
+    write_str(outbuf, &outlen, mascot->prototype->name);
+
     // Current action name
     if (mascot->current_action.action) {
-        uint8_t action_name_len = strlen(mascot->current_action.action->name);
-        outbuf[4 + display_name_len + name_len] = action_name_len;
-        memcpy(outbuf + 5 + display_name_len + name_len, mascot->current_action.action->name, action_name_len);
-        outlen += action_name_len;
+        write_str(outbuf, &outlen, mascot->current_action.action->name);
+    } else {
+        outbuf[outlen++] = 0;
     }
-    outlen += 1;
-    // Current behavior name
     if (mascot->current_behavior) {
-        uint8_t behavior_name_len = strlen(mascot->current_behavior->name);
-        outbuf[5 + display_name_len + name_len] = behavior_name_len;
-        memcpy(outbuf + 6 + display_name_len + name_len, mascot->current_behavior->name, behavior_name_len);
-        outlen += behavior_name_len;
+        write_str(outbuf, &outlen, mascot->current_behavior->name);
+    } else {
+        outbuf[outlen++] = 0;
     }
-    outlen += 1;
     // Current affordance
     if (mascot->current_affordance) {
-        uint8_t affordance_name_len = strlen(mascot->current_affordance);
-        outbuf[6 + display_name_len + name_len] = affordance_name_len;
-        memcpy(outbuf + 7 + display_name_len + name_len, mascot->current_affordance, affordance_name_len);
-        outlen += affordance_name_len;
+        write_str(outbuf, &outlen, mascot->current_affordance);
+    } else {
+        outbuf[outlen++] = 0;
     }
-    outlen += 1;
     // Current state
     int state = mascot->state;
     memcpy(outbuf + outlen, &state, 4);
@@ -595,38 +638,21 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
     // Dump action stack (action name + action index)
     outbuf[outlen++] = mascot->as_p;
     for (uint8_t i = 0; i < mascot->as_p; i++) {
-        uint8_t action_name_len = strlen(mascot->action_stack[i].action->name);
-        outbuf[outlen++] = action_name_len;
-        memcpy(outbuf + outlen, mascot->action_stack[i].action->name, action_name_len);
-        outlen += action_name_len;
+        write_str(outbuf, &outlen, mascot->action_stack[i].action->name);
         memcpy(outbuf + outlen, &mascot->action_index_stack[i], 4);
         outlen += 4;
     }
     // Dump behavior pool (behavior name + frequency)
     outbuf[outlen++] = mascot->behavior_pool_len;
     for (uint8_t i = 0; i < mascot->behavior_pool_len; i++) {
-        uint8_t behavior_name_len = strlen(mascot->behavior_pool[i].behavior->name);
-        outbuf[outlen++] = behavior_name_len;
-        memcpy(outbuf + outlen, mascot->behavior_pool[i].behavior->name, behavior_name_len);
-        outlen += behavior_name_len;
-        memcpy(outbuf + outlen, &mascot->behavior_pool[i].frequency, 8);
-        outlen += 8;
+        write_str(outbuf, &outlen, mascot->behavior_pool[i].behavior->name);
+        memcpy(outbuf + outlen, &mascot->behavior_pool[i].frequency, 4);
+        outlen += 4;
     }
     // Dump all variables of mascot (variable value, used, evaluated, type, program_id)
     outbuf[outlen++] = MASCOT_LOCAL_VARIABLE_COUNT;
     for (uint8_t i = 0; i < MASCOT_LOCAL_VARIABLE_COUNT; i++) {
-        memcpy(outbuf + outlen, &mascot->local_variables[i].value, 8);
-        outlen += 8;
-        outbuf[outlen++] = mascot->local_variables[i].kind;
-        outbuf[outlen++] = mascot->local_variables[i].used;
-        outbuf[outlen++] = mascot->local_variables[i].expr.evaluated;
-        if (mascot->local_variables[i].expr.expression_prototype) {
-            outbuf[outlen++] = 1;
-            memcpy(outbuf + outlen, &mascot->local_variables[i].expr.expression_prototype->body->id, 2);
-            outlen += 2;
-        } else {
-            outbuf[outlen++] = 0;
-        }
+        write_variable(outbuf, &outlen, &mascot->local_variables[i]);
     }
     // Send the buffer
     send(fd, outbuf, outlen, 0);
@@ -634,6 +660,7 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
     return true;
 }
 
+#define DISMISS_ONE 0
 #define DISMISS_ALL 1
 #define DISMISS_ALL_OTHERS 2
 #define DISMISS_ALL_OTHER_SAME_TYPE 3
@@ -665,7 +692,12 @@ bool process_dismiss_packet(uint8_t* buff, size_t len, int fd)
     // Iterate over all mascots and dismiss them according to act
     for (size_t i = 0; i < mascot_store.entry_count; i++) {
         if (mascot_store.entry_states[i]) {
-            if (act == DISMISS_ALL) {
+            if (act == DISMISS_ONE) {
+                if (mascot_store.entries[i]->id == id) {
+                    remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
+                    break;
+                }
+            } else if (act == DISMISS_ALL) {
                 remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
             } else if (act == DISMISS_ALL_OTHERS) {
                if (mascot->id != mascot_store.entries[i]->id) {
@@ -799,6 +831,8 @@ void* mascot_manager_thread(void* arg)
     exit(0);
 };
 
+
+
 int main(int argc, const char** argv)
 {
     int inhereted_fd = -1;
@@ -906,8 +940,27 @@ int main(int argc, const char** argv)
         }
     }
 
+    char config_file_path[256] = {0};
+    int slen = snprintf(config_file_path, 255, "%s/shimeji.conf", config_path);
+    if (slen < 0 || slen >= 255) {
+        ERROR("Provided config directory path is too long!");
+        return 1;
+    }
+
+    if (!config_parse(config_file_path)) {
+        INFO("Bad config! Creating new one.");
+        config_set_breeding(true);
+        config_set_dragging(true);
+        config_set_ie_interactions(true);
+        config_set_ie_throwing(false);
+        config_set_cursor_data(true);
+        config_set_mascot_limit(100);
+        config_set_ie_throw_policy(PLUGIN_IE_THROW_POLICY_LOOP);
+        config_write(config_file_path);
+    }
+
     char mascots_path_packages[256] = {0};
-    int slen = get_mascots_path(mascots_path_packages, 255);
+    slen = get_mascots_path(mascots_path_packages, 255);
     struct stat st = {0};
     if (slen < 0 || slen >= 255) {
         ERROR("Provided config directory path is too long!");
@@ -998,13 +1051,18 @@ int main(int argc, const char** argv)
                         continue;
                     }
                     const char* error = NULL;
-                    enum plugin_initialization_result init_status = plugin_init(plugin, PLUGIN_PROVIDES_CURSOR_POSITION | PLUGIN_PROVIDES_IE_POSITION | PLUGIN_PROVIDES_IE_MOVE, &error);
+                    int init_flags = 0;
+                    init_flags |= config_get_cursor_data() ? PLUGIN_PROVIDES_CURSOR_POSITION : 0;
+                    init_flags |= config_get_ie_interactions() ? PLUGIN_PROVIDES_IE_POSITION : 0;
+                    init_flags |= (config_get_ie_interactions() && config_get_ie_throwing() && config_get_ie_throw_policy()) ? PLUGIN_PROVIDES_IE_MOVE : 0;
+                    enum plugin_initialization_result init_status = plugin_init(plugin, init_flags, &error);
                     if (init_status != PLUGIN_INIT_OK) {
                         WARN("Failed to initialize plugin %s: %s", plugin_path, error);
                         plugin_deinit(plugin);
                         plugin_close(plugin);
                         continue;
                     }
+                    if (plugin->provides & PLUGIN_PROVIDES_IE_MOVE) plugin_execute_ie_throw_policy(plugin, config_get_ie_throw_policy());
                     plugins[plugin_count++] = plugin;
                 }
             }
@@ -1193,7 +1251,7 @@ int main(int argc, const char** argv)
                 }
                 fds_count++;
             } else if (sd->type == SOCKET_TYPE_CLIENT) {
-                INFO("Got data from client");
+                DEBUG("Got data from client");
                 // Mode SEQPACKET
                 uint8_t buf[256];
                 int n = recv(sd->fd, buf, 256, 0);
@@ -1209,10 +1267,6 @@ int main(int argc, const char** argv)
                         case 0x1:
                             // spawn-select mascot message
                             process_add_mascot_packet(buf, n, sd->fd);
-                            break;
-                        case 0x2:
-                            // remove-select mascot message
-                            process_remove_mascot_packet(buf, n, sd->fd);
                             break;
                         case 0x3:
                             // load_config message
@@ -1245,30 +1299,35 @@ int main(int argc, const char** argv)
                             return 0;
                         case 0x6:
                             // TODO: subscribe packet
+                            INFO("Got subscribe packet");
                             break;
                         case 0x7:
-                            // get_mascot_info packet
                             process_get_mascot_info_packet(buf, n, sd->fd);
                             break;
                         case 0x8:
                             // get_environment_info packet
                             // TODO: implement
+                            INFO("Got get_environment_info packet");
                             break;
                         case 0x9:
                             // get_environments packet
                             // TODO: implement
+                            INFO("Got get_environments packet");
                             break;
                         case 0xa:
                             // get_mascots packet
                             // TODO: implement
+                            INFO("Got get_mascots packet");
                             break;
                         case 0xb:
                             // get_prototypes packet
                             // TODO: implement
+                            INFO("Got get_prototypes packet");
                             break;
                         case 0xc:
                             // get_prototype_info packet
                             // TODO: implement
+                            INFO("Got get_prototype_info packet");
                             break;
                         case 0xd:
                             // dismiss packet
@@ -1277,6 +1336,10 @@ int main(int argc, const char** argv)
                         case 0xe:
                             // spawn packet
                             process_spawn_mascot_packet(buf, n, sd->fd);
+                            break;
+                        case 0xf1:
+                            // change config packet
+                            process_config_packet(buf, n, sd->fd);
                             break;
                         case 0xf:
                             // select packet

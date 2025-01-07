@@ -19,9 +19,17 @@
 
 #include "throwie.h"
 #include "actionbase.h"
+#include "config.h"
 
 enum mascot_tick_result throwie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
+
+    if (!config_get_ie_throwing()) {
+        DEBUG("<Mascot:%s:%u> IE throwing is disabled, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
     if (!actionref->action->length) {
         WARN("<Mascot:%s:%u> ThrowIE action has no length", mascot->prototype->name, mascot->id);
         return mascot_tick_error;

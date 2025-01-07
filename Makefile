@@ -46,7 +46,7 @@ override OBJS := $(OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 override DEPS := $(OBJS:.o=.d)
 override DIRS := $(sort $(BUILDDIR) $(dir $(OBJS)))
 
-override PLUGINS_SRC := src/environment.c src/mascot.c src/expressions.c src/utils.c src/plugins.c
+override PLUGINS_SRC := src/environment.c src/mascot.c src/expressions.c src/utils.c src/plugins.c src/config.c
 override PLUGINS_OBJS := $(SHARED_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 
 override _ := $(shell mkdir -p $(DIRS))

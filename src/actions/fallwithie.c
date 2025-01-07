@@ -19,9 +19,18 @@
 
 #include "fallwithie.h"
 #include "actionbase.h"
+#include "config.h"
+#include "environment.h"
 
 enum mascot_tick_result fallwithie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
+
+    if (!config_get_ie_throwing()) {
+        DEBUG("<Mascot:%s:%u> IE throwing is disabled, skipping action", mascot->prototype->name, mascot->id);
+        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        return mascot_tick_reenter;
+    }
+
     if (!actionref->action->length) {
         LOG("ERROR", RED, "<Mascot:%s:%u> Fall action has no length", mascot->prototype->name, mascot->id);
         return mascot_tick_error;
@@ -183,13 +192,13 @@ enum mascot_tick_result fallwithie_action_tick(struct mascot *mascot, struct mas
         struct ie_object* ie = environment_get_ie(mascot->environment);
         if (ie) {
             if (ie->active) {
-                bool move_res = false;
+                enum environment_move_result move_res = environment_move_ok;
                 if (looking_right) {
                     move_res = environment_ie_move(mascot->environment, posx - ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
                 } else {
                     move_res = environment_ie_move(mascot->environment, posx + ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
                 }
-                if (!move_res) {
+                if (move_res == environment_move_invalid) {
                     mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
                     return mascot_tick_reenter;
                 }
