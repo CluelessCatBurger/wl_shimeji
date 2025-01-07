@@ -13,6 +13,13 @@ struct ie_object;
 #define PLUGIN_PROVIDES_IE_POSITION 2
 #define PLUGIN_PROVIDES_IE_MOVE 4
 
+#define PLUGIN_IE_THROW_POLICY_NONE 0
+#define PLUGIN_IE_THROW_POLICY_STOP_AT_BORDERS 1
+#define PLUGIN_IE_THROW_POLICY_BOUNCE_AT_BORDERS 2
+#define PLUGIN_IE_THROW_POLICY_LOOP 3
+#define PLUGIN_IE_THROW_POLICY_CLOSE 4
+#define PLUGIN_IE_THROW_POLICY_MINIMIZE 5
+
 enum plugin_initialization_result {
     PLUGIN_INIT_OK,
     PLUGIN_INIT_BAD_ENVIRONMENT,
@@ -85,6 +92,7 @@ struct plugin {
     enum plugin_execution_result (*execute_ie_detach_mascot)(struct ie_object* ie, struct mascot* mascot); // ie, mascot
     enum plugin_execution_result (*execute_throw_ie)(struct ie_object* ie, float x_velocity, float y_velocity, float gravity, uint32_t start_tick);
     enum plugin_execution_result (*execute_stop_ie)(struct ie_object* ie); // ie
+    enum plugin_execution_result (*execute_ie_throw_policy)(int policy);
 
     // Deactivate current IE and restore offscreen windows
     enum plugin_execution_result (*execute_deactivate_ie)(struct ie_object* ie);
@@ -108,8 +116,8 @@ enum plugin_execution_result plugin_execute_ie_move(struct plugin* plugin, struc
 enum plugin_execution_result plugin_execute_ie_attach_mascot(struct plugin* plugin, struct ie_object* ie, struct mascot* mascot);
 enum plugin_execution_result plugin_execute_ie_detach_mascot(struct plugin* plugin, struct ie_object* ie, struct mascot* mascot);
 enum plugin_execution_result plugin_execute_throw_ie(struct plugin* plugin, struct ie_object* ie, float x_velocity, float y_velocity, float gravity, uint32_t start_tick);
-
 enum plugin_execution_result plugin_execute_stop_ie(struct plugin* plugin, struct ie_object* ie);
+enum plugin_execution_result plugin_execute_ie_throw_policy(struct plugin* plugin, int policy);
 
 enum plugin_execution_result plugin_change_capabilities(struct plugin* plugin, uint32_t capabilities);
 

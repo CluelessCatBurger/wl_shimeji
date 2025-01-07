@@ -98,6 +98,10 @@ enum plugin_initialization_result plugin_init(struct plugin* plugin, uint32_t al
             *error_message = "Plugin provides IE_MOVE but does not have a execute_ie_move function";
             return PLUGIN_INIT_BAD_DESCRIPTION;
         }
+        if (!plugin->execute_ie_throw_policy) {
+            *error_message = "Plugin provides IE_MOVE but does not have a execute_ie_throw_policy function";
+            return PLUGIN_INIT_BAD_DESCRIPTION;
+        }
     }
     if (plugin->provides & PLUGIN_PROVIDES_IE_POSITION) {
         if (!plugin->execute_ie_attach_mascot || !plugin->execute_ie_detach_mascot) {
@@ -369,6 +373,24 @@ enum plugin_execution_result plugin_free_ie(struct plugin* plugin, struct ie_obj
     if (setjmp(last_okay_state) == 0) {
         result = plugin->deinitialize_ie(ie);
         free(ie);
+    }
+    else {
+        result = PLUGIN_EXEC_SEGFAULT;
+    }
+    sigaction(SIGSEGV, &old_action, NULL);
+    return result;
+}
+
+enum plugin_execution_result plugin_execute_ie_throw_policy(struct plugin* plugin, int policy)
+{
+    if (!plugin) return PLUGIN_EXEC_NULLPTR;
+
+    enum plugin_execution_result result = PLUGIN_EXEC_UNKNOWN_ERROR;
+
+    struct sigaction old_action;
+    sigaction(SIGSEGV, &(struct sigaction) { .sa_handler = signal_handler }, &old_action);
+    if (setjmp(last_okay_state) == 0) {
+        result = plugin->execute_ie_throw_policy(policy);
     }
     else {
         result = PLUGIN_EXEC_SEGFAULT;
