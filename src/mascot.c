@@ -21,6 +21,7 @@
 #include "environment.h"
 #include "expressions.h"
 #include "mascot_config_parser.h"
+#include "config.h"
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -685,6 +686,7 @@ enum mascot_tick_result mascot_tick(struct mascot* mascot, uint32_t tick, struct
 // Try to start dragging the mascot
 bool mascot_drag_started(struct mascot* mascot, environment_pointer_t* pointer)
 {
+    if (!config_get_dragging()) return false;
     if (mascot->state == mascot_state_interact || !mascot->prototype->drag_behavior) {
         return false;
     }

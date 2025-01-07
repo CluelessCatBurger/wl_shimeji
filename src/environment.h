@@ -45,6 +45,7 @@ enum environment_move_result {
     environment_move_ok,
     environment_move_clamped,
     environment_move_environment_changed,
+    environment_move_out_of_bounds,
     environment_move_invalid
 };
 
@@ -133,7 +134,7 @@ struct ie_object* environment_get_ie(environment_t* env);
 void environment_get_output_id_info(environment_t* env, const char** name, const char** make, const char** model, const char** desc, uint32_t *id);
 
 // IE's
-bool environment_ie_move(environment_t* env, int32_t dx, int32_t dy);
+enum environment_move_result environment_ie_move(environment_t* env, int32_t dx, int32_t dy);
 bool environment_ie_allows_move(environment_t* env);
 bool environment_ie_throw(environment_t* env, float x_velocity, float y_velocity, float gravity, uint32_t tick);
 bool environment_ie_stop_movement(environment_t* env);

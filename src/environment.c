@@ -31,6 +31,8 @@
 #include <wayland-util.h>
 #include <errno.h>
 #include "plugins.h"
+#include "config.h"
+
 
 struct wl_display* display = NULL;
 struct wl_registry* registry = NULL;
@@ -1635,7 +1637,7 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
     dy = yconv(surface->env, dy);
 
     bool has_active_ie = false;
-    if (surface->env->ie) {
+    if (environment_get_ie(surface->env)) {
         has_active_ie = surface->env->ie->active;
     }
 
@@ -1968,22 +1970,27 @@ bool environment_ie_stop_movement(environment_t* env)
 
 #endif
 
-bool environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
+enum environment_move_result environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
 {
-    if (!env) return false;
-    if (!env->ie) return false;
-    if (!(env->ie->parent_plugin->effective_caps & PLUGIN_PROVIDES_IE_MOVE)) return false;
+    if (!env) return environment_move_invalid;
+    if (!env->ie) return environment_move_invalid;
+    if (!(env->ie->parent_plugin->effective_caps & PLUGIN_PROVIDES_IE_MOVE)) return environment_move_invalid;
 
     struct ie_object* ie = env->ie;
 
     // Check if window is not in screen bounds
     // Right edge is beyond left edge of screen
 
-    if (dx + ie->width < 0) dx = (int32_t)environment_screen_width(env)-1;
-    else if (dx > (int32_t)environment_screen_width(env)) dx = -ie->width+1;
+    enum environment_move_result result = environment_move_ok;
+
+    if (dx + ie->width > (int32_t)environment_screen_width(env)) result = environment_move_clamped;
+    else if (dx < 0) result = environment_move_clamped;
+
+    if (dx + ie->width < 0) result = environment_move_out_of_bounds;
+    else if (dx > (int32_t)environment_screen_width(env)) result = environment_move_out_of_bounds;
 
     // If window is out of bounds on y axis, this is error
-    if (dy < 0 || dy > (int32_t)environment_screen_height(env)) return false;
+    if (dy < 0 || dy > (int32_t)environment_screen_height(env)) return environment_move_invalid;
 
     enum plugin_execution_result res = plugin_execute_ie_move(env->ie->parent_plugin, env->ie, dx, dy);
     if (res != PLUGIN_EXEC_OK) {
@@ -1992,15 +1999,16 @@ bool environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
         }
         else {
             WARN("Plugin execution failed with unknown error");
-            return false;
+            return environment_move_invalid;
         }
     }
-    return true;
+    return result;
 }
 
 struct ie_object* environment_get_ie(environment_t* env)
 {
     if (!env) return NULL;
+    if (!config_get_ie_interactions()) return NULL;
     return env->ie;
 }
 

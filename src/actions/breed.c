@@ -20,9 +20,17 @@
 
 #include "breed.h"
 #include "actionbase.h"
+#include "config.h"
 
 enum mascot_tick_result breed_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
+    if (!config_get_breeding()) {
+        return mascot_tick_next;
+    }
+
+    if (config_get_mascot_limit() <= mascot_total_count) {
+        return mascot_tick_next;
+    }
 
     enum mascot_tick_result ground_check = mascot_ground_check(mascot, actionref, breed_action_clean);
     if (ground_check != mascot_tick_ok) {
