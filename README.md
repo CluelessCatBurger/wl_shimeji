@@ -84,12 +84,35 @@ You can also specify a custom output path by passing it as an argument:
   ```sh
     shimejictl dismiss
   ```
-  Selects mascot to dismiss and dismisses it.
+  Selects mascot to dismiss and dismisses it. You can also dismiss all mascots at once, all other mascots, all mascots of same type, or all mascots of same type except the selected one.
+  To do it check `shimejictl dismiss --help`
 
   ```sh
     shimejictl summon all
   ```
   Summons all currently known mascots.
+
+### Helpful commands for debugging
+
+  ```sh
+    shimejictl info
+  ```
+  Prints information about selected mascot.
+
+  ```sh
+    shimejictl foreground
+  ```
+  Launches overlay in the foreground.
+
+### Configuring in runtime
+
+  You can set configuration options in runtime by using `config` subcommand.
+
+  ```sh
+    shimejictl config set "option_name" "value"
+  ```
+  To see all available options, use `shimejictl config --help`
+  `list` and `get` actions not implemented yet.
 
 # Features
 
@@ -106,15 +129,44 @@ You can also specify a custom output path by passing it as an argument:
     - I implemented simple virtual machine and bytecode compiler for javascript-like conditions used in the original Shimeji.
     - It's not as fast as native code, but it's faster than the original Shimeji.
 
+## Configuration
+
+On first start, the program will create a configuration file in the config directory.
+Currently config file allows to:
+- Enable/Disable mascot breeding
+- Enable/Disable mascot dragging
+- Enable/Disable IE interactions (doesn't make sense without plugins)
+- Enable/Disable IE throwing (doesn't make sense without plugins)
+- Enable/Disable cursor position tracking (doesn't make sense without plugins)
+- Set max number of mascots
+- Set IE Throw Policy (doesn't make sense without plugins)
+
+All parameters except max number and IE Throw Policy is booleans.
+IE Throw Policy and max number is integers.
+
+I will not explain possible values for IE Throw Policy for now.
+
+## Plugins
+
+Plugins is a way to provide non-portable ways to interact with the environment.
+It can be used for:
+- Getting cursor position
+- Informations about active window
+- Moving windows
+
+Currently I have 1 experimental plugin that implements all of the above for kwin_wayland compositor, I don't recommend to use it though.
+If you want to risk, you can compile it with following command:
+
+  ```sh
+    gcc -I./build src/plugins/kwinsupport.c -shared -fPIC -lpluginsupport -lsystemd -o kwinsupport.so
+  ```
+
+Compiled plugins should be placed in the plugins/ directory (relative to the configuration directory).
+
 ## TODO LIST:
 
-- [x] Core functionality - Mascots are working
-- [x] Affordances - Mascots can interact with each other
-- [x] Hotspots on mascots - Mascots can be patted (My version uses middle click and scrolling for this instead of original left click)
-- [x] Dragging - Mascots can be dragged around the screen
-- [x] Environment interaction - Mascots can interact with the environment (Foreign windows, pointer, etc) [EXPERIMENTAL]
-- [x] Plugins - Plugins for environment interaction [EXPERIMENTAL]
-- [ ] Configuration - Configuration for things like cloning, draggability, etc
+- [] Write documentation for plugins API
+- [] Add more configuration options
 
 ## Notes:
 
@@ -125,8 +177,10 @@ You can also specify a custom output path by passing it as an argument:
   There is no way to make it portable. For example, you theoretically can use kdotool to get and move windows, but it's will work only under kwin.
 - X11 support? No, X11 doesn't provide key features that I need for this project. You can try to implement it. For it to work, you need to implement each and every function from
   src/environment.h
-- Windows/Macos/FreeBSD/InsertYourOS support? If you will able somehow run Wayland on it or reimplement funcs defined in src/environment.h, then yes. I don't have any plans to do it.
+- ~~Windows~~/Macos/FreeBSD/InsertYourOS support? If you will able somehow run Wayland on it or reimplement funcs defined in src/environment.h, then yes. I don't have any plans to do it.
 - If you want to help me with this project, beware src/mascot_config_parser.c. I warned you. (No, really, even i don't understand what's going on there.)
+- Windows support? After searching for a while, I found that there is a similar mechanism to wl_subcompositor in Windows called "DirectComposition".
+  I will not implement it by myself, but if you want to try, you can do it.
 
 # Blabbering section:
 
