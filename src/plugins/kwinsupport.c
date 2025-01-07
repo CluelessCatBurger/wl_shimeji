@@ -3,11 +3,13 @@
 #include "../environment.h"
 #include "../master_header.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <systemd/sd-bus-protocol.h>
 #include <systemd/sd-bus.h>
+#include <unistd.h>
 
 #define MAX_IE_OBJECTS 256
 #define PLUGIN_VERSION "0.0.0"
@@ -22,6 +24,7 @@ enum plugin_execution_result execute_ie_detach_mascot (struct ie_object* ie, str
 enum plugin_execution_result execute_ie_move (struct ie_object* ie, int32_t x, int32_t y);
 enum plugin_execution_result execute_throw_ie(struct ie_object* ie, float x_velocity, float y_velocity, float gravity, uint32_t start_tick);
 enum plugin_execution_result execute_stop_ie(struct ie_object* ie);
+enum plugin_execution_result execute_ie_throw_policy(int policy);
 enum plugin_initialization_result init(uint32_t caps, const char** error_message_return_pointer);
 void deinit();
 
@@ -39,7 +42,8 @@ struct plugin plugin_info = {
     .execute_ie_detach_mascot = execute_ie_detach_mascot,
     .execute_ie_move = execute_ie_move,
     .execute_throw_ie = execute_throw_ie,
-    .execute_stop_ie = execute_stop_ie
+    .execute_stop_ie = execute_stop_ie,
+    .execute_ie_throw_policy = execute_ie_throw_policy,
 };
 
 struct {
@@ -51,6 +55,8 @@ struct {
     // Allocated ie objects
     struct ie_object *ies[MAX_IE_OBJECTS];
     uint8_t ie_index;
+
+    int ie_throw_policy;
 
     uint32_t current_tick;
 
@@ -81,8 +87,83 @@ struct ie_object_internal_data {
 
     bool pending_commit;
 
+    int32_t start_throw_x;
+    int32_t start_throw_y;
+
     uint64_t version;
 };
+
+int32_t kwin_execute(const char* script, int32_t length)
+{
+    // Write script to tmp file
+    char tmpname [] = "/tmp/kwin_script_XXXXXX";
+    int fd = mkstemp(tmpname);
+    if (fd == -1) {
+        return -1;
+    }
+
+    write(fd, script, length);
+    close(fd);
+
+    // Load script
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    int r = sd_bus_call_method(plugin_storage.bus,
+                           "org.kde.KWin",
+                           "/Scripting",
+                           "org.kde.kwin.Scripting",
+                           "loadScript",
+                           &error,
+                           &reply,
+                           "s",
+                           tmpname);
+    if (r < 0) {
+        return -1;
+    }
+
+    int32_t script_id = -1;
+    if (error.name != NULL) {
+        return -1;
+    }
+
+    r = sd_bus_message_read(reply, "i", &script_id);
+    if (r < 0) {
+        return -1;
+    }
+
+    char script_path[128] = {0};
+    snprintf(script_path, 128, "/Scripting/Script%d", script_id);
+    r = sd_bus_call_method(plugin_storage.bus,
+                           "org.kde.KWin",
+                           script_path,
+                           "org.kde.kwin.Script",
+                           "run",
+                           &error,
+                           NULL,
+                           "");
+
+    if (r < 0) {
+        return -1;
+    }
+
+    unlink(tmpname);
+
+    return script_id;
+}
+
+void kwin_stop(int32_t script_id)
+{
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_call_method(plugin_storage.bus,
+                       "org.kde.KWin",
+                       "/Scripting",
+                       "org.kde.kwin.Scripting",
+                       "unloadScript",
+                       &error,
+                       NULL,
+                       "i",
+                       script_id);
+}
 
 bool mascot_store_init(struct mascot_store *store, size_t capacity)
 {
@@ -228,6 +309,7 @@ enum plugin_initialization_result init(uint32_t caps, const char** error_message
     "    if (window.normalWindow) {\n"
     "        if (active_window != null) {\n"
     "           if (active_window.internalId == window.internalId) {\n"
+    "               windowGeometry(window.frameGeometry);\n"
     "               return;\n"
     "           }\n"
     "           active_window.minimizedChanged?.disconnect(windowMinimized);\n"
@@ -262,7 +344,8 @@ enum plugin_initialization_result init(uint32_t caps, const char** error_message
     "    windowGeometry(active_window.frameGeometry);\n"
     "};\n"
     "function deactivate() {\n"
-    "   callDBus(recipient_name, '/', '', 'deactivate', active_window.internalId.toString() ? active_window.internalId.toString() : '0');\n"
+    "   active_window = null;"
+    "   callDBus(recipient_name, '/', '', 'deactivate');\n"
     "};\n"
     "function windowGeometry(new_geometry) {\n"
     "    var x = Math.floor(new_geometry.x);\n"
@@ -277,10 +360,14 @@ enum plugin_initialization_result init(uint32_t caps, const char** error_message
     "    callDBus(recipient_name, '/', '', 'cursorPoseChanged', x, y);\n"
     "};\n"
     "function currentDesktopChanged(old) {\n"
+    "   deactivate();\n"
     "   var window = workspace.activeWindow;\n"
-    "   if (!window) {\n"
-    "       deactivate();\n"
-    "       return;\n"
+    "   if (!window) {"
+    "       for (var i = 0; i < workspace.stackingOrder.length; i++) {\n"
+    "           if (workspace.stackingOrder[i].normalWindow && workspace.stackingOrder[i].layer != 9) {\n"
+    "               window = workspace.stackingOrder[i];\n"
+    "           };\n"
+    "       }\n"
     "   }\n"
     "   windowActivated(window);\n"
     "};\n"
@@ -395,6 +482,47 @@ void deinit()
     DEBUG("[KWinSupport] Deinitialized");
 
     free((void*)plugin_storage.unique_name);
+}
+
+void close_ie(struct ie_object* ie)
+{
+    struct ie_object_internal_data* ie_data = (struct ie_object_internal_data*)ie->data;
+    // Detach all mascots from the ie
+    struct mascot* mascot = NULL;
+    size_t mascot_index = 0;
+    while ((mascot = mascot_store_iterate(&ie_data->attached_mascots, &mascot_index)) != NULL) {
+        execute_ie_detach_mascot(ie, mascot);
+        mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
+    }
+
+    // Script that closes ie
+    char script[256] = {0};
+    snprintf(script, 256,
+        "var win = workspace.stackingOrder.find(client => client.internalId.toString() == \"%s\");\n"
+        "if (win) win.closeWindow();\n",
+    ie_data->window_id);
+
+    int32_t id = kwin_execute(script, strlen(script));
+    usleep(250);
+    kwin_stop(id);
+}
+
+void minimize_ie(struct ie_object* ie)
+{
+    struct ie_object_internal_data* ie_data = (struct ie_object_internal_data*)ie->data;
+    // Script that minimizes ie
+    char script[512] = {0};
+    snprintf(script, 512,
+    "var win = workspace.stackingOrder.find(client => client.internalId.toString() == \"%s\");\n"
+    "if (win) {\n"
+    "   win.minimized = true;\n"
+    "   win.frameGeometry = {x: %d, y: %d, width: %d, height: %d};\n"
+    "}\n",
+    ie_data->window_id, ie_data->start_throw_x, ie_data->start_throw_y, ie->width, ie->height);
+
+    int32_t id = kwin_execute(script, strlen(script));
+    usleep(250);
+    kwin_stop(id);
 }
 
 enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* y, uint32_t tick)
@@ -587,37 +715,21 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
                     }
                 }
                 else if (strcmp(member, "deactivate") == 0) {
-                    sdresult = sd_bus_message_read(message, "s", x, y);
-                    if (sdresult < 0) {
-                        WARN("[KWINSUPPORT] Failed to read deactivate message: %s", strerror(-sdresult));
-                        sd_bus_message_unref(message);
-                        continue;
-                    }
 
                     // Find the ie corresponding to the output
                     struct ie_object* ie = NULL;
                     struct ie_object_internal_data* ie_data = NULL;
                     for (int i = 0; i < MAX_IE_OBJECTS; i++) {
                         if (plugin_storage.ies[i] != NULL) {
-                            struct ie_object* local_ie = plugin_storage.ies[i];
-                            ie_data = (struct ie_object_internal_data*)local_ie->data;
-                            if (strcmp(ie_data->window_id, window_id) == 0) {
-                                ie = local_ie;
-                                break;
-                            }
+                            ie = plugin_storage.ies[i];
+                            ie_data = (struct ie_object_internal_data*)ie->data;
+                            ie_data->pending_active = false;
+                            ie_data->pending_fullscreen = false;
+                            ie_data->window_id[0] = 0;
+                            ie_data->pending_commit = true;
+                            ie->state = IE_STATE_IDLE;
                         }
                     }
-                    if (ie == NULL) {
-                        WARN("[KWINSUPPORT] Window %s fullscreen changed for unknown output", window_id);
-                        sd_bus_message_unref(message);
-                        continue;
-                    }
-
-                    ie_data->pending_active = false;
-                    ie_data->pending_fullscreen = false;
-                    ie_data->window_id[0] = 0;
-                    ie_data->pending_commit = true;
-                    ie->state = IE_STATE_IDLE;
                 }
                 else if (strcmp(member, "moveStarted") == 0) {
                     const char *window_id = NULL;
@@ -695,7 +807,44 @@ enum plugin_execution_result execute(struct ie_object* ie, int32_t* x, int32_t* 
             float time = (tick - ie->reference_tick);
             int32_t new_x = ie->x + ie->x_velocity;
             int32_t new_y = ie->y + ie->y_velocity + (float)(time * ie->gravity);
-            environment_ie_move(ie->environment, new_x, new_y);
+            enum environment_move_result res = environment_ie_move(ie->environment, new_x, new_y);
+            if (res == environment_move_out_of_bounds) {
+                INFO("[KWINSUPPORT] Window out of bounds, current policy %d", plugin_storage.ie_throw_policy);
+                if (plugin_storage.ie_throw_policy == PLUGIN_IE_THROW_POLICY_LOOP) {
+                    if (new_x > (int32_t)environment_screen_width(ie->environment) - ie->width) {
+                        new_x = -ie->width;
+                    }
+                    else if (new_x + ie->width < 0) {
+                        new_x = environment_screen_width(ie->environment);
+                    }
+                    environment_ie_move(ie->environment, new_x, new_y);
+                }
+                else if (plugin_storage.ie_throw_policy == PLUGIN_IE_THROW_POLICY_CLOSE) {
+                    ie->x = ie_data->start_throw_x;
+                    ie->y = ie_data->start_throw_y;
+                    close_ie(ie);
+                }
+                else if (plugin_storage.ie_throw_policy == PLUGIN_IE_THROW_POLICY_MINIMIZE) {
+                    ie->x = ie_data->start_throw_x;
+                    ie->y = ie_data->start_throw_y;
+                    minimize_ie(ie);
+                }
+            } else if (res == environment_move_clamped) {
+                INFO("[KWINSUPPORT] Window clamped", plugin_storage.ie_throw_policy);
+                if (plugin_storage.ie_throw_policy == PLUGIN_IE_THROW_POLICY_STOP_AT_BORDERS) {
+                    ie->x_velocity = 0;
+                    ie->y_velocity = 0;
+                    ie->state = IE_STATE_IDLE;
+                }
+                else if (plugin_storage.ie_throw_policy == PLUGIN_IE_THROW_POLICY_BOUNCE_AT_BORDERS) {
+                    if (new_x <= 0 || new_x >= (int32_t)environment_screen_width(ie->environment) - ie->width) {
+                        ie->x_velocity = -ie->x_velocity;
+                    }
+                    if (new_y <= 0 || new_y >= (int32_t)environment_screen_height(ie->environment) - ie->height) {
+                        ie->y_velocity = -ie->y_velocity;
+                    }
+                }
+            }
         }
 
         if (!ie_data->pending_commit) {
@@ -1026,10 +1175,16 @@ enum plugin_execution_result execute_throw_ie(struct ie_object* ie, float x_velo
 
     if (!ie->active || ie->fullscreen) return PLUGIN_EXEC_ERROR;
 
+
+    if (plugin_storage.ie_throw_policy == PLUGIN_IE_THROW_POLICY_NONE) return PLUGIN_EXEC_OK;
+
     ie->state = IE_STATE_THROWN;
     ie->x_velocity = x_velocity;
     ie->y_velocity = y_velocity;
     ie->gravity = gravity;
+
+    ie_data->start_throw_x = ie->x;
+    ie_data->start_throw_y = ie->y;
 
     ie->reference_tick = start_tick;
 
@@ -1048,5 +1203,11 @@ enum plugin_execution_result execute_stop_ie(struct ie_object *ie)
         ie->reference_tick = 0;
     }
 
+    return PLUGIN_EXEC_OK;
+}
+
+enum plugin_execution_result execute_ie_throw_policy(int policy)
+{
+    plugin_storage.ie_throw_policy = policy;
     return PLUGIN_EXEC_OK;
 }
