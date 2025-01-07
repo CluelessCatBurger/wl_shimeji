@@ -41,6 +41,12 @@ bool config_parse(const char* path)
             config_set_mascot_limit(atoi(value));
         } else if (strcmp(key, "ie_throw_policy") == 0) {
             config_set_ie_throw_policy(atoi(value));
+        } else if (strcmp(key, "allow_dismiss_animations") == 0) {
+            config_set_allow_dismiss_animations(strncmp(value, "true", 4) == 0);
+        } else if (strcmp(key, "per_mascot_interactions") == 0) {
+            config_set_per_mascot_interactions(strncmp(value, "true", 4) == 0);
+        } else if (strcmp(key, "tick_delay") == 0) {
+            config_set_tick_delay(atoi(value));
         }
     }
 
@@ -62,6 +68,9 @@ void config_write(const char* path)
     fprintf(file, "cursor_data=%s\n", config.cursor_data ? "true" : "false");
     fprintf(file, "mascot_limit=%u\n", config.mascot_limit);
     fprintf(file, "ie_throw_policy=%d\n", config.ie_throw_policy);
+    fprintf(file, "allow_dismiss_animations=%s\n", config.dismiss_animations ? "true" : "false");
+    fprintf(file, "per_mascot_interactions=%s\n", config.affordances ? "true" : "false");
+    fprintf(file, "tick_delay=%u\n", config.tick_delay);
 
     fclose(file);
 }
@@ -108,6 +117,28 @@ bool config_set_ie_throw_policy(int32_t value)
     return true;
 }
 
+bool config_set_allow_dismiss_animations(bool value)
+{
+    config.dismiss_animations = value;
+    return true;
+}
+
+bool config_set_per_mascot_interactions(bool value)
+{
+    config.affordances = value;
+    return true;
+}
+
+bool config_set_tick_delay(uint32_t value)
+{
+    if (!value) {
+        config.tick_delay = 40000;
+        return false;
+    }
+    config.tick_delay = value;
+    return true;
+}
+
 bool config_get_breeding()
 {
     return config.breeding;
@@ -141,4 +172,22 @@ uint32_t config_get_mascot_limit()
 int32_t config_get_ie_throw_policy()
 {
     return config.ie_throw_policy;
+}
+
+bool config_get_allow_dismiss_animations()
+{
+    return config.dismiss_animations;
+}
+
+bool config_get_per_mascot_interactions()
+{
+    return config.affordances;
+}
+
+uint32_t config_get_tick_delay()
+{
+    if (!config.tick_delay) {
+        return 40000;
+    }
+    return config.tick_delay;
 }

@@ -8,7 +8,7 @@ override PLUGINS_TARGET = $(BUILDDIR)/libpluginsupport.so
 
 PREFIX ?= /usr/local
 
-override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -O2 -Wall -Wextra -fno-strict-aliasing -DWL_SHIMEJI_ASSETS_PATH='"$(PREFIX)/share/wl-shimeji/assets"'
+override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -O2 -Wall -Wextra -fno-strict-aliasing
 override LDFLAGS += $(shell pkg-config wayland-client spng --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
@@ -98,11 +98,9 @@ clean:
 install: $(TARGET) $(PLUGINS_TARGET)
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -d $(DESTDIR)$(PREFIX)/lib/
-	install -d $(DESTDIR)$(PREFIX)/share/wl-shimeji/assets/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
 	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
-	install -m644 $(ASSETS_DIR)/* $(DESTDIR)$(PREFIX)/share/wl-shimeji/assets/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)

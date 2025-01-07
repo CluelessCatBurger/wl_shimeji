@@ -32,10 +32,6 @@
 
 #include "wayland_includes.h"
 
-#ifndef WL_SHIMEJI_ASSETS_PATH
-#define WL_SHIMEJI_ASSETS_PATH "/usr/share/wl-shimeji/assets"
-#endif
-
 struct mascot_prototype_store_ {
     struct mascot_prototype** prototypes;
     uint32_t size;
@@ -196,68 +192,6 @@ struct mascot_prototype* mascot_prototype_store_get_index(mascot_prototype_store
         return NULL;
     }
     return store->prototypes[index];
-}
-
-struct mascot_action* mascot_get_dispose_action()
-{
-    static struct mascot_atlas* atlas = NULL;
-    if (!atlas) {
-        atlas = mascot_atlas_new(environment_get_compositor(), environment_get_shm(), WL_SHIMEJI_ASSETS_PATH);
-        if (!atlas) {
-            return NULL;
-        }
-    }
-
-    static struct mascot_action* action = NULL;
-    if (!action) {
-        action = (struct mascot_action*)calloc(1,sizeof(struct mascot_action));
-        if (!action) {
-            return NULL;
-        }
-
-        action->type = mascot_action_type_embedded;
-        action->embedded_type = mascot_action_embedded_property_dispose;
-
-        action->length = 1;
-        struct mascot_animation* animation = (struct mascot_animation*)calloc(1,sizeof(struct mascot_animation));
-        if (!animation) {
-            ERROR("Failed to allocate memory for animation");
-        }
-
-        animation->frame_count = 6;
-        animation->frames = (struct mascot_pose**)calloc(6,sizeof(struct mascot_pose*));
-
-        if (!animation->frames) {
-            ERROR("Failed to allocate memory for animation frames");
-        }
-
-        for (int i = 0; i < 6; i++) {
-            struct mascot_pose* pose = (struct mascot_pose*)calloc(1,sizeof(struct mascot_pose));
-            if (!pose) {
-                ERROR("Failed to allocate memory for pose");
-            }
-            char name[16] = {0};
-            snprintf(name, 16, "dispose%d.png", i);
-            struct mascot_sprite* sprite = mascot_atlas_get(
-                atlas,
-                mascot_atlas_get_name_index(atlas, name),
-                false
-            );
-            if (!sprite) {
-                ERROR("Failed to get sprite %s for dispose animation", name);
-            }
-            pose->sprite[0] = sprite;
-            pose->sprite[1] = sprite;
-            pose->duration = 2;
-            animation->frames[i] = pose;
-        }
-
-        action->content[0].value.animation = animation;
-        action->content[0].kind = mascot_action_content_type_animation;
-        action->border_type = environment_border_type_any;
-    }
-
-    return action;
 }
 
 
@@ -2418,11 +2352,20 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
         }
     }
 
+    // Find and set dismiss action shortcut (if present)
+    for (uint16_t i = 0; i < prototype->actions_count; i++) {
+        const struct mascot_action* action = prototype->action_definitions[i];
+        if (!strcmp("Dismissed", action->name)) {
+            prototype->dismiss_action = action;
+        }
+    }
+
     free(behaviors_data);
     fclose(behaviors);
     free(behbuf);
 
     prototype->local_variables_count = 128;
+    prototype->path = strdup(path);
 
     return PROTOTYPE_LOAD_SUCCESS;
 }

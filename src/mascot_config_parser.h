@@ -57,6 +57,4 @@ int mascot_prototype_store_count(mascot_prototype_store*);
 struct mascot_prototype* mascot_prototype_store_get_index(mascot_prototype_store*, int index);
 void mascot_prototype_store_free(mascot_prototype_store*);
 
-struct mascot_action* mascot_get_dispose_action();
-
 #endif

@@ -375,6 +375,7 @@ struct mascot_behavior {
 struct mascot_prototype {
     const char* name; // Internal name
     const char* display_name; // Display name
+    const char* path; // Path to the prototype
 
     const struct mascot_action** action_definitions; // All defined actions
     const struct mascot_behavior** behavior_definitions; // All defined behaviors
@@ -386,6 +387,8 @@ struct mascot_prototype {
     const struct mascot_behavior* drag_behavior; // Drag behavior
     const struct mascot_behavior* thrown_behavior; // Thrown behavior
     const struct mascot_behavior* fall_behavior; // Fall behavior
+
+    const struct mascot_action* dismiss_action; // Dismiss action (Always have type of dispose)
 
     uint16_t actions_count, behavior_count,
     local_variables_count, expressions_count, root_behavior_list_count;
@@ -540,6 +543,7 @@ void    mascot_set_variable_f(struct mascot* mascot, uint16_t id, float value);
 // Behavior shortcuts
 const struct mascot_behavior* mascot_fall_behavior(struct mascot* mascot);
 const struct mascot_behavior* mascot_thrown_behavior(struct mascot* mascot);
+const struct mascot_behavior* mascot_prototype_behavior_by_name(const struct mascot_prototype* prototype, const char* name);
 
 // Helper functions
 enum mascot_tick_result mascot_execute_variable(struct mascot *mascot, uint16_t variable_id);
