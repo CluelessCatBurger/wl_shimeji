@@ -1422,8 +1422,11 @@ class ShimejiCtl:
 
         self.config_manager = self.subparsers.add_parser("config", help="Manage configuration")
         self.config_manager.add_argument("subaction", help="Action to perform", choices=["get", "set", "list"])
-        self.config_manager.add_argument("key", help="Key to get/set", choices=["breeding", "dragging", "ie-interactions", "ie-throwing", "cursor-position", "mascot-limit", "ie-throw-policy"])
+        self.config_manager.add_argument("key", help="Key to get/set", choices= ["breeding", "dragging", "ie-interactions", "ie-throwing", "cursor-position", "mascot-limit", "ie-throw-policy", "dismiss-animations", "mascot-interactions", "framerate"], nargs="?")
         self.config_manager.add_argument("value", help="Value to set", nargs="?")
+
+        self.set_behavior_parser = self.subparsers.add_parser("set-behavior", help="Set behavior for a shimeji")
+        self.set_behavior_parser.add_argument("behavior", help="Behavior name")
 
         self.args = self.parser.parse_args()
 
@@ -1503,8 +1506,47 @@ class ShimejiCtl:
             self.export_shimeji()
         elif self.args.action == "config":
             self.configuration_manager()
+        elif self.args.action == "set-behavior":
+            self.set_behavior()
         else:
             self.parser.print_help()
+
+    def set_behavior(self):
+        sock = self.connect_to_overlay(do_not_start=True)
+        if sock is None:
+            print("[ERROR] Overlay not running")
+            raise SystemExit(1)
+
+        selected_id = self.select(sock)
+        if selected_id is None:
+            print("[ERROR] No shimeji selected")
+            raise SystemExit(1)
+
+        message = b"\xc1"
+        message += struct.pack("@I", selected_id)
+        message += len(self.args.behavior).to_bytes(1, "big")
+        message += self.args.behavior.encode("utf-8")
+
+        sock.send(message)
+        result = sock.recv(2)
+        if result[0] != 0xc2:
+            print("[ERROR] Invalid response from overlay")
+            raise SystemExit(1)
+
+        if result[1] != 0:
+            match result[1]:
+                case 1:
+                    print("[ERROR] Protocol violation")
+                case 2:
+                    print("[ERROR] Selected shimeji not found")
+                case 3:
+                    print("[ERROR] Selected shimeji does not have the specified behavior")
+                case _:
+                    print("[ERROR] Unknown error")
+            raise SystemExit(1)
+
+        print("Behavior set successfully")
+
 
     def import_shimeji(self):
         def guess_format() -> str:
@@ -1689,25 +1731,52 @@ class ShimejiCtl:
             zipf.writestr("pack_manifest.json", json.dumps(pack_manifest, indent=4))
 
     def configuration_manager(self):
+        param_list = ["breeding", "dragging", "ie-interactions", "ie-throwing", "cursor-position", "mascot-limit", "ie-throw-policy", "dismiss-animations", "mascot-interactions", "framerate"]
+
+        if self.args.subaction == "list":
+            for param in param_list:
+                self.args.key = param
+                self.args.subaction = "get"
+                self.configuration_manager()
+            return
+
+        sock = self.connect_to_overlay(do_not_start=True)
+        if sock is None:
+            print("[ERROR] Overlay not running")
+            raise SystemExit(1)
+
         if self.args.subaction == "get":
-            print("Not implemented")
-        elif self.args.subaction == "list":
-            print("Not implemented")
-        elif self.args.subaction == "set":
-
-            sock = self.connect_to_overlay(do_not_start=True)
-            if sock is None:
-                print("[ERROR] Overlay not running")
+            if self.args.key not in param_list:
+                print(f"[ERROR] Unknown parameter {self.args.key}")
                 raise SystemExit(1)
-
-            param_list = ["breeding", "dragging", "ie-interactions", "ie-throwing", "cursor-position", "mascot-limit", "ie-throw-policy"]
+            key_id = param_list.index(self.args.key)
+            message = b"\xf1"+(key_id | 0x80).to_bytes(1, "little")
+            sock.send(message)
+            response = sock.recv(6)
+            if response[0] != 0xf2:
+                print("[ERROR] Invalid response")
+                raise SystemExit(1)
+            if response[1] != 0x80:
+                if response[1] == 0x81:
+                    print("[ERROR] Invalid parameter name")
+                print("[ERROR] Failed to get parameter")
+                raise SystemExit(1)
+            if key_id in [0,1,2,3,4,7,8]:
+                print(f"{self.args.key}: {bool(response[2])}".lower())
+            elif key_id == 5:
+                print(f"{self.args.key}: {int.from_bytes(response[2:6], 'little')}")
+            elif key_id == 6:
+                print(f"{self.args.key}: {['none', 'loop', 'stop_at_border', 'bounce', 'close', 'minimize'][response[2]]}")
+            elif key_id == 9:
+                print(f"{self.args.key}: {round(1000000/int.from_bytes(response[2:6], 'little'))}")
+        elif self.args.subaction == "set":
             if self.args.key not in param_list:
                 print(f"[ERROR] Unknown parameter {self.args.key}")
                 raise SystemExit(1)
             key_id = param_list.index(self.args.key)
 
             value = None
-            if key_id < 5:
+            if key_id in [0,1,2,3,4,7,8]:
                 if self.args.value not in ["true", "false"]:
                     print(f"[ERROR] Invalid value for parameter {self.args.key}")
                     raise SystemExit(1)
@@ -1722,6 +1791,12 @@ class ShimejiCtl:
                     print(f"[ERROR] Invalid value for parameter {self.args.key}")
                     raise SystemExit(1)
                 value = ["none", "loop", "stop_at_border", "bounce", "close", "minimize"].index(self.args.value.lower())
+            elif key_id == 9:
+                if not self.args.value.isdigit():
+                    print(f"[ERROR] Invalid value for parameter {self.args.key}")
+                    raise SystemExit(1)
+                value = int(self.args.value)
+                value = round(1000000/value)
 
             if value is None:
                 print(f"[ERROR] Invalid value for parameter {self.args.key}")
@@ -1740,6 +1815,8 @@ class ShimejiCtl:
                 print("[ERROR] Invalid response")
                 raise SystemExit(1)
             if response[1] != 0:
+                if response[1] == 0x1:
+                    print("[ERROR] Invalid parameter name")
                 print("[ERROR] Failed to set parameter")
                 raise SystemExit(1)
             print("Parameter set successfully")
@@ -1852,11 +1929,7 @@ class ShimejiCtl:
     def load_config(self):
         print("Not implemented")
 
-    def info(self):
-        sock = self.connect_to_overlay(do_not_start=True)
-        if sock is None:
-            print("[ERROR] Overlay not running")
-            raise SystemExit(1)
+    def information_by_id(self, id: int, sock) -> dict:
 
         def read_string(buffer: bytes) -> tuple[str, bytes]:
             string_len = int.from_bytes(buffer[:1], "little")
@@ -1864,6 +1937,136 @@ class ShimejiCtl:
             string = buffer[:string_len].decode("utf-8", errors="ignore")
             buffer = buffer[string_len:]
             return string, buffer
+
+        def read_int(buffer: bytes) -> tuple[int, bytes]:
+            integer = struct.unpack("@i", buffer[:4])[0]
+            buffer = buffer[4:]
+            return integer, buffer
+
+        def read_float(buffer: bytes) -> tuple[float, bytes]:
+            float_val = struct.unpack("@f", buffer[:4])[0]
+            buffer = buffer[4:]
+            return float_val, buffer
+
+        def read_uint64(buffer: bytes) -> tuple[int, bytes]:
+            long_val = struct.unpack("@Q", buffer[:8])[0]
+            buffer = buffer[8:]
+            return long_val, buffer
+
+        def read_uint32(buffer: bytes) -> tuple[int, bytes]:
+            uint32_val = struct.unpack("@I", buffer[:4])[0]
+            buffer = buffer[4:]
+            return uint32_val, buffer
+
+        def read_uint16(buffer: bytes) -> tuple[int, bytes]:
+            uint16_val = struct.unpack("@H", buffer[:2])[0]
+            buffer = buffer[2:]
+            return uint16_val, buffer
+
+        message = b"\x07\x00"
+        message += id.to_bytes(4, "little")
+        sock.send(message)
+        response = sock.recv(4096)
+        if response[0] != 0x6:
+            print("[ERROR] Invalid response")
+            raise SystemExit(1)
+        if response[1] != 0:
+            print("[ERROR] Failed to get mascot information")
+            raise SystemExit(1)
+
+        response = response[2:]
+
+        display_name, response = read_string(response)
+        name, response = read_string(response)
+        prototype_path, response = read_string(response)
+
+        target_mascot, response = read_int(response)
+
+        action_index, response = read_int(response)
+        action_duration, response = read_int(response)
+        action_tick, response = read_int(response)
+        refcounter, response = read_int(response)
+
+        action, response = read_string(response)
+        behavior, response = read_string(response)
+        affordance, response = read_string(response)
+
+        state, response = read_uint32(response)
+
+        actionstack = []
+        actionindexstack = []
+
+        action_stack_len = int.from_bytes(response[:1], "little")
+        response = response[1:]
+        for _ in range(action_stack_len):
+            action_name, response = read_string(response)
+            action_index, response = read_int(response)
+            actionstack.append(action_name)
+            actionindexstack.append(action_index)
+
+        behaviorpool = []
+
+        behavior_pool_len = int.from_bytes(response[:1], "little")
+        response = response[1:]
+        for _ in range(behavior_pool_len):
+            behavior_name, response = read_string(response)
+            behavior_frequency, response = read_uint64(response)
+            behaviorpool.append((behavior_name, behavior_frequency))
+
+        variables = []
+
+        variables_count = int.from_bytes(response[:1], "little")
+        response = response[1:]
+        for _ in range(variables_count):
+            value = response[:4]
+            response = response[4:]
+
+            kind = response[:1]
+            response = response[1:]
+
+            used = response[:1]
+            response = response[1:]
+
+            evaluated = response[:1]
+            response = response[1:]
+
+            has_prototype = response[:1]
+            response = response[1:]
+
+            program_id = -1
+            if int.from_bytes(has_prototype, "little"):
+                program_id = int.from_bytes(response[:2], "little")
+                response = response[2:]
+            if int.from_bytes(kind, "little"):
+                value = struct.unpack("<f", value)[0]
+            else:
+                value = int.from_bytes(value, "little")
+            variables.append((value, int.from_bytes(kind, "little"), int.from_bytes(used, "little"), int.from_bytes(evaluated, "little"), int.from_bytes(has_prototype, "little"), program_id))
+
+        return {
+            "display_name": display_name,
+            "name": name,
+            "prototype_path": prototype_path,
+            "target_mascot": target_mascot,
+            "action": action,
+            "action_index": action_index,
+            "action_duration": action_duration,
+            "action_tick": action_tick,
+            "refcounter": refcounter,
+            "behavior": behavior,
+            "affordance": affordance,
+            "state": state,
+            "actionstack": actionstack,
+            "actionindexstack": actionindexstack,
+            "behaviorpool": behaviorpool,
+            "variables": variables
+        }
+
+    def info(self):
+        sock = self.connect_to_overlay(do_not_start=True)
+        if sock is None:
+            print("[ERROR] Overlay not running")
+            raise SystemExit(1)
 
         variable_names = [
             "X", "Y",
@@ -1909,95 +2112,30 @@ class ShimejiCtl:
         ]
 
         selected_id = self.select(sock)
-        message = b"\x07\x00"
-        message += selected_id.to_bytes(4, "little")
-        sock.send(message)
-        response = sock.recv(4096)
-        if response[0] != 0x6:
-            print("[ERROR] Invalid response")
-            raise SystemExit(1)
-        if response[1] != 0:
-            print("[ERROR] Failed to get mascot information")
-            raise SystemExit(1)
+        mascot = self.information_by_id(selected_id, sock)
 
-        response = response[2:]
+        print(f"~~~ Mascot id {selected_id} ~~~")
+        print(f"Type: {mascot['display_name']} ({mascot['name']})")
+        print(f"Prototype path: {mascot['prototype_path']}")
+        print(f"Referenced {mascot['refcounter']} times")
 
-        display_name, response = read_string(response)
-        name, response = read_string(response)
-        action, response = read_string(response)
-        behavior, response = read_string(response)
-        affordance, response = read_string(response)
+        if mascot['target_mascot'] != -1:
+            target = self.information_by_id(mascot['target_mascot'], sock)
+            print(f"Targeting mascot id {mascot['target_mascot']} aka {target['display_name']} ({target['name']})")
 
-        state = int.from_bytes(response[:4], "little")
-        response = response[4:]
-
-        actionstack = []
-        actionindexstack = []
-
-        action_stack_len = int.from_bytes(response[:1], "little")
-        response = response[1:]
-        for _ in range(action_stack_len):
-            action_name, response = read_string(response)
-            action_index = int.from_bytes(response[:4], "little")
-            response = response[4:]
-            actionstack.append(action_name)
-            actionindexstack.append(action_index)
-
-        behaviorpool = []
-
-        behavior_pool_len = int.from_bytes(response[:1], "little")
-        response = response[1:]
-        for _ in range(behavior_pool_len):
-            behavior_name, response = read_string(response)
-            behavior_frequency = int.from_bytes(response[:4], "little")
-            response = response[4:]
-            behaviorpool.append((behavior_name, behavior_frequency))
-
-        variables = []
-
-        variables_count = int.from_bytes(response[:1], "little")
-        response = response[1:]
-        for _ in range(variables_count):
-            value = response[:4]
-            response = response[4:]
-
-            kind = response[:1]
-            response = response[1:]
-
-            used = response[:1]
-            response = response[1:]
-
-            evaluated = response[:1]
-            response = response[1:]
-
-            has_prototype = response[:1]
-            response = response[1:]
-
-            program_id = -1
-            if int.from_bytes(has_prototype, "little"):
-                program_id = int.from_bytes(response[:2], "little")
-                response = response[2:]
-            if int.from_bytes(kind, "little"):
-                value = struct.unpack("<f", value)[0]
-            else:
-                value = int.from_bytes(value, "little")
-            variables.append((value, int.from_bytes(kind, "little"), int.from_bytes(used, "little"), int.from_bytes(evaluated, "little"), int.from_bytes(has_prototype, "little"), program_id))
-
-        print(f"Name: {name}")
-        print(f"Display name: {display_name}")
-        print(f"Current action: {action}")
-        print(f"Current behavior: {behavior}")
-        print(f"Current affordance: {affordance or '(nil)'}")
-        print(f"Current state: {state_names[state]}")
+        print(f"Current action: {mascot['action']} ({mascot['action_index']}) until {mascot['action_duration']} tick")
+        print(f"Current behavior: {mascot['behavior']}")
+        print(f"Current affordance: {mascot['affordance'] or '(nil)'}")
+        print(f"Current state: {state_names[mascot['state']]}")
         print("\nAction stack:")
-        for index, action in enumerate(actionstack):
-            print(f"  {index}: {action} @ {actionindexstack[index]}")
+        for index, action in enumerate(mascot['actionstack']):
+            print(f"  {index}: {action} @ {mascot['actionindexstack'][index]}")
         print("\nBehavior pool:")
-        for index, (behavior, frequency) in enumerate(behaviorpool):
+        for index, (behavior, frequency) in enumerate(mascot['behaviorpool']):
             print(f"  {index}: {behavior} ({frequency})")
 
         print("\nVariables:")
-        for index, (value, kind, used, evaluated, has_prototype, program_id) in enumerate(variables):
+        for index, (value, kind, used, evaluated, has_prototype, program_id) in enumerate(mascot['variables']):
             if variable_names[index] is not None:
                 print(f"  {variable_names[index]}: {value}")
 

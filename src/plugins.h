@@ -19,6 +19,7 @@ struct ie_object;
 #define PLUGIN_IE_THROW_POLICY_LOOP 3
 #define PLUGIN_IE_THROW_POLICY_CLOSE 4
 #define PLUGIN_IE_THROW_POLICY_MINIMIZE 5
+#define PLUGIN_IE_KEEP_OFFSCREEN 6
 
 enum plugin_initialization_result {
     PLUGIN_INIT_OK,
@@ -122,7 +123,6 @@ enum plugin_execution_result plugin_execute_ie_throw_policy(struct plugin* plugi
 enum plugin_execution_result plugin_change_capabilities(struct plugin* plugin, uint32_t capabilities);
 
 enum plugin_execution_result plugin_execute_deactivate_ie(struct plugin* plugin, struct ie_object* ie);
-
 enum plugin_execution_result plugin_execute_restore_ies(struct plugin* plugin);
 
 enum plugin_execution_result plugin_get_ie_for_environment(struct plugin* plugin, environment_t* env, struct ie_object** ie);

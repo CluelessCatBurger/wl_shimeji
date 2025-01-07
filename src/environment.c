@@ -1968,6 +1968,23 @@ bool environment_ie_stop_movement(environment_t* env)
     }
 }
 
+bool environment_ie_restore(environment_t *env)
+{
+    if (!env) return false;
+    if (!env->ie) return false;
+    if (!env->ie->parent_plugin->execute_restore_ies) return false;
+
+    enum plugin_execution_result exec_res = plugin_execute_restore_ies(env->ie->parent_plugin);
+    if (exec_res == PLUGIN_EXEC_OK) {
+        return true;
+    } else {
+        if (exec_res == PLUGIN_EXEC_SEGFAULT) {
+            ERROR("Plugin execution failed with SEGFAULT");
+        }
+        return false;
+    }
+}
+
 #endif
 
 enum environment_move_result environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
@@ -2083,8 +2100,6 @@ uint32_t environment_workarea_height(environment_t* env)
 {
     return env->height;
 }
-
-
 
 enum environment_border_type environment_get_border_type(environment_t *env, int32_t x, int32_t y)
 {

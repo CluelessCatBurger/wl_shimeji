@@ -138,5 +138,6 @@ enum environment_move_result environment_ie_move(environment_t* env, int32_t dx,
 bool environment_ie_allows_move(environment_t* env);
 bool environment_ie_throw(environment_t* env, float x_velocity, float y_velocity, float gravity, uint32_t tick);
 bool environment_ie_stop_movement(environment_t* env);
+bool environment_ie_restore(environment_t* env);
 
 #endif

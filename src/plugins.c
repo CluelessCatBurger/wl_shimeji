@@ -387,6 +387,13 @@ enum plugin_execution_result plugin_execute_ie_throw_policy(struct plugin* plugi
 
     enum plugin_execution_result result = PLUGIN_EXEC_UNKNOWN_ERROR;
 
+    if (!plugin->execute_ie_throw_policy) return PLUGIN_EXEC_NULLPTR;
+
+    if (!plugin->execute_restore_ies && policy == PLUGIN_IE_KEEP_OFFSCREEN) {
+        WARN("Plugin does not support restoring IEs, cannot keep offscreen");
+        return PLUGIN_EXEC_NULLPTR;
+    }
+
     struct sigaction old_action;
     sigaction(SIGSEGV, &(struct sigaction) { .sa_handler = signal_handler }, &old_action);
     if (setjmp(last_okay_state) == 0) {

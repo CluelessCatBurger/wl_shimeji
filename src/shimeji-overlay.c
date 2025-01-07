@@ -51,6 +51,22 @@
 #define MASCOT_OVERLAYD_INSTANCE_DEFAULT_THREAD_COUNT 1
 #define MASCOT_OVERLAYD_INSTANCE_DEFAULT_MASCOT_COUNT 256
 
+#ifndef DEFAULT_CONF_PATH
+#define DEFAULT_CONF_PATH "%s/.local/share/wl_shimeji"
+#endif
+
+#ifndef DEFAULT_PROTOS_PATH
+#define DEFAULT_PROTOS_PATH "%s/shimejis"
+#endif
+
+#ifndef DEFAULT_PLUGINS_PATH
+#define DEFAULT_PLUGINS_PATH "%s/plugins"
+#endif
+
+#ifndef DEFAULT_SOCK_PATH
+#define DEFAULT_SOCK_PATH "%s/shimeji-overlayd.sock"
+#endif
+
 static mascot_prototype_store* prototype_store = NULL;
 static struct mascot_affordance_manager affordance_manager = {0};
 
@@ -144,6 +160,9 @@ void sigaction_handler(int signum, siginfo_t* info, void* context)
     } else if (signum == SIGINT) {
         INFO("Received SIGINT, shutting down...");
         should_exit = true;
+    } else if (signum == SIGHUP) {
+        INFO("Received SIGHUP, reloading configuration...");
+        config_parse(config_path);
     }
     else {
         ERROR("Unexpected signal %d received!", signum);
@@ -156,17 +175,17 @@ size_t get_default_config_path(char* pathbuf, size_t pathbuf_len)
     const char *home = secure_getenv("HOME");
     if (!home) return 0;
 
-    return snprintf(pathbuf, pathbuf_len, "%s/.local/share/wl_shimeji", home);
+    return snprintf(pathbuf, pathbuf_len, DEFAULT_CONF_PATH, home);
 }
 
 size_t get_mascots_path(char* pathbuf, size_t pathbuf_len)
 {
-    return snprintf(pathbuf, pathbuf_len, "%s/shimejis", config_path);
+    return snprintf(pathbuf, pathbuf_len, DEFAULT_PROTOS_PATH, config_path);
 }
 
 size_t get_plugins_path(char* pathbuf, size_t pathbuf_len)
 {
-    return snprintf(pathbuf, pathbuf_len, "%s/plugins", config_path);
+    return snprintf(pathbuf, pathbuf_len, DEFAULT_PLUGINS_PATH, config_path);
 }
 
 size_t get_default_socket_path(char* pathbuf, size_t pathbuf_len)
@@ -174,7 +193,7 @@ size_t get_default_socket_path(char* pathbuf, size_t pathbuf_len)
     const char *prefix = secure_getenv("XDG_RUNTIME_DIR");
     if (!prefix) prefix = "/tmp";
 
-    return snprintf(pathbuf, pathbuf_len, "%s/shimeji-overlayd.sock", prefix);
+    return snprintf(pathbuf, pathbuf_len, DEFAULT_SOCK_PATH, prefix);
 }
 
 int32_t create_socket(const char* socket_path)
@@ -223,7 +242,9 @@ struct mascot_spawn_data {
     char name[128];
 };
 
-void spawn_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data)
+// ----------------------------------------------------------------------------
+
+void summon_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data)
 {
 
     UNUSED(subsurface);
@@ -296,57 +317,6 @@ void spawn_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurfa
     free(data);
 }
 
-bool process_add_mascot_packet(uint8_t* buff, uint8_t len, int fd)
-{
-    if (len < 2) return false;
-    uint8_t namelen = buff[1];
-    if (len < 2 + namelen) return false;
-    struct mascot_spawn_data* data = calloc(1, sizeof(struct mascot_spawn_data));
-    data->fd = fd;
-    memcpy(data->name, buff + 2, namelen);
-    data->name[namelen] = 0;
-    environment_select_position(spawn_mascot, data);
-    pthread_mutex_lock(&environment_store.mutex);
-    for (size_t i = 0; i < environment_store.entry_count; i++) {
-        if (environment_store.entry_states[i]) {
-            environment_set_input_state(environment_store.entries[i], true);
-        }
-    }
-    pthread_mutex_unlock(&environment_store.mutex);
-    return true;
-}
-
-bool process_spawn_mascot_packet(uint8_t* buff, uint8_t len, int fd)
-{
-    if (len < 2) return false;
-    uint8_t namelen = buff[1];
-    if (len < 2 + namelen) return false;
-    struct mascot_spawn_data* data = calloc(1, sizeof(struct mascot_spawn_data));
-    data->fd = fd;
-    memcpy(data->name, buff + 2, namelen);
-    data->name[namelen] = 0;
-    pthread_mutex_lock(&environment_store.mutex);
-    // Select random environment
-    environment_t* env = NULL;
-    for (size_t i = 0; i < environment_store.entry_count; i++) {
-        if (environment_store.entry_states[i]) {
-            env = environment_store.entries[i];
-            break;
-        }
-    }
-    pthread_mutex_unlock(&environment_store.mutex);
-    if (!env) {
-        uint8_t buff[2] = {3, 2}; // Command SPAWN_RESULT, result INVALID_ENVIRONMENT
-        send(fd, buff, 2, 0);
-        free(data);
-        return false;
-    }
-    int32_t x = rand() % environment_screen_width(env);
-    int32_t y = environment_screen_height(env) - 256;
-    spawn_mascot(env, x, y, NULL, data);
-    return true;
-}
-
 void remove_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data)
 {
     UNUSED(x);
@@ -375,17 +345,16 @@ void remove_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
 
     pthread_mutex_lock(&mascot_store.mutex);
 
-    struct mascot_action_reference action_dispose = {0};
-    action_dispose.action = mascot_get_dispose_action();
     int res = ACTION_SET_ACTION_TRANSIENT;
-    if (action_dispose.action) {
-        res = mascot_set_action(mascot, &action_dispose, false, 0);
-        const struct mascot_pose* pose = environment_subsurface_get_pose(mascot->subsurface);
-        if (pose) {
-            environment_subsurface_set_offset(mascot->subsurface, pose->anchor_x, pose->anchor_y);
-        }
+
+    if (mascot->prototype->dismiss_action && config_get_allow_dismiss_animations()) {
+        struct mascot_action_reference dismiss = {
+            .action = (struct mascot_action*)mascot->prototype->dismiss_action,
+        };
+        res = mascot_set_action(mascot, &dismiss, false, 0);
     }
-    if (!action_dispose.action || res != ACTION_SET_RESULT_OK) {
+
+    if (res != ACTION_SET_RESULT_OK) {
         mascot_announce_affordance(mascot, NULL);
         mascot_attach_affordance_manager(mascot, NULL);
         mascot_unlink(mascot);
@@ -421,10 +390,170 @@ enum mascot_prototype_load_result load_prototype(const char* path)
     }
     mascot_prototype_store_add(prototype_store, prototype);
     return PROTOTYPE_LOAD_SUCCESS;
-
 }
 
-bool process_load_prototype_packet(uint8_t* buff, uint8_t len, int fd)
+void select_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data)
+{
+    UNUSED(x);
+    UNUSED(y);
+    UNUSED(env);
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            environment_set_input_state(environment_store.entries[i], false);
+        }
+    }
+
+    int fd = (int)(uintptr_t)data;
+    struct mascot* mascot = environment_subsurface_get_mascot(subsurface);
+    if (!mascot) {
+        char buff[6] = {4, 1, 0, 0, 0, 0}; // Command SELECT_RESULT, result NO_MASCOT
+        send(fd, buff, 2, 0);
+        return;
+    }
+
+    // Write mascot id to buffer
+    char buff[6] = {0}; // Command SELECT_RESULT, result SUCCESS
+    buff[0] = 4;
+    buff[1] = 0;
+    // Write uint32_t
+    uint32_t id = mascot->id;
+    memcpy(buff + 2, &id, 4);
+    send(fd, buff, 6, 0);
+}
+
+// ----------------------------------------------------------------------------
+
+void write_str(char* buf, uint16_t *len, const char* string)
+{
+    if (!string) {
+        buf[(*len)++] = 0;
+        return;
+    }
+    uint8_t slen = strlen(string);
+    buf[(*len)++] = slen;
+    memcpy(buf + *len, string, slen);
+    *len += slen;
+}
+
+void write_variable(char* buf, uint16_t* len, struct mascot_local_variable* var)
+{
+    memcpy(buf + *len, &var->value, 4);
+    *len += 4;
+    buf[(*len)++] = var->kind;
+    buf[(*len)++] = var->used;
+    buf[(*len)++] = var->expr.evaluated;
+    if (var->expr.expression_prototype) {
+        buf[(*len)++] = 1;
+        memcpy(buf + *len, &var->expr.expression_prototype->body->id, 2);
+        *len += 2;
+    } else {
+        buf[(*len)++] = 0;
+    }
+}
+
+void write_byte(char* buf, uint16_t* len, uint8_t byte)
+{
+    buf[(*len)++] = byte;
+}
+
+void write_int32(char* buf, uint16_t* len, int32_t value)
+{
+    memcpy(buf + *len, &value, 4);
+    *len += 4;
+}
+
+void write_float(char* buf, uint16_t* len, float value)
+{
+    memcpy(buf + *len, &value, 4);
+    *len += 4;
+}
+
+void write_long(char* buf, uint16_t* len, uint64_t value)
+{
+    memcpy(buf + *len, &value, 8);
+    *len += 8;
+}
+
+void write_double(char* buf, uint16_t* len, double value)
+{
+    memcpy(buf + *len, &value, 8);
+    *len += 8;
+}
+
+bool read_string(const char* buf, uint16_t* pos, char* string, uint8_t string_len)
+{
+    uint8_t slen = buf[(*pos)++];
+    if (slen > string_len) {
+        return false;
+    }
+    memcpy(string, buf + *pos, slen);
+    string[slen] = 0;
+    *pos += slen;
+    return true;
+}
+
+bool read_bytes(const uint8_t* buf, uint16_t* pos, uint8_t* bytes, uint8_t byte_count)
+{
+    memcpy(bytes, buf + *pos, byte_count);
+    *pos += byte_count;
+    return true;
+}
+
+// ----------------------------------------------------------------------------
+
+bool process_add_mascot_packet(uint8_t* buff, uint16_t len, int fd)
+{
+    if (len < 2) return false;
+    uint8_t namelen = buff[1];
+    if (len < 2 + namelen) return false;
+    struct mascot_spawn_data* data = calloc(1, sizeof(struct mascot_spawn_data));
+    data->fd = fd;
+    memcpy(data->name, buff + 2, namelen);
+    data->name[namelen] = 0;
+    environment_select_position(summon_mascot, data);
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            environment_set_input_state(environment_store.entries[i], true);
+        }
+    }
+    pthread_mutex_unlock(&environment_store.mutex);
+    return true;
+}
+
+bool process_summon_mascot_packet(uint8_t* buff, uint16_t len, int fd)
+{
+    if (len < 2) return false;
+    uint8_t namelen = buff[1];
+    if (len < 2 + namelen) return false;
+    struct mascot_spawn_data* data = calloc(1, sizeof(struct mascot_spawn_data));
+    data->fd = fd;
+    memcpy(data->name, buff + 2, namelen);
+    data->name[namelen] = 0;
+    pthread_mutex_lock(&environment_store.mutex);
+    // Select random environment
+    environment_t* env = NULL;
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            env = environment_store.entries[i];
+            break;
+        }
+    }
+    pthread_mutex_unlock(&environment_store.mutex);
+    if (!env) {
+        uint8_t buff[2] = {3, 2}; // Command SPAWN_RESULT, result INVALID_ENVIRONMENT
+        send(fd, buff, 2, 0);
+        free(data);
+        return false;
+    }
+    int32_t x = rand() % environment_screen_width(env);
+    int32_t y = environment_screen_height(env) - 256;
+    summon_mascot(env, x, y, NULL, data);
+    return true;
+}
+
+bool process_load_prototype_packet(uint8_t* buff, uint16_t len, int fd)
 {
     if (len < 2) return false;
     uint8_t pathlen = buff[1];
@@ -467,83 +596,112 @@ bool process_load_prototype_packet(uint8_t* buff, uint8_t len, int fd)
     return true;
 }
 
-void select_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data)
-{
-    UNUSED(x);
-    UNUSED(y);
-    UNUSED(env);
-    pthread_mutex_lock(&environment_store.mutex);
-    for (size_t i = 0; i < environment_store.entry_count; i++) {
-        if (environment_store.entry_states[i]) {
-            environment_set_input_state(environment_store.entries[i], false);
-        }
-    }
-
-    int fd = (int)(uintptr_t)data;
-    struct mascot* mascot = environment_subsurface_get_mascot(subsurface);
-    if (!mascot) {
-        char buff[6] = {4, 1, 0, 0, 0, 0}; // Command SELECT_RESULT, result NO_MASCOT
-        send(fd, buff, 2, 0);
-        return;
-    }
-
-    // Write mascot id to buffer
-    char buff[6] = {0}; // Command SELECT_RESULT, result SUCCESS
-    buff[0] = 4;
-    buff[1] = 0;
-    // Write uint32_t
-    uint32_t id = mascot->id;
-    memcpy(buff + 2, &id, 4);
-    send(fd, buff, 6, 0);
-}
-
-bool process_config_packet(uint8_t* buff, uint8_t len, int fd)
+bool process_config_packet(uint8_t* buff, uint16_t len, int fd)
 {
     INFO("Processing config packet, len %d", len);
-    if (len < 3 || len > 6) return false;
-    uint8_t param = buff[1];
+    if (len < 2 || len > 6) return false;
+    uint8_t param = buff[1] & 0x7f; // Mask out the high bit
+    uint8_t get_value = buff[1] & 0x80; // Check the high bit
     int32_t large_param;
-    switch (param) {
-        case CONFIG_PARAM_BREEDING_ID:
-            config_set_breeding(buff[2]);
-            break;
-        case CONFIG_PARAM_DRAGGING_ID:
-            config_set_dragging(buff[2]);
-            break;
-        case CONFIG_PARAM_IE_INTERACTIONS_ID:
-            config_set_ie_interactions(buff[2]);
-            break;
-        case CONFIG_PARAM_IE_THROWING_ID:
-            config_set_ie_throwing(buff[2]);
-            break;
-        case CONFIG_PARAM_CURSOR_DATA_ID:
-            config_set_cursor_data(buff[2]);
-            break;
-        case CONFIG_PARAM_MASCOT_LIMIT_ID:
-            memcpy(&large_param, buff + 2, 4);
-            config_set_mascot_limit(large_param);
-            break;
-        case CONFIG_PARAM_IE_THROW_POLICY_ID:
-            memcpy(&large_param, buff + 2, 4);
-            config_set_ie_throw_policy(large_param);
-            for (size_t i = 0; i < 256; i++) {
-                if (plugins[i]) {
-                    plugin_execute_ie_throw_policy(plugins[i], large_param);
+
+    if (get_value) {
+        char rbuff[6] = {0};
+        rbuff[0] = 0xf2; // Command CONFIG_RESULT
+        switch (param) {
+            case CONFIG_PARAM_BREEDING_ID:
+                large_param = config_get_breeding();
+                break;
+            case CONFIG_PARAM_DRAGGING_ID:
+                large_param = config_get_dragging();
+                break;
+            case CONFIG_PARAM_IE_INTERACTIONS_ID:
+                large_param = config_get_ie_interactions();
+                break;
+            case CONFIG_PARAM_IE_THROWING_ID:
+                large_param = config_get_ie_throwing();
+                break;
+            case CONFIG_PARAM_CURSOR_DATA_ID:
+                large_param = config_get_cursor_data();
+                break;
+            case CONFIG_PARAM_MASCOT_LIMIT_ID:
+                large_param = config_get_mascot_limit();
+                break;
+            case CONFIG_PARAM_IE_THROW_POLICY_ID:
+                large_param = config_get_ie_throw_policy();
+                break;
+            case CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS_ID:
+                large_param = config_get_allow_dismiss_animations();
+                break;
+            case CONFIG_PARAM_PER_MASCOT_INTERACTIONS_ID:
+                large_param = config_get_per_mascot_interactions();
+                break;
+            case CONFIG_PARAM_TICK_DELAY_ID:
+                large_param = config_get_tick_delay();
+                break;
+            default:
+                rbuff[1] = 0x81; // Status CONFIG_GET_UNKNOWN
+                send(fd, rbuff, 2, 0);
+                return false;
+        }
+        rbuff[1] = 0x80; // Status CONFIG_GET_OK
+        memcpy(rbuff + 2, &large_param, 4);
+        send(fd, rbuff, 6, 0);
+    } else {
+        char rbuff[6] = {0};
+        rbuff[0] = 0xf2; // Command CONFIG_RESULT
+        switch (param) {
+            case CONFIG_PARAM_BREEDING_ID:
+                config_set_breeding(buff[2]);
+                break;
+            case CONFIG_PARAM_DRAGGING_ID:
+                config_set_dragging(buff[2]);
+                break;
+            case CONFIG_PARAM_IE_INTERACTIONS_ID:
+                config_set_ie_interactions(buff[2]);
+                break;
+            case CONFIG_PARAM_IE_THROWING_ID:
+                config_set_ie_throwing(buff[2]);
+                break;
+            case CONFIG_PARAM_CURSOR_DATA_ID:
+                config_set_cursor_data(buff[2]);
+                break;
+            case CONFIG_PARAM_MASCOT_LIMIT_ID:
+                memcpy(&large_param, buff + 2, 4);
+                config_set_mascot_limit(large_param);
+                break;
+            case CONFIG_PARAM_IE_THROW_POLICY_ID:
+                memcpy(&large_param, buff + 2, 4);
+                config_set_ie_throw_policy(large_param);
+                for (size_t i = 0; i < 256; i++) {
+                    if (plugins[i]) {
+                        plugin_execute_ie_throw_policy(plugins[i], large_param);
+                    }
                 }
-            }
-            break;
-        default:
-            return false;
+                break;
+            case CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS_ID:
+                config_set_allow_dismiss_animations(buff[2]);
+                break;
+            case CONFIG_PARAM_PER_MASCOT_INTERACTIONS_ID:
+                config_set_per_mascot_interactions(buff[2]);
+                break;
+            case CONFIG_PARAM_TICK_DELAY_ID:
+                memcpy(&large_param, buff + 2, 4);
+                config_set_tick_delay(large_param);
+                break;
+            default:
+                rbuff[1] = 0x01; // Status CONFIG_SET_UNKNOWN
+                return false;
+        }
+        char config_file_path[256] = {0};
+        snprintf(config_file_path, sizeof(config_file_path), "%s/shimeji.conf", config_path);
+        config_write(config_file_path);
+        rbuff[1] = 0x00; // Command CONFIG_RESULT, result SUCCESS
+        send(fd, rbuff, 2, 0);
     }
-    char config_file_path[256] = {0};
-    snprintf(config_file_path, sizeof(config_file_path), "%s/shimeji.conf", config_path);
-    config_write(config_file_path);
-    uint8_t rbuff[2] = {0xf2, 0}; // Command CONFIG_RESULT, result SUCCESS
-    send(fd, rbuff, 2, 0);
     return true;
 }
 
-bool process_select_mascot_packet(uint8_t* buff, uint8_t len, int fd)
+bool process_select_mascot_packet(uint8_t* buff, uint16_t len, int fd)
 {
     UNUSED(buff);
     if (len < 2) return false;
@@ -558,31 +716,55 @@ bool process_select_mascot_packet(uint8_t* buff, uint8_t len, int fd)
     return true;
 }
 
-void write_str(char* buf, uint16_t *len, const char* string)
+bool process_set_behavior_packet(uint8_t* buff, uint16_t len, int fd)
 {
-    uint8_t slen = strlen(string);
-    buf[(*len)++] = slen;
-    memcpy(buf + *len, string, slen);
-    *len += slen;
-}
-
-void write_variable(char* buf, uint16_t* len, struct mascot_local_variable* var)
-{
-    memcpy(buf + *len, &var->value, 4);
-    *len += 4;
-    buf[(*len)++] = var->kind;
-    buf[(*len)++] = var->used;
-    buf[(*len)++] = var->expr.evaluated;
-    if (var->expr.expression_prototype) {
-        buf[(*len)++] = 1;
-        memcpy(buf + *len, &var->expr.expression_prototype->body->id, 2);
-        *len += 2;
-    } else {
-        buf[(*len)++] = 0;
+    if (len < 6) return false;
+    uint32_t id;
+    uint16_t bufpos = 1;
+    char behavior_name[256] = {0};
+    read_bytes(buff, &bufpos, (uint8_t*)&id, 4);
+    bool res = read_string((const char*)buff, &bufpos, behavior_name, 255);
+    if (!res) {
+        uint8_t rbuff[2] = {0xc2, 1}; // Command SET_BEHAVIOR_RESULT, result INVALID_BEHAVIOR_NAME
+        send(fd, rbuff, 2, 0);
+        return false;
     }
+
+    pthread_mutex_lock(&mascot_store.mutex);
+    struct mascot* mascot = NULL;
+    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+        if (mascot_store.entry_states[i]) {
+            if (mascot_store.entries[i]->id == id) {
+                mascot = mascot_store.entries[i];
+                break;
+            }
+        }
+    }
+
+    if (!mascot) {
+        pthread_mutex_unlock(&mascot_store.mutex);
+        uint8_t rbuff[2] = {0xc2, 2}; // Command SET_BEHAVIOR_RESULT, result NO_MASCOT
+        send(fd, rbuff, 2, 0);
+        return false;
+    }
+
+    const struct mascot_behavior* behavior = mascot_prototype_behavior_by_name(mascot->prototype, behavior_name);
+    if (!behavior) {
+        pthread_mutex_unlock(&mascot_store.mutex);
+        uint8_t rbuff[2] = {0xc2, 3}; // Command SET_BEHAVIOR_RESULT, result INVALID_BEHAVIOR_NAME
+        send(fd, rbuff, 2, 0);
+        return false;
+    }
+
+    mascot_set_behavior(mascot, behavior);
+
+    pthread_mutex_unlock(&mascot_store.mutex);
+    uint8_t rbuff[2] = {0xc2, 0}; // Command SET_BEHAVIOR_RESULT, result SUCCESS
+    send(fd, rbuff, 2, 0);
+    return true;
 }
 
-bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
+bool process_get_mascot_info_packet(uint8_t* buff, uint16_t len, int fd)
 {
     if (len < 6) return false;
     uint32_t id;
@@ -613,49 +795,55 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
 
     write_str(outbuf, &outlen, mascot->prototype->display_name);
     write_str(outbuf, &outlen, mascot->prototype->name);
+    write_str(outbuf, &outlen, mascot->prototype->path);
+
+    if (mascot->target_mascot) {
+        write_int32(outbuf, &outlen, mascot->target_mascot->id);
+    } else {
+        write_int32(outbuf, &outlen, -1);
+    }
+
+    write_int32(outbuf, &outlen, mascot->action_index);
+    write_int32(outbuf, &outlen, mascot->action_duration);
+    write_int32(outbuf, &outlen, mascot->action_tick);
+    write_int32(outbuf, &outlen, mascot->refcounter);
 
     // Current action name
-    if (mascot->current_action.action) {
-        write_str(outbuf, &outlen, mascot->current_action.action->name);
-    } else {
-        outbuf[outlen++] = 0;
-    }
-    if (mascot->current_behavior) {
-        write_str(outbuf, &outlen, mascot->current_behavior->name);
-    } else {
-        outbuf[outlen++] = 0;
-    }
+    if (mascot->current_action.action) write_str(outbuf, &outlen, mascot->current_action.action->name);
+    else write_byte(outbuf, &outlen, 0);
+
+    // Current behavior name
+    if (mascot->current_behavior) write_str(outbuf, &outlen, mascot->current_behavior->name);
+    else write_byte(outbuf, &outlen, 0);
+
     // Current affordance
-    if (mascot->current_affordance) {
-        write_str(outbuf, &outlen, mascot->current_affordance);
-    } else {
-        outbuf[outlen++] = 0;
-    }
+    write_str(outbuf, &outlen, mascot->current_affordance);
+
     // Current state
     int state = mascot->state;
-    memcpy(outbuf + outlen, &state, 4);
-    outlen += 4;
-    // Dump action stack (action name + action index)
-    outbuf[outlen++] = mascot->as_p;
+    write_int32(outbuf, &outlen, state);
+
+    write_byte(outbuf, &outlen, mascot->as_p);
     for (uint8_t i = 0; i < mascot->as_p; i++) {
         write_str(outbuf, &outlen, mascot->action_stack[i].action->name);
-        memcpy(outbuf + outlen, &mascot->action_index_stack[i], 4);
-        outlen += 4;
+        write_int32(outbuf, &outlen, mascot->action_index_stack[i]);
     }
+
     // Dump behavior pool (behavior name + frequency)
-    outbuf[outlen++] = mascot->behavior_pool_len;
+    write_byte(outbuf, &outlen, mascot->behavior_pool_len);
     for (uint8_t i = 0; i < mascot->behavior_pool_len; i++) {
         write_str(outbuf, &outlen, mascot->behavior_pool[i].behavior->name);
-        memcpy(outbuf + outlen, &mascot->behavior_pool[i].frequency, 4);
-        outlen += 4;
+        write_long(outbuf, &outlen, mascot->behavior_pool[i].frequency);
     }
+
     // Dump all variables of mascot (variable value, used, evaluated, type, program_id)
-    outbuf[outlen++] = MASCOT_LOCAL_VARIABLE_COUNT;
+    write_byte(outbuf, &outlen, MASCOT_LOCAL_VARIABLE_COUNT);
     for (uint8_t i = 0; i < MASCOT_LOCAL_VARIABLE_COUNT; i++) {
         write_variable(outbuf, &outlen, &mascot->local_variables[i]);
     }
     // Send the buffer
     send(fd, outbuf, outlen, 0);
+    mascot_unlink(mascot);
     pthread_mutex_unlock(&mascot_store.mutex);
     return true;
 }
@@ -665,7 +853,7 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint8_t len, int fd)
 #define DISMISS_ALL_OTHERS 2
 #define DISMISS_ALL_OTHER_SAME_TYPE 3
 #define DISMISS_ALL_OF_SAME_TYPE 4
-bool process_dismiss_packet(uint8_t* buff, size_t len, int fd)
+bool process_dismiss_packet(uint8_t* buff, uint16_t len, int fd)
 {
     if (len != 6) return false;
     uint8_t act = buff[1];
@@ -814,7 +1002,7 @@ void* mascot_manager_thread(void* arg)
         }
         pthread_mutex_unlock(&mascot_store.mutex);
         pthread_mutex_unlock(&environment_store.mutex);
-        usleep(40000);
+        usleep(config_get_tick_delay());
         if (should_exit) {
             break;
         }
@@ -831,7 +1019,9 @@ void* mascot_manager_thread(void* arg)
     exit(0);
 };
 
+typedef bool (packet_processor_t) (uint8_t*,uint16_t,int) ;
 
+packet_processor_t* packet_processors[256] = {0};
 
 int main(int argc, const char** argv)
 {
@@ -956,6 +1146,9 @@ int main(int argc, const char** argv)
         config_set_cursor_data(true);
         config_set_mascot_limit(100);
         config_set_ie_throw_policy(PLUGIN_IE_THROW_POLICY_LOOP);
+        config_set_allow_dismiss_animations(true);
+        config_set_per_mascot_interactions(true);
+        config_set_tick_delay(40000);
         config_write(config_file_path);
     }
 
@@ -1142,7 +1335,7 @@ int main(int argc, const char** argv)
             }
             int x = rand() % environment_workarea_width(env);
             int y = environment_workarea_height(env) - 256;
-            spawn_mascot(env, x, y, NULL, data);
+            summon_mascot(env, x, y, NULL, data);
         }
     }
 
@@ -1213,6 +1406,16 @@ int main(int argc, const char** argv)
     char readymsg[2] = {0x7f};
     write(inhereted_fd, readymsg, 1);
 
+    packet_processors[0x1] = process_add_mascot_packet;
+    packet_processors[0x3] = process_load_prototype_packet;
+    // packet_processors[0x6]
+    packet_processors[0x7] = process_get_mascot_info_packet;
+    packet_processors[0xd] = process_dismiss_packet;
+    packet_processors[0xe] = process_summon_mascot_packet;
+    packet_processors[0xf] = process_select_mascot_packet;
+    packet_processors[0xf1] = process_config_packet;
+    packet_processors[0xc1] = process_set_behavior_packet;
+
     // Main loop
     while (true) {
         if (!mascot_store.used_count && !fds_count) {
@@ -1263,90 +1466,38 @@ int main(int argc, const char** argv)
                     fds_count--;
                 } else {
                     // Process message
-                    switch (buf[0]) {
-                        case 0x1:
-                            // spawn-select mascot message
-                            process_add_mascot_packet(buf, n, sd->fd);
-                            break;
-                        case 0x3:
-                            // load_config message
-                            process_load_prototype_packet(buf, n, sd->fd);
-                            break;
-                        case 0x4:
-                            // stop message
-                            pthread_mutex_lock(&mascot_store.mutex);
-                            for (size_t i = 0; i < mascot_store.entry_count; i++) {
-                                if (mascot_store.entry_states[i]) {
-                                    struct mascot* mascot = mascot_store.entries[i];
-                                    mascot_announce_affordance(mascot, NULL);
-                                    mascot_detach_affordance_manager(mascot);
-                                    mascot_store.entry_states[i] = 0;
-                                    mascot_store.entries[i] = NULL;
-                                    mascot_store.used_count--;
-                                    mascot_unlink(mascot);
-                                }
+                    if (buf[0] == 0x4) {
+                        // stop message
+                        pthread_mutex_lock(&mascot_store.mutex);
+                        for (size_t i = 0; i < mascot_store.entry_count; i++) {
+                            if (mascot_store.entry_states[i]) {
+                                struct mascot* mascot = mascot_store.entries[i];
+                                mascot_announce_affordance(mascot, NULL);
+                                mascot_detach_affordance_manager(mascot);
+                                mascot_store.entry_states[i] = 0;
+                                mascot_store.entries[i] = NULL;
+                                mascot_store.used_count--;
+                                mascot_unlink(mascot);
                             }
-                            pthread_mutex_unlock(&mascot_store.mutex);
-                            pthread_mutex_lock(&environment_store.mutex);
-                            for (size_t i = 0; i < environment_store.entry_count; i++) {
-                                if (environment_store.entry_states[i]) {
-                                    struct environment* env = environment_store.entries[i];
-                                    environment_commit(env);
-                                }
+                        }
+                        pthread_mutex_unlock(&mascot_store.mutex);
+                        pthread_mutex_lock(&environment_store.mutex);
+                        for (size_t i = 0; i < environment_store.entry_count; i++) {
+                            if (environment_store.entry_states[i]) {
+                                struct environment* env = environment_store.entries[i];
+                                environment_commit(env);
                             }
-                            pthread_mutex_unlock(&environment_store.mutex);
-                            environment_dispatch();
-                            return 0;
-                        case 0x6:
-                            // TODO: subscribe packet
-                            INFO("Got subscribe packet");
-                            break;
-                        case 0x7:
-                            process_get_mascot_info_packet(buf, n, sd->fd);
-                            break;
-                        case 0x8:
-                            // get_environment_info packet
-                            // TODO: implement
-                            INFO("Got get_environment_info packet");
-                            break;
-                        case 0x9:
-                            // get_environments packet
-                            // TODO: implement
-                            INFO("Got get_environments packet");
-                            break;
-                        case 0xa:
-                            // get_mascots packet
-                            // TODO: implement
-                            INFO("Got get_mascots packet");
-                            break;
-                        case 0xb:
-                            // get_prototypes packet
-                            // TODO: implement
-                            INFO("Got get_prototypes packet");
-                            break;
-                        case 0xc:
-                            // get_prototype_info packet
-                            // TODO: implement
-                            INFO("Got get_prototype_info packet");
-                            break;
-                        case 0xd:
-                            // dismiss packet
-                            process_dismiss_packet(buf, n, sd->fd);
-                            break;
-                        case 0xe:
-                            // spawn packet
-                            process_spawn_mascot_packet(buf, n, sd->fd);
-                            break;
-                        case 0xf1:
-                            // change config packet
-                            process_config_packet(buf, n, sd->fd);
-                            break;
-                        case 0xf:
-                            // select packet
-                            process_select_mascot_packet(buf, n, sd->fd);
-                            break;
-                        default:
-                            break;
+                        }
+                        pthread_mutex_unlock(&environment_store.mutex);
+                        environment_dispatch();
+                        return 0;
+                    }
+                    packet_processor_t *processor = packet_processors[buf[0]];
+                    if (processor) {
+                        INFO("Processing packet %d", buf[0]);
+                        processor(buf, n, sd->fd);
+                    } else {
+                        WARN("Unknown packet %d", buf[0]);
                     }
                 }
             } else if (sd->type == SOCKET_TYPE_ENVIRONMENT) {
