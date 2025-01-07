@@ -1381,7 +1381,7 @@ class ShimejiCtl:
         self.dismiss_parser = self.subparsers.add_parser('dismiss', help='Dismiss a shimeji')
         self.dismiss_parser.add_argument('--all', help='Dismiss all shimejis', action='store_true')
         self.dismiss_parser.add_argument('--all-other', help='Dismiss all shimejis except the specified one', action='store_true')
-        self.dismiss_parser.add_argument('--ignore-type', help='Dismiss all shimejis except the specified type', action='store_true')
+        self.dismiss_parser.add_argument('--same', help='Select only shimejis of same type', action='store_true')
 
         self.stop_parser = self.subparsers.add_parser('stop', help='Stop a shimeji')
 
@@ -1419,6 +1419,11 @@ class ShimejiCtl:
         self.exporter_parser = self.subparsers.add_parser("export", help="Export wl_shimeji pack to wl_shimeji pack format")
         self.exporter_parser.add_argument("shimejis", type=str, nargs="+", help="Shimeji names to export")
         self.exporter_parser.add_argument("--output", "-o", type=str, help="Output path")
+
+        self.config_manager = self.subparsers.add_parser("config", help="Manage configuration")
+        self.config_manager.add_argument("subaction", help="Action to perform", choices=["get", "set", "list"])
+        self.config_manager.add_argument("key", help="Key to get/set", choices=["breeding", "dragging", "ie-interactions", "ie-throwing", "cursor-position", "mascot-limit", "ie-throw-policy"])
+        self.config_manager.add_argument("value", help="Value to set", nargs="?")
 
         self.args = self.parser.parse_args()
 
@@ -1496,6 +1501,8 @@ class ShimejiCtl:
             self.import_shimeji()
         elif self.args.action == "export":
             self.export_shimeji()
+        elif self.args.action == "config":
+            self.configuration_manager()
         else:
             self.parser.print_help()
 
@@ -1681,6 +1688,64 @@ class ShimejiCtl:
 
             zipf.writestr("pack_manifest.json", json.dumps(pack_manifest, indent=4))
 
+    def configuration_manager(self):
+        if self.args.subaction == "get":
+            print("Not implemented")
+        elif self.args.subaction == "list":
+            print("Not implemented")
+        elif self.args.subaction == "set":
+
+            sock = self.connect_to_overlay(do_not_start=True)
+            if sock is None:
+                print("[ERROR] Overlay not running")
+                raise SystemExit(1)
+
+            param_list = ["breeding", "dragging", "ie-interactions", "ie-throwing", "cursor-position", "mascot-limit", "ie-throw-policy"]
+            if self.args.key not in param_list:
+                print(f"[ERROR] Unknown parameter {self.args.key}")
+                raise SystemExit(1)
+            key_id = param_list.index(self.args.key)
+
+            value = None
+            if key_id < 5:
+                if self.args.value not in ["true", "false"]:
+                    print(f"[ERROR] Invalid value for parameter {self.args.key}")
+                    raise SystemExit(1)
+                value = self.args.value == "true"
+            elif key_id == 5:
+                if not self.args.value.isdigit():
+                    print(f"[ERROR] Invalid value for parameter {self.args.key}")
+                    raise SystemExit(1)
+                value = int(self.args.value)
+            elif key_id == 6:
+                if self.args.value not in ["none", "loop", "stop_at_border", "bounce", "close", "minimize"]:
+                    print(f"[ERROR] Invalid value for parameter {self.args.key}")
+                    raise SystemExit(1)
+                value = ["none", "loop", "stop_at_border", "bounce", "close", "minimize"].index(self.args.value.lower())
+
+            if value is None:
+                print(f"[ERROR] Invalid value for parameter {self.args.key}")
+                raise SystemExit(1)
+
+            message = b"\xf1"
+            message += key_id.to_bytes(1, "little")
+            if isinstance(value, bool):
+                message += int(value).to_bytes(1, "little")
+            elif isinstance(value, int):
+                message += value.to_bytes(4, "little")
+
+            sock.send(message)
+            response = sock.recv(2)
+            if response[0] != 0xf2:
+                print("[ERROR] Invalid response")
+                raise SystemExit(1)
+            if response[1] != 0:
+                print("[ERROR] Failed to set parameter")
+                raise SystemExit(1)
+            print("Parameter set successfully")
+
+        else:
+            print("Invalid subaction")
 
     def summon(self):
         extra_argv = []
@@ -1723,24 +1788,52 @@ class ShimejiCtl:
             raise SystemExit(1)
 
     def dismiss(self):
+
+        if self.args.all and self.args.all_other:
+            print("[ERROR] Cannot dismiss all and all other at the same time")
+            raise SystemExit(1)
+
         sock = self.connect_to_overlay(do_not_start=True)
         if sock is None:
             print("[ERROR] Overlay not running")
             raise SystemExit(1)
 
-        # TODO: All modes, not only select
-        message = b"\x02\x00"
+        message = b"\x0d"
+
+        """
+        0 - Dismiss selected
+        1 - Dismiss all
+        2 - Dismiss all other
+        3 - Dismiss other of same type
+        4 - Dismiss all of same type
+        """
+
+        if self.args.all:
+            if self.args.same:
+                message += b"\x04"
+            else:
+                message += b"\x01"
+        elif self.args.all_other:
+            if self.args.same:
+                message += b"\x03"
+            else:
+                message += b"\x02"
+        else:
+            message += b"\x00"
+
+        selected_id = self.select(sock)
+        message += selected_id.to_bytes(4, "little")
+
         sock.send(message)
         status = sock.recv(2)
-        if status[0] != 0x4:
+
+        if status[0] != 0x7:
             print("[ERROR] Failed to dismiss shimeji: Invalid response")
             raise SystemExit(1)
 
         if status[1] != 0:
             print("[ERROR] Failed to dismiss shimeji: ", end="")
-            if status[1] == 0x2:
-                print("Somehow subsurface is NULL")
-            elif status[1] == 0x3:
+            if status[1] == 0x1:
                 print("Clicked not on mascot")
             else:
                 print(f"Unknown error, code is {status[1]}")
@@ -1760,7 +1853,153 @@ class ShimejiCtl:
         print("Not implemented")
 
     def info(self):
-        print("Not implemented")
+        sock = self.connect_to_overlay(do_not_start=True)
+        if sock is None:
+            print("[ERROR] Overlay not running")
+            raise SystemExit(1)
+
+        def read_string(buffer: bytes) -> tuple[str, bytes]:
+            string_len = int.from_bytes(buffer[:1], "little")
+            buffer = buffer[1:]
+            string = buffer[:string_len].decode("utf-8", errors="ignore")
+            buffer = buffer[string_len:]
+            return string, buffer
+
+        variable_names = [
+            "X", "Y",
+            "Target X",
+            "Target Y",
+            "Gravity",
+            "Looking Right",
+            "Air Drag X",
+            "Air Drag Y",
+            "Velocity X",
+            "Velocity Y",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "IEOffset X",
+            "IEOffset Y",
+        ]
+
+        state_names = [
+            "None",
+            "Stay",
+            "Animate",
+            "Move",
+            "Fall",
+            "Interact",
+            "Jump",
+            "Drag",
+            "Resisting",
+            "ScanMove",
+            "ScanJump",
+            "FallWithIE",
+            "WalkWithIE",
+            "ThrowIE"
+        ]
+
+        selected_id = self.select(sock)
+        message = b"\x07\x00"
+        message += selected_id.to_bytes(4, "little")
+        sock.send(message)
+        response = sock.recv(4096)
+        if response[0] != 0x6:
+            print("[ERROR] Invalid response")
+            raise SystemExit(1)
+        if response[1] != 0:
+            print("[ERROR] Failed to get mascot information")
+            raise SystemExit(1)
+
+        response = response[2:]
+
+        display_name, response = read_string(response)
+        name, response = read_string(response)
+        action, response = read_string(response)
+        behavior, response = read_string(response)
+        affordance, response = read_string(response)
+
+        state = int.from_bytes(response[:4], "little")
+        response = response[4:]
+
+        actionstack = []
+        actionindexstack = []
+
+        action_stack_len = int.from_bytes(response[:1], "little")
+        response = response[1:]
+        for _ in range(action_stack_len):
+            action_name, response = read_string(response)
+            action_index = int.from_bytes(response[:4], "little")
+            response = response[4:]
+            actionstack.append(action_name)
+            actionindexstack.append(action_index)
+
+        behaviorpool = []
+
+        behavior_pool_len = int.from_bytes(response[:1], "little")
+        response = response[1:]
+        for _ in range(behavior_pool_len):
+            behavior_name, response = read_string(response)
+            behavior_frequency = int.from_bytes(response[:4], "little")
+            response = response[4:]
+            behaviorpool.append((behavior_name, behavior_frequency))
+
+        variables = []
+
+        variables_count = int.from_bytes(response[:1], "little")
+        response = response[1:]
+        for _ in range(variables_count):
+            value = response[:4]
+            response = response[4:]
+
+            kind = response[:1]
+            response = response[1:]
+
+            used = response[:1]
+            response = response[1:]
+
+            evaluated = response[:1]
+            response = response[1:]
+
+            has_prototype = response[:1]
+            response = response[1:]
+
+            program_id = -1
+            if int.from_bytes(has_prototype, "little"):
+                program_id = int.from_bytes(response[:2], "little")
+                response = response[2:]
+            if int.from_bytes(kind, "little"):
+                value = struct.unpack("<f", value)[0]
+            else:
+                value = int.from_bytes(value, "little")
+            variables.append((value, int.from_bytes(kind, "little"), int.from_bytes(used, "little"), int.from_bytes(evaluated, "little"), int.from_bytes(has_prototype, "little"), program_id))
+
+        print(f"Name: {name}")
+        print(f"Display name: {display_name}")
+        print(f"Current action: {action}")
+        print(f"Current behavior: {behavior}")
+        print(f"Current affordance: {affordance or '(nil)'}")
+        print(f"Current state: {state_names[state]}")
+        print("\nAction stack:")
+        for index, action in enumerate(actionstack):
+            print(f"  {index}: {action} @ {actionindexstack[index]}")
+        print("\nBehavior pool:")
+        for index, (behavior, frequency) in enumerate(behaviorpool):
+            print(f"  {index}: {behavior} ({frequency})")
+
+        print("\nVariables:")
+        for index, (value, kind, used, evaluated, has_prototype, program_id) in enumerate(variables):
+            if variable_names[index] is not None:
+                print(f"  {variable_names[index]}: {value}")
 
     def foreground(self):
         sock = self.connect_to_overlay(exclusive=True, quiet=False)
@@ -1780,6 +2019,23 @@ class ShimejiCtl:
     def list(self):
         for name in self.known_shimejis:
             print(f"{name[1]} (\"{name[0]}\")")
+
+    def select(self, sock) -> int:
+        """
+            Select a shimeji, returns it's id
+        """
+        message = b"\x0f\x00"
+        sock.send(message)
+        response = sock.recv(6)
+        if response[0] != 0x4:
+            print("[ERROR] Invalid response")
+            raise SystemExit(1)
+        if response[1] != 0:
+            print("[ERROR] Failed to select shimeji")
+            raise SystemExit(1)
+
+        return int.from_bytes(response[2:], "little")
+
 
     def convert(self):
         try:
