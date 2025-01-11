@@ -1,7 +1,7 @@
 /*
     environment.c - wl_shimeji's environment handling
 
-    Copyright (C) 2024  CluelessCatBurger <github.com/CluelessCatBurger>
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -55,9 +55,13 @@ struct wp_viewporter* viewporter = NULL;
 struct wp_fractional_scale_manager_v1* fractional_manager = NULL;
 struct wp_cursor_shape_manager_v1* cursor_shape_manager = NULL;
 
+// unstable extensions
+struct zxdg_output_manager_v1* xdg_output_manager = NULL;
+
 void (*new_environment)(environment_t*) = NULL;
 void (*rem_environment)(environment_t*) = NULL;
 void (*orphaned_mascot)(struct mascot*) = NULL;
+void (*mascot_dropped_oob)(struct mascot*, int32_t x, int32_t y) = NULL;
 
 struct wl_buffer* anchor_buffer = NULL;
 
@@ -99,14 +103,34 @@ struct environment {
     uint32_t width, height;
     struct layer_surface* root_surface;
     bool is_ready;
-    environment_subsurface_t* grabbed_surface;
     environment_subsurface_t* root_environment_subsurface;
     bool pending_commit;
     int32_t interactive_window_count;
 
-    struct list* referenced_mascots;
+    // unstable extensions
+    struct zxdg_output_v1* xdg_output;
+    const char* xdg_output_name;
+    const char* xdg_output_desc;
+    bool xdg_output_done;
+    int32_t lwidth, lheight;
+    int32_t lx, ly;
 
+    struct list* referenced_mascots;
     struct ie_object* ie;
+};
+
+struct wl_surface_data {
+    enum {
+        WL_SURFACE_ROLE_SUBSURFACE,
+        WL_SURFACE_ROLE_LAYER_COMPONENT,
+        WL_SURFACE_ROLE_PARENT_SURFACE
+    } role;
+    union {
+        environment_subsurface_t* subsurface;
+        struct layer_surface* layer_surface;
+    } role_data;
+    void* callbacks;
+    environment_t* associated_environment;
 };
 
 struct environment_subsurface {
@@ -133,7 +157,6 @@ struct environment_pointer {
     int32_t public_x, public_y;
     uint32_t last_tick;
     environment_subsurface_t* grabbed_surface;
-    environment_t* environment;
     uint8_t device_type;
 
     // Devices
@@ -171,6 +194,76 @@ struct envs_queue {
 };
 
 // Helper functions ---------------------------------------------------------
+
+environment_t* environment_from_surface(struct wl_surface* surface)
+{
+    struct wl_surface_data* data = wl_surface_get_user_data(surface);
+    if (!data) return NULL;
+    return data->associated_environment;
+}
+
+environment_subsurface_t* environment_subsurface_from_surface(struct wl_surface* surface)
+{
+    struct wl_surface_data* data = wl_surface_get_user_data(surface);
+    if (!data) return NULL;
+    if (data->role != WL_SURFACE_ROLE_SUBSURFACE) return NULL;
+    return data->role_data.subsurface;
+}
+
+bool is_root_surface(struct wl_surface* surface)
+{
+    struct wl_surface_data* data = wl_surface_get_user_data(surface);
+    if (!data) return false;
+    return data->role == WL_SURFACE_ROLE_PARENT_SURFACE;
+}
+
+struct layer_surface* layer_surface_from_surface(struct wl_surface* surface)
+{
+    struct wl_surface_data* data = wl_surface_get_user_data(surface);
+    if (!data) return NULL;
+    if (data->role != WL_SURFACE_ROLE_LAYER_COMPONENT && data->role != WL_SURFACE_ROLE_PARENT_SURFACE) return NULL;
+    return data->role_data.layer_surface;
+}
+
+struct wl_surface_data* wl_surface_set_data(struct wl_surface* surface, uint8_t role, void* data, environment_t* env)
+{
+    struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
+    if (!surface_data) {
+        surface_data = calloc(1, sizeof(struct wl_surface_data));
+        if (!surface_data) return NULL;
+        wl_surface_set_user_data(surface, surface_data);
+    }
+    surface_data->role = role;
+    if (role == WL_SURFACE_ROLE_SUBSURFACE) {
+        surface_data->role_data.subsurface = data;
+    } else if (role == WL_SURFACE_ROLE_LAYER_COMPONENT || role == WL_SURFACE_ROLE_PARENT_SURFACE) {
+        surface_data->role_data.layer_surface = data;
+    }
+    surface_data->associated_environment = env;
+    return surface_data;
+}
+
+void wl_surface_clear_data(struct wl_surface* surface)
+{
+    struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
+    if (!surface_data) return;
+    free(surface_data);
+    wl_surface_set_user_data(surface, NULL);
+}
+
+void wl_surface_attach_callbacks(struct wl_surface* surface, void* callbacks)
+{
+    struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
+    if (!surface_data) return;
+    surface_data->callbacks = callbacks;
+}
+
+void* wl_surface_get_callbacks(struct wl_surface* surface)
+{
+    struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
+    if (!surface_data) return NULL;
+    return surface_data->callbacks;
+}
 
 enum environment_border_type environment_try_ie_collision(environment_t *env, int32_t from_x, int32_t from_y, int32_t to_x, int32_t to_y, int32_t *out_x, int32_t *out_y)
 {
@@ -365,6 +458,20 @@ static const struct wl_pointer_listener mascot_pointer_listener = {
     .motion = mascot_on_pointer_motion,
 };
 
+static void xdg_output_logical_position(void* data, struct zxdg_output_v1* xdg_output, int32_t x, int32_t y);
+static void xdg_output_logical_size(void* data, struct zxdg_output_v1* xdg_output, int32_t width, int32_t height);
+static void xdg_output_name(void* data, struct zxdg_output_v1* xdg_output, const char* name);
+static void xdg_output_description(void* data, struct zxdg_output_v1* xdg_output, const char* description);
+static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output);
+
+static const struct zxdg_output_v1_listener xdg_output_listener = {
+    .logical_position = xdg_output_logical_position,
+    .logical_size = xdg_output_logical_size,
+    .name = xdg_output_name,
+    .description = xdg_output_description,
+    .done = xdg_output_done
+};
+
 static void on_preffered_scale(void* data, struct wp_fractional_scale_v1* fractional_scale, uint32_t scale);
 
 static const struct wp_fractional_scale_v1_listener fractional_scale_manager_v1_listener = {
@@ -387,15 +494,18 @@ enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
         layer_surface_set_closed_callback(env->root_surface, environment_wants_to_close_callback, env);
         layer_surface_map(env->root_surface);
         block_until_synced();
+        wl_surface_set_data(env->root_surface->surface, WL_SURFACE_ROLE_PARENT_SURFACE, (void*)env->root_surface, env);
         if (env->root_surface->configure_serial) {
             env->is_ready = true;
             env->root_environment_subsurface = environment_create_subsurface(env);
+            wl_surface_set_data(env->root_environment_subsurface->surface, WL_SURFACE_ROLE_LAYER_COMPONENT, env->root_surface, env);
 
             env->scale = env->output.scale;
 
             if (fractional_manager) {
                 env->root_environment_subsurface->fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(fractional_manager, env->root_environment_subsurface->surface);
                 if (!env->root_environment_subsurface->fractional_scale) {
+                    wl_surface_clear_data(env->root_environment_subsurface->surface);
                     wl_surface_destroy(env->root_environment_subsurface->surface);
                     free(env->root_environment_subsurface);
                     error_offt += snprintf(error_m + error_offt, 1024 - error_offt, "Failed to get fractional scale for root environment subsurface\n");
@@ -403,6 +513,19 @@ enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
                     return ENV_INIT_ERROR_GENERIC;
                 }
                 wp_fractional_scale_v1_add_listener(env->root_environment_subsurface->fractional_scale, &fractional_scale_manager_v1_listener, env);
+            }
+
+            if (xdg_output_manager) {
+                env->xdg_output = zxdg_output_manager_v1_get_xdg_output(xdg_output_manager, env->output.output);
+                if (!env->xdg_output) {
+                    wl_surface_clear_data(env->root_environment_subsurface->surface);
+                    wl_surface_destroy(env->root_environment_subsurface->surface);
+                    free(env->root_environment_subsurface);
+                    error_offt += snprintf(error_m + error_offt, 1024 - error_offt, "Failed to get xdg output for root environment subsurface\n");
+                    init_status = ENV_INIT_ERROR_GENERIC;
+                    return ENV_INIT_ERROR_GENERIC;
+                }
+                zxdg_output_v1_add_listener(env->xdg_output, &xdg_output_listener, env);
             }
 
             struct environment_callbacks* callbacks = (struct environment_callbacks*)calloc(1, sizeof(struct environment_callbacks));
@@ -414,7 +537,7 @@ enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
             callbacks->data = (void*)env->root_environment_subsurface;
             callbacks->pointer_listener = &mascot_pointer_listener;
 
-            wl_surface_set_user_data(env->root_surface->surface, (void*)callbacks);
+            wl_surface_attach_callbacks(env->root_surface->surface, (void*)callbacks);
             wl_surface_attach(env->root_environment_subsurface->surface, anchor_buffer, 0, 0);
         }
         environment_commit(env);
@@ -522,7 +645,7 @@ static void on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t se
         wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
     }
 
-    struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(surface);
+    struct environment_callbacks* callbacks = wl_surface_get_callbacks(surface);
     if (!callbacks) {
         return;
     }
@@ -563,7 +686,7 @@ static void on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t se
 
     active_pointer.pointer = NULL;
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -587,7 +710,7 @@ static void on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t t
     active_pointer.temp_y = wl_fixed_to_int(y);
 
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -678,7 +801,7 @@ static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t s
     UNUSED(data);
 
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -854,7 +977,7 @@ static void on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t tim
 {
     UNUSED(data);
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -873,7 +996,7 @@ static void on_pointer_frame(void* data, struct wl_pointer* pointer)
     UNUSED(data);
 
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -915,7 +1038,7 @@ static void on_pointer_axis_source(void* data, struct wl_pointer* pointer, uint3
 {
     UNUSED(data);
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -933,7 +1056,7 @@ static void on_pointer_axis_stop(void* data, struct wl_pointer* pointer, uint32_
 {
     UNUSED(data);
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -951,7 +1074,7 @@ static void on_pointer_axis_discrete(void* data, struct wl_pointer* pointer, uin
 {
     UNUSED(data);
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -981,7 +1104,7 @@ static void on_pointer_axis_value120(void* data, struct wl_pointer* pointer, uin
 {
     UNUSED(data);
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -999,7 +1122,7 @@ static void on_pointer_axis_relative_direction(void* data, struct wl_pointer* po
 {
     UNUSED(data);
     if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
+        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
         if (!callbacks) {
             return;
         }
@@ -1141,7 +1264,7 @@ static void on_tool_down(void* data, struct zwp_tablet_tool_v2* tool, uint32_t s
     if (active_pointer.grabbed_surface) return;
 
     environment_subsurface_t* env_surface = NULL;
-    if (active_pointer.above_surface) env_surface = wl_surface_get_user_data(active_pointer.above_surface);
+    if (active_pointer.above_surface) env_surface = environment_subsurface_from_surface(active_pointer.above_surface);
     if (env_surface) {
         active_pointer.device_type = CURRENT_DEVICE_TYPE_PEN;
         active_pointer.button_state |= 1 << 4;
@@ -1217,7 +1340,7 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
     UNUSED(time);
 
     environment_subsurface_t* env_surface = NULL;
-    if (active_pointer.above_surface) env_surface = wl_surface_get_user_data(active_pointer.above_surface);
+    if (active_pointer.above_surface) env_surface = environment_subsurface_from_surface(active_pointer.above_surface);
 
     if (active_pointer.grabbed_surface) {
         active_pointer.x = active_pointer.temp_x;
@@ -1295,6 +1418,48 @@ static void on_preffered_scale(void* data, struct wp_fractional_scale_v1* wp_fra
     env->scale = scale / 120.0;
 }
 
+// XDG Output callbacks
+static void xdg_output_logical_position(void* data, struct zxdg_output_v1* xdg_output, int32_t x, int32_t y)
+{
+    UNUSED(xdg_output);
+    environment_t* env = data;
+    env->xdg_output_done = true;
+    env->lx = x;
+    env->ly = y;
+}
+
+static void xdg_output_logical_size(void* data, struct zxdg_output_v1* xdg_output, int32_t width, int32_t height)
+{
+    UNUSED(xdg_output);
+    environment_t* env = data;
+    env->xdg_output_done = true;
+    env->lwidth = width;
+    env->lheight = height;
+}
+
+static void xdg_output_name(void* data, struct zxdg_output_v1* xdg_output, const char* name)
+{
+    UNUSED(xdg_output);
+    environment_t* env = data;
+    env->xdg_output_done = true;
+    env->output.name = strdup(name);
+}
+
+static void xdg_output_description(void* data, struct zxdg_output_v1* xdg_output, const char* description)
+{
+    UNUSED(xdg_output);
+    environment_t* env = data;
+    env->xdg_output_done = true;
+    env->output.desc = strdup(description);
+}
+
+static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output)
+{
+    UNUSED(xdg_output);
+    environment_t* env = data;
+    env->xdg_output_done = true;
+    INFO("Environment id %d is ready. lpos (%d,%d), lsize (%d,%d)", env->id, env->lx, env->ly, env->lwidth, env->lheight);
+}
 
 // Registry callbacks ---------------------------------------------------------
 
@@ -1386,6 +1551,13 @@ static void handle_cursor_shape(void* data, uint32_t id, uint32_t version)
     DEBUG("Binded cursor_shape global of ver %u", version);
 }
 
+static void handle_xdg_output_manager(void* data, uint32_t id, uint32_t version)
+{
+    UNUSED(data);
+    xdg_output_manager = wl_registry_bind(registry, id, &zxdg_output_manager_v1_interface, version);
+    INFO("Binded xdg_output_manager global of ver %u", version);
+}
+
 static void on_global (void* data, struct wl_registry* registry, uint32_t id, const char* iface_name, uint32_t version)
 {
     UNUSED(registry);
@@ -1412,6 +1584,8 @@ static void on_global (void* data, struct wl_registry* registry, uint32_t id, co
         handle_fractional_scale_manager(data, id, version);
     } else if (!strcmp(iface_name, wp_cursor_shape_manager_v1_interface.name) && !(envs->flags & ENV_DISABLE_CURSOR_SHAPE)) {
         handle_cursor_shape(data, id, version);
+    } else if (!strcmp(iface_name, zxdg_output_manager_v1_interface.name)) {
+        handle_xdg_output_manager(data, id, version);
     }
 }
 
@@ -1428,7 +1602,10 @@ static const struct wl_registry_listener registry_listener = {
 
 // Public functions ------------------------------------------------------------
 
-enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*), void(*orph_listener)(struct mascot*))
+enum environment_init_status environment_init(int flags,
+    void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*),
+    void(*orph_listener)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
+)
 {
     // Wayland display connection and etc
     display = wl_display_connect(NULL);
@@ -1441,6 +1618,7 @@ enum environment_init_status environment_init(int flags, void(*new_listener)(env
     new_environment = new_listener;
     rem_environment = rem_listener;
     orphaned_mascot = orph_listener;
+    mascot_dropped_oob = mascot_dropped_oob_listener;
 
     struct envs_queue* envs = (struct envs_queue*)calloc(1, sizeof(struct envs_queue));
     envs->flags = flags;
@@ -1513,6 +1691,12 @@ void environment_unlink(environment_t *env)
         }
     }
 
+    list_free(env->referenced_mascots);
+
+    if (env->xdg_output) {
+        zxdg_output_v1_destroy(env->xdg_output);
+    }
+
     if (env->root_environment_subsurface) {
         environment_destroy_subsurface(env->root_environment_subsurface);
     }
@@ -1541,50 +1725,55 @@ environment_subsurface_t* environment_create_subsurface(environment_t* env)
 {
     if (!env->is_ready) return NULL;
 
-    environment_subsurface_t* surface = (environment_subsurface_t*)calloc(1, sizeof(environment_subsurface_t));
-    if (!surface) return NULL;
+    environment_subsurface_t* subsurface = (environment_subsurface_t*)calloc(1, sizeof(environment_subsurface_t));
+    if (!subsurface) return NULL;
 
-    surface->surface = wl_compositor_create_surface(compositor);
-    if (!surface->surface) {
-        free(surface);
+    subsurface->surface = wl_compositor_create_surface(compositor);
+    if (!subsurface->surface) {
+        free(subsurface);
         return NULL;
     }
 
-    surface->subsurface = wl_subcompositor_get_subsurface(subcompositor, surface->surface, env->root_surface->surface);
-    if (!surface->subsurface) {
-        wl_surface_destroy(surface->surface);
-        free(surface);
+    wl_surface_set_data(subsurface->surface, WL_SURFACE_ROLE_SUBSURFACE, subsurface, env);
+
+    subsurface->subsurface = wl_subcompositor_get_subsurface(subcompositor, subsurface->surface, env->root_surface->surface);
+    if (!subsurface->subsurface) {
+        wl_surface_clear_data(subsurface->surface);
+        wl_surface_destroy(subsurface->surface);
+        free(subsurface);
         return NULL;
     }
 
     struct environment_callbacks* callbacks = (struct environment_callbacks*)calloc(1, sizeof(struct environment_callbacks));
     if (!callbacks) {
-        wl_surface_destroy(surface->surface);
-        free(surface);
+        wl_surface_clear_data(subsurface->surface);
+        wl_surface_destroy(subsurface->surface);
+        free(subsurface);
         return NULL;
     }
-    callbacks->data = (void*)surface;
+    callbacks->data = (void*)subsurface;
     callbacks->pointer_listener = &mascot_pointer_listener;
 
     if (viewporter) {
-        surface->viewport = wp_viewporter_get_viewport(viewporter, surface->surface);
-        if (!surface->viewport) {
-            wl_surface_destroy(surface->surface);
-            free(surface);
+        subsurface->viewport = wp_viewporter_get_viewport(viewporter, subsurface->surface);
+        if (!subsurface->viewport) {
+            wl_surface_clear_data(subsurface->surface);
+            wl_surface_destroy(subsurface->surface);
+            free(subsurface);
             return NULL;
         }
     }
 
     if (env->output.scale && !fractional_manager && !viewporter) {
-        wl_surface_set_buffer_scale(surface->surface, env->output.scale);
+        wl_surface_set_buffer_scale(subsurface->surface, env->output.scale);
     }
 
-    wl_surface_set_user_data(surface->surface, (void*)callbacks);
+    wl_surface_attach_callbacks(subsurface->surface, callbacks);
 
     env->pending_commit = true;
 
-    surface->env = env;
-    return surface;
+    subsurface->env = env;
+    return subsurface;
 }
 
 void environment_destroy_subsurface(environment_subsurface_t* surface)
@@ -1770,7 +1959,6 @@ void environment_subsurface_drag(environment_subsurface_t* surface, environment_
     wl_subsurface_place_above(surface->subsurface, surface->env->root_environment_subsurface->surface);
     surface->drag_pointer = pointer;
     pointer->grabbed_surface = surface;
-    pointer->environment = surface->env;
 
     active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
     if (active_pointer.cursor_shape_device && active_pointer.pointer) {
@@ -1800,6 +1988,13 @@ void environment_subsurface_release(environment_subsurface_t* surface) {
     active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
     if (active_pointer.cursor_shape_device && active_pointer.pointer) {
         wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
+    }
+
+    INFO("Dropped mascot at %d, %d", active_pointer.x, active_pointer.y);
+    if (active_pointer.x < 0 || active_pointer.y < 0 || active_pointer.x > (int32_t)environment_workarea_width(surface->env) || active_pointer.y > (int32_t)environment_workarea_height(surface->env)) {
+        if (mascot_dropped_oob) {
+            mascot_dropped_oob(surface->mascot, active_pointer.x, active_pointer.y);
+        }
     }
 
     surface->env->pending_commit = true;
@@ -2100,7 +2295,7 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
     enum environment_move_result result = environment_move_ok;
 
     if (active_pointer.above_surface) {
-        environment_subsurface_t* above_surface = wl_surface_get_user_data(active_pointer.above_surface);
+        environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer.above_surface);
         if (above_surface == surface) {
             active_pointer.mascot_x = active_pointer.x - (dx + surface->pose->anchor_x);
             active_pointer.mascot_y = active_pointer.y - (dy + surface->pose->anchor_y);
@@ -2153,6 +2348,37 @@ uint32_t environment_workarea_width(environment_t* env)
 uint32_t environment_workarea_height(environment_t* env)
 {
     return env->height;
+}
+
+uint32_t environment_id(environment_t* env)
+{
+    return env->id;
+}
+
+const char* environment_name(environment_t* env)
+{
+    return env->xdg_output_done ? env->xdg_output_name : env->output.name;
+}
+
+const char* environment_desc(environment_t* env)
+{
+    return env->xdg_output_done ? env->xdg_output_desc : env->output.desc;
+}
+
+bool environment_logical_position(environment_t *env, int32_t *lx, int32_t *ly)
+{
+    if (!env->xdg_output_done) return false;
+    *lx = env->lx;
+    *ly = env->ly;
+    return true;
+}
+
+bool environment_logical_size(environment_t *env, int32_t *lw, int32_t *lh)
+{
+    if (!env->xdg_output_done) return false;
+    *lw = env->lwidth;
+    *lh = env->lheight;
+    return true;
 }
 
 enum environment_border_type environment_get_border_type(environment_t *env, int32_t x, int32_t y)
