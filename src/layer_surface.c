@@ -1,7 +1,7 @@
 /*
     layer_surface.c - wl_shimeji's overlay functionality
 
-    Copyright (C) 2024  CluelessCatBurger <github.com/CluelessCatBurger>
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License

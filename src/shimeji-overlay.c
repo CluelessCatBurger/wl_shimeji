@@ -17,6 +17,7 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
+#include "layer_surface.h"
 #define _GNU_SOURCE
 #include <bits/types/sigset_t.h>
 #include <sys/mman.h>
@@ -1272,6 +1273,7 @@ int main(int argc, const char** argv)
         config_set_allow_dismiss_animations(true);
         config_set_per_mascot_interactions(true);
         config_set_tick_delay(40000);
+        config_set_overlay_layer(LAYER_TYPE_OVERLAY);
         config_write(config_file_path);
     }
 

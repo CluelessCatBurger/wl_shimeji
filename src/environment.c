@@ -482,7 +482,7 @@ enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
 {
     for (size_t i = 0; i < envs->envs_count; i++) {
         environment_t* env = envs->envs[i];
-        env->root_surface = layer_surface_create(env->output.output, LAYER_TYPE_OVERLAY);
+        env->root_surface = layer_surface_create(env->output.output, config_get_overlay_layer());
         if (!env->root_surface) {
             WARN("FAILED TO CREATE LAYER SURFACE ON OUTPUT %u aka %s", env->id, env->output.name);
             if (rem_environment) {
