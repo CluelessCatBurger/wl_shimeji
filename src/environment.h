@@ -74,7 +74,7 @@ enum environment_init_status {
 #include "mascot.h"
 #include "plugins.h"
 
-enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*));
+enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*), void(*orphaned_mascot)(struct mascot*));
 void environment_dispatch();
 void environment_new_env_listener(void(*listener)(environment_t*));
 void environment_rem_env_listener(void(*listener)(environment_t*));

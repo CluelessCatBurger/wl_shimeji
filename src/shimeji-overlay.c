@@ -88,7 +88,22 @@ jmp_buf recovery_point;
 bool should_exit = false;
 int32_t signal_code = 0;
 
-void env_new(environment_t* environment)
+struct {
+    pthread_t** entries;
+    uint8_t* entry_states;
+    size_t entry_count;
+    size_t used_count;
+} thread_store = {0};
+
+struct {
+    struct mascot** entries;
+    uint8_t* entry_states;
+    size_t entry_count;
+    size_t used_count;
+    pthread_mutex_t mutex;
+} mascot_store = {0};
+
+static void env_new(environment_t* environment)
 {
     pthread_mutex_lock(&environment_store.mutex);
     if (environment_store.entry_count == environment_store.used_count) {
@@ -118,7 +133,7 @@ void env_new(environment_t* environment)
     pthread_mutex_unlock(&environment_store.mutex);
 }
 
-void env_delete(environment_t* environment)
+static void env_delete(environment_t* environment)
 {
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
@@ -134,20 +149,62 @@ void env_delete(environment_t* environment)
     pthread_mutex_unlock(&environment_store.mutex);
 }
 
-struct {
-    pthread_t** entries;
-    uint8_t* entry_states;
-    size_t entry_count;
-    size_t used_count;
-} thread_store = {0};
+static void orphaned_mascot(struct mascot* mascot) {
+    INFO("Mascot %s:%u is orphaned", mascot->prototype->name, mascot->id);
+    pthread_mutex_lock(&mascot_store.mutex);
+    bool found = false;
+    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+        if (mascot_store.entries[i] == mascot) {
+            mascot_store.entries[i] = NULL;
+            mascot_store.entry_states[i] = 0;
+            mascot_store.used_count--;
+            found = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mascot_store.mutex);
+    if (!found) {
+        ERROR("Orphaned mascot not found in store");
+    }
 
-struct {
-    struct mascot** entries;
-    uint8_t* entry_states;
-    size_t entry_count;
-    size_t used_count;
-    pthread_mutex_t mutex;
-} mascot_store = {0};
+    // Find new environment for mascot
+    pthread_mutex_lock(&environment_store.mutex);
+    environment_t* env = NULL;
+    float env_score = 0.0;
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            float r = drand48();
+            if (r > env_score) {
+                env = environment_store.entries[i];
+                env_score = r;
+            }
+        }
+    }
+
+    if (!env) {
+        WARN("No environment found for orphaned mascot");
+        pthread_mutex_unlock(&environment_store.mutex);
+        mascot_unlink(mascot);
+        return;
+    }
+
+    mascot_environment_changed(mascot, env);
+    pthread_mutex_unlock(&environment_store.mutex);
+
+    // Re-add mascot to store
+    pthread_mutex_lock(&mascot_store.mutex);
+    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+        if (!mascot_store.entry_states[i]) {
+            mascot_store.entries[i] = mascot;
+            mascot_store.entry_states[i] = 1;
+            mascot_store.used_count++;
+            pthread_mutex_unlock(&mascot_store.mutex);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&mascot_store.mutex);
+
+}
 
 // Sigaction handler for SIGSEGV and SIGINT
 void sigaction_handler(int signum, siginfo_t* info, void* context)
@@ -534,10 +591,14 @@ bool process_summon_mascot_packet(uint8_t* buff, uint16_t len, int fd)
     pthread_mutex_lock(&environment_store.mutex);
     // Select random environment
     environment_t* env = NULL;
+    float env_score = 0.0;
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (environment_store.entry_states[i]) {
-            env = environment_store.entries[i];
-            break;
+            float r = drand48();
+            if (r > env_score) {
+                env = environment_store.entries[i];
+                env_score = r;
+            }
         }
     }
     pthread_mutex_unlock(&environment_store.mutex);
@@ -1213,7 +1274,7 @@ int main(int argc, const char** argv)
     affordance_manager.slot_state = calloc(MASCOT_OVERLAYD_INSTANCE_DEFAULT_MASCOT_COUNT, sizeof(uint8_t));
 
     // Initialize environment
-    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete);
+    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete, orphaned_mascot);
     if (env_init != ENV_INIT_OK) {
         char buf[1025+sizeof(size_t)];
         size_t strlen = snprintf(buf+1+sizeof(size_t), 1024, "Failed to initialize environment:\n%s", environment_get_error());
@@ -1324,8 +1385,9 @@ int main(int argc, const char** argv)
                     continue;
                 }
                 environment_t* e = environment_store.entries[j];
-                float r = (float)rand() / (float)RAND_MAX;
-                if (r / (float)RAND_MAX > env_weight) {
+                float r = drand48();
+                INFO("Random number for env %d: %f", j, r);
+                if (r > env_weight) {
                     env = e;
                     env_weight = r;
                 }

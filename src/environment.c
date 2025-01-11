@@ -32,6 +32,7 @@
 #include <errno.h>
 #include "plugins.h"
 #include "config.h"
+#include "list.h"
 
 
 struct wl_display* display = NULL;
@@ -56,6 +57,7 @@ struct wp_cursor_shape_manager_v1* cursor_shape_manager = NULL;
 
 void (*new_environment)(environment_t*) = NULL;
 void (*rem_environment)(environment_t*) = NULL;
+void (*orphaned_mascot)(struct mascot*) = NULL;
 
 struct wl_buffer* anchor_buffer = NULL;
 
@@ -102,6 +104,8 @@ struct environment {
     bool pending_commit;
     int32_t interactive_window_count;
 
+    struct list* referenced_mascots;
+
     struct ie_object* ie;
 };
 
@@ -129,6 +133,7 @@ struct environment_pointer {
     int32_t public_x, public_y;
     uint32_t last_tick;
     environment_subsurface_t* grabbed_surface;
+    environment_t* environment;
     uint8_t device_type;
 
     // Devices
@@ -162,6 +167,7 @@ struct envs_queue {
     int32_t flags;
     uint8_t envs_count;
     environment_t* envs[16];
+    bool post_init;
 };
 
 // Helper functions ---------------------------------------------------------
@@ -302,6 +308,118 @@ static enum environment_init_status init_status = ENV_NOT_INITIALIZED;
 static uint32_t display_id = 0;
 static uint32_t wl_refcounter = 0;
 
+// -----------------------------------------
+
+static void on_sync_callback(void* data, struct wl_callback* callback, uint32_t time)
+{
+    bool* lock = (bool*)data;
+    wl_callback_destroy(callback);
+    *lock = false;
+    UNUSED(time);
+}
+
+struct wl_callback_listener sync_listener = {
+    .done = on_sync_callback
+};
+
+// Helper functions ---------------------------------------------------------
+
+static void block_until_synced()
+{
+    bool lock = false;
+    struct wl_callback* callback = wl_display_sync(display);
+    wl_callback_add_listener(callback, &sync_listener, &lock);
+    wl_display_roundtrip(display);
+    while(wl_display_dispatch(display) != -1 && lock);
+}
+
+static void environment_dimensions_changed_callback(uint32_t width, uint32_t height, void* data)
+{
+    environment_t* env = (environment_t*)data;
+    env->width = width;
+    env->height = height;
+}
+
+static void environment_wants_to_close_callback(void* data)
+{
+    environment_t* env = (environment_t*)data;
+    INFO("Environment %u wants to close", env->id);
+    if (rem_environment) {
+        rem_environment(env);
+    }
+}
+
+static void mascot_on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y);
+static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+static void mascot_on_pointer_frame(void* data, struct wl_pointer* pointer);
+static void mascot_on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
+static void mascot_on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface);
+static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y);
+
+static const struct wl_pointer_listener mascot_pointer_listener = {
+    .enter = mascot_on_pointer_enter,
+    .button = mascot_on_pointer_button,
+    .frame = mascot_on_pointer_frame,
+    .axis = mascot_on_pointer_axis,
+    .leave = mascot_on_pointer_leave,
+    .motion = mascot_on_pointer_motion,
+};
+
+static void on_preffered_scale(void* data, struct wp_fractional_scale_v1* fractional_scale, uint32_t scale);
+
+static const struct wp_fractional_scale_v1_listener fractional_scale_manager_v1_listener = {
+    .preferred_scale = on_preffered_scale,
+};
+
+enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
+{
+    for (size_t i = 0; i < envs->envs_count; i++) {
+        environment_t* env = envs->envs[i];
+        env->root_surface = layer_surface_create(env->output.output, LAYER_TYPE_OVERLAY);
+        if (!env->root_surface) {
+            WARN("FAILED TO CREATE LAYER SURFACE ON OUTPUT %u aka %s", env->id, env->output.name);
+            if (rem_environment) {
+                rem_environment(env);
+            }
+            continue;
+        }
+        layer_surface_set_dimensions_callback(env->root_surface, environment_dimensions_changed_callback, env);
+        layer_surface_set_closed_callback(env->root_surface, environment_wants_to_close_callback, env);
+        layer_surface_map(env->root_surface);
+        block_until_synced();
+        if (env->root_surface->configure_serial) {
+            env->is_ready = true;
+            env->root_environment_subsurface = environment_create_subsurface(env);
+
+            env->scale = env->output.scale;
+
+            if (fractional_manager) {
+                env->root_environment_subsurface->fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(fractional_manager, env->root_environment_subsurface->surface);
+                if (!env->root_environment_subsurface->fractional_scale) {
+                    wl_surface_destroy(env->root_environment_subsurface->surface);
+                    free(env->root_environment_subsurface);
+                    error_offt += snprintf(error_m + error_offt, 1024 - error_offt, "Failed to get fractional scale for root environment subsurface\n");
+                    init_status = ENV_INIT_ERROR_GENERIC;
+                    return ENV_INIT_ERROR_GENERIC;
+                }
+                wp_fractional_scale_v1_add_listener(env->root_environment_subsurface->fractional_scale, &fractional_scale_manager_v1_listener, env);
+            }
+
+            struct environment_callbacks* callbacks = (struct environment_callbacks*)calloc(1, sizeof(struct environment_callbacks));
+            if (!callbacks) {
+                error_offt += snprintf(error_m + error_offt, 1024 - error_offt, "Failed to allocate memory for environment callbacks\n");
+                init_status = ENV_INIT_ERROR_OOM;
+                return init_status;
+            }
+            callbacks->data = (void*)env->root_environment_subsurface;
+            callbacks->pointer_listener = &mascot_pointer_listener;
+
+            wl_surface_set_user_data(env->root_surface->surface, (void*)callbacks);
+            wl_surface_attach(env->root_environment_subsurface->surface, anchor_buffer, 0, 0);
+        }
+        environment_commit(env);
+    }
+}
 
 // Wayland callbacks ----------------------------------------------------------
 
@@ -467,6 +585,7 @@ static void on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t t
 
     active_pointer.temp_x = wl_fixed_to_int(x);
     active_pointer.temp_y = wl_fixed_to_int(y);
+
     if (active_pointer.above_surface) {
         struct environment_callbacks* callbacks = (struct environment_callbacks*)wl_surface_get_user_data(active_pointer.above_surface);
         if (!callbacks) {
@@ -908,15 +1027,6 @@ static const struct wl_pointer_listener wl_pointer_listener = {
     .axis_relative_direction = on_pointer_axis_relative_direction,
 };
 
-static const struct wl_pointer_listener mascot_pointer_listener = {
-    .enter = mascot_on_pointer_enter,
-    .button = mascot_on_pointer_button,
-    .frame = mascot_on_pointer_frame,
-    .axis = mascot_on_pointer_axis,
-    .leave = mascot_on_pointer_leave,
-    .motion = mascot_on_pointer_motion,
-};
-
 static void on_seat_capabilities(void* data, struct wl_seat* seat, uint32_t capabilities)
 {
     UNUSED(seat);
@@ -1035,11 +1145,13 @@ static void on_tool_down(void* data, struct zwp_tablet_tool_v2* tool, uint32_t s
     if (env_surface) {
         active_pointer.device_type = CURRENT_DEVICE_TYPE_PEN;
         active_pointer.button_state |= 1 << 4;
-        active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-        active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
-        active_pointer.temp_x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-        active_pointer.temp_y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
-        mascot_drag_started(env_surface->mascot, &active_pointer);
+        if (env_surface->mascot) {
+            active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
+            active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
+            active_pointer.temp_x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
+            active_pointer.temp_y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
+            mascot_drag_started(env_surface->mascot, &active_pointer);
+        }
     }
 }
 
@@ -1114,12 +1226,16 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
     }
 
     if (env_surface) {
-        if (env_surface->env->root_environment_subsurface == env_surface) {
-            active_pointer.x = active_pointer.temp_x;
-            active_pointer.y = active_pointer.temp_y;
+        if (env_surface->env) {
+            if (env_surface->env->root_environment_subsurface == env_surface) {
+                active_pointer.x = active_pointer.temp_x;
+                active_pointer.y = active_pointer.temp_y;
+            }
         } else {
-            active_pointer.mascot_x = active_pointer.temp_x - env_surface->mascot->X->value.i - env_surface->pose->anchor_x;
-            active_pointer.mascot_y = active_pointer.temp_y - env_surface->mascot->Y->value.i - env_surface->pose->anchor_y;
+            if (env_surface->pose) {
+                active_pointer.mascot_x = active_pointer.temp_x - env_surface->mascot->X->value.i - env_surface->pose->anchor_x;
+                active_pointer.mascot_y = active_pointer.temp_y - env_surface->mascot->Y->value.i - env_surface->pose->anchor_y;
+            }
         }
     }
 }
@@ -1179,10 +1295,6 @@ static void on_preffered_scale(void* data, struct wp_fractional_scale_v1* wp_fra
     env->scale = scale / 120.0;
 }
 
-
-static const struct wp_fractional_scale_v1_listener fractional_scale_manager_v1_listener = {
-    .preferred_scale = on_preffered_scale,
-};
 
 // Registry callbacks ---------------------------------------------------------
 
@@ -1245,9 +1357,16 @@ static void handle_output(void* data, uint32_t id, uint32_t version)
         env->id = wl_refcounter++;
         env->output.output = output;
         env->output.id = display_id++;
+        env->referenced_mascots = list_init(256);
         wl_output_add_listener(output, &wl_output_listener, (void*)env);
+        wl_output_set_user_data(output, (void*)env);
         new_environment(env);
         envs->envs[envs->envs_count++] = env;
+        if (envs->post_init) {
+            dispatch_envs_queue(envs);
+            envs->envs_count = 0;
+            envs->envs[0] = NULL;
+        }
     }
     DEBUG("Binded wl_output global of ver %u", version);
 }
@@ -1300,7 +1419,6 @@ static void on_global_remove(void *data, struct wl_registry *registry, uint32_t 
 	UNUSED(data);
     UNUSED(registry);
     UNUSED(id);
-    WARN("Unexpected removal of global! id:%u", id);
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -1308,39 +1426,9 @@ static const struct wl_registry_listener registry_listener = {
     .global_remove = on_global_remove
 };
 
-static void on_sync_callback(void* data, struct wl_callback* callback, uint32_t time)
-{
-    bool* lock = (bool*)data;
-    wl_callback_destroy(callback);
-    *lock = false;
-    UNUSED(time);
-}
-
-struct wl_callback_listener sync_listener = {
-    .done = on_sync_callback
-};
-
-// Helper function --------------------------------------------------------------
-
-static void block_until_synced()
-{
-    bool lock = false;
-    struct wl_callback* callback = wl_display_sync(display);
-    wl_callback_add_listener(callback, &sync_listener, &lock);
-    wl_display_roundtrip(display);
-    while(wl_display_dispatch(display) != -1 && lock);
-}
-
-static void environment_dimensions_changed_callback(uint32_t width, uint32_t height, void* data)
-{
-    environment_t* env = (environment_t*)data;
-    env->width = width;
-    env->height = height;
-}
-
 // Public functions ------------------------------------------------------------
 
-enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*))
+enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*), void(*orph_listener)(struct mascot*))
 {
     // Wayland display connection and etc
     display = wl_display_connect(NULL);
@@ -1352,12 +1440,13 @@ enum environment_init_status environment_init(int flags, void(*new_listener)(env
 
     new_environment = new_listener;
     rem_environment = rem_listener;
+    orphaned_mascot = orph_listener;
 
-    struct envs_queue envs = {0};
-    envs.flags = flags;
+    struct envs_queue* envs = (struct envs_queue*)calloc(1, sizeof(struct envs_queue));
+    envs->flags = flags;
 
     registry = wl_display_get_registry(display);
-    wl_registry_add_listener(registry, &registry_listener, (void*)&envs);
+    wl_registry_add_listener(registry, &registry_listener, (void*)envs);
     block_until_synced();
 
     // Check if all required globals are present
@@ -1389,51 +1478,10 @@ enum environment_init_status environment_init(int flags, void(*new_listener)(env
         return ENV_INIT_ERROR_GENERIC;
     }
 
-    for (size_t i = 0; i < envs.envs_count; i++) {
-        environment_t* env = envs.envs[i];
-        env->root_surface = layer_surface_create(env->output.output, LAYER_TYPE_OVERLAY);
-        if (!env->root_surface) {
-            WARN("FAILED TO CREATE LAYER SURFACE ON OUTPUT %u aka %s", env->id, env->output.name);
-            if (rem_environment) {
-                rem_environment(env);
-            }
-            continue;
-        }
-        layer_surface_set_dimensions_callback(env->root_surface, environment_dimensions_changed_callback, env);
-        layer_surface_map(env->root_surface);
-        block_until_synced();
-        if (env->root_surface->configure_serial) {
-            env->is_ready = true;
-            env->root_environment_subsurface = environment_create_subsurface(env);
-
-            env->scale = env->output.scale;
-
-            if (fractional_manager) {
-                env->root_environment_subsurface->fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(fractional_manager, env->root_environment_subsurface->surface);
-                if (!env->root_environment_subsurface->fractional_scale) {
-                    wl_surface_destroy(env->root_environment_subsurface->surface);
-                    free(env->root_environment_subsurface);
-                    error_offt += snprintf(error_m + error_offt, 1024 - error_offt, "Failed to get fractional scale for root environment subsurface\n");
-                    init_status = ENV_INIT_ERROR_GENERIC;
-                    return ENV_INIT_ERROR_GENERIC;
-                }
-                wp_fractional_scale_v1_add_listener(env->root_environment_subsurface->fractional_scale, &fractional_scale_manager_v1_listener, env);
-            }
-
-            struct environment_callbacks* callbacks = (struct environment_callbacks*)calloc(1, sizeof(struct environment_callbacks));
-            if (!callbacks) {
-                error_offt += snprintf(error_m + error_offt, 1024 - error_offt, "Failed to allocate memory for environment callbacks\n");
-                init_status = ENV_INIT_ERROR_OOM;
-                return init_status;
-            }
-            callbacks->data = (void*)env->root_environment_subsurface;
-            callbacks->pointer_listener = &mascot_pointer_listener;
-
-            wl_surface_set_user_data(env->root_surface->surface, (void*)callbacks);
-            wl_surface_attach(env->root_environment_subsurface->surface, anchor_buffer, 0, 0);
-        }
-        environment_commit(env);
-    }
+    dispatch_envs_queue(envs);
+    envs->post_init = true;
+    envs->envs_count = 0;
+    memset(envs->envs, 0, sizeof(envs->envs));
 
     if (tablet_manager && !(flags & ENV_DISABLE_TABLETS)) {
         tablet_seat = zwp_tablet_manager_v2_get_tablet_seat(tablet_manager, seat);
@@ -1455,16 +1503,14 @@ void environment_dispatch()
 
 void environment_unlink(environment_t *env)
 {
-    if (env->output.output) {
-        wl_output_destroy(env->output.output);
-    }
 
-    if (env->root_environment_subsurface->surface) {
-        wl_subsurface_destroy(env->root_environment_subsurface->subsurface);
-    }
-
-    if (env->root_environment_subsurface->surface) {
-        wl_surface_destroy(env->root_environment_subsurface->surface);
+    for (uint32_t i = 0; i < list_size(env->referenced_mascots); i++) {
+        struct mascot* mascot = list_get(env->referenced_mascots, i);
+        if (mascot) {
+            if (orphaned_mascot) {
+                orphaned_mascot(mascot);
+            }
+        }
     }
 
     if (env->root_environment_subsurface) {
@@ -1472,6 +1518,10 @@ void environment_unlink(environment_t *env)
     }
     if (env->root_surface) {
         layer_surface_destroy(env->root_surface);
+    }
+
+    if (env->output.output) {
+        wl_output_destroy(env->output.output);
     }
     free(env);
 }
@@ -1548,6 +1598,11 @@ void environment_destroy_subsurface(environment_subsurface_t* surface)
     }
 
     surface->env->pending_commit = true;
+
+    uint32_t mascot_index = list_find(surface->env->referenced_mascots, surface->mascot);
+    if (mascot_index != UINT32_MAX) {
+        list_remove(surface->env->referenced_mascots, mascot_index);
+    }
 
     free(surface);
 }
@@ -1715,6 +1770,7 @@ void environment_subsurface_drag(environment_subsurface_t* surface, environment_
     wl_subsurface_place_above(surface->subsurface, surface->env->root_environment_subsurface->surface);
     surface->drag_pointer = pointer;
     pointer->grabbed_surface = surface;
+    pointer->environment = surface->env;
 
     active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
     if (active_pointer.cursor_shape_device && active_pointer.pointer) {
@@ -1849,6 +1905,7 @@ void environment_subsurface_associate_mascot(environment_subsurface_t* surface, 
 {
     if (!surface) return;
     surface->mascot = mascot_ptr;
+    list_add(surface->env->referenced_mascots, mascot_ptr);
 }
 
 void environment_subsurface_set_offset(environment_subsurface_t* surface, int32_t x, int32_t y) {
@@ -2005,9 +2062,6 @@ enum environment_move_result environment_ie_move(environment_t* env, int32_t dx,
 
     if (dx + ie->width < 0) result = environment_move_out_of_bounds;
     else if (dx > (int32_t)environment_screen_width(env)) result = environment_move_out_of_bounds;
-
-    // If window is out of bounds on y axis, this is error
-    if (dy < 0 || dy > (int32_t)environment_screen_height(env)) return environment_move_invalid;
 
     enum plugin_execution_result res = plugin_execute_ie_move(env->ie->parent_plugin, env->ie, dx, dy);
     if (res != PLUGIN_EXEC_OK) {
