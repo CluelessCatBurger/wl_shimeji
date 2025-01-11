@@ -61,7 +61,7 @@ void _find_ireg(const uint8_t* buffer, uint32_t width, uint32_t height, uint32_t
         *out_height = 0;
     }
 }
-// Function to directly write ARGB pixels and their mirrored version to a file
+
 void _write_memfd(int fd, uint64_t* memfd_pos, const uint8_t* buffer, size_t buffer_len, uint32_t width, uint32_t height) {
     uint8_t* buffers = calloc(2, buffer_len);
 
@@ -74,16 +74,16 @@ void _write_memfd(int fd, uint64_t* memfd_pos, const uint8_t* buffer, size_t buf
             size_t argbIndex = rgbaIndex; // Direct mapping for ARGB buffer
             size_t mirrorIndex = (y * width + (width - 1 - x)) * 4; // Mirrored mapping
 
-            *(buffers+argbIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // A
-            *(buffers+argbIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // R
-            *(buffers+argbIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // G
-            *(buffers+argbIndex+3) = buffer[rgbaIndex + 3]; // B
+            *(buffers+argbIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // B
+            *(buffers+argbIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // G
+            *(buffers+argbIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // R
+            *(buffers+argbIndex+3) = buffer[rgbaIndex + 3]; // A
 
             // Fill mirrored ARGB buffer
-            *(buffers+buffer_len+mirrorIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // A
-            *(buffers+buffer_len+mirrorIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // R
-            *(buffers+buffer_len+mirrorIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // G
-            *(buffers+buffer_len+mirrorIndex+3) = buffer[rgbaIndex + 3]; // B
+            *(buffers+buffer_len+mirrorIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // B
+            *(buffers+buffer_len+mirrorIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // G
+            *(buffers+buffer_len+mirrorIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // R
+            *(buffers+buffer_len+mirrorIndex+3) = buffer[rgbaIndex + 3]; // A
         }
     }
 
