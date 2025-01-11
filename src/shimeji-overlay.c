@@ -17,7 +17,6 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
-#include "layer_surface.h"
 #define _GNU_SOURCE
 #include <bits/types/sigset_t.h>
 #include <sys/mman.h>
@@ -41,6 +40,7 @@
 #include <string.h>
 #include "plugins.h"
 #include "config.h"
+#include "layer_surface.h"
 
 #define MASCOT_OVERLAYD_INSTANCE_EXISTS -1
 #define MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR -2
