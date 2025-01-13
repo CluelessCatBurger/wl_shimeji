@@ -104,3 +104,5 @@ install: $(TARGET) $(PLUGINS_TARGET)
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
+
+.DEFAULT_GOAL := all
