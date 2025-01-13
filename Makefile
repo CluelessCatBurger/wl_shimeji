@@ -56,7 +56,7 @@ override _ := $(shell mkdir -p $(DIRS))
 	@:
 
 # Generate wayland-protocols headers & sources
-$(WL_PROTO_DIR)/%.h:
+$(WL_PROTO_DIR)/protocols.d:
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/staging/cursor-shape/cursor-shape-v1.xml         $(WL_PROTO_DIR)/cursor-shape-v1.h
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/staging/cursor-shape/cursor-shape-v1.xml         $(WL_PROTO_DIR)/cursor-shape-v1.c
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/stable/viewporter/viewporter.xml                 $(WL_PROTO_DIR)/viewporter.h
@@ -70,29 +70,29 @@ $(WL_PROTO_DIR)/%.h:
 	$(WAYLAND_SCANNER) client-header $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.h
 	$(WAYLAND_SCANNER) private-code  $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.c
 
-# Rule to build wayland-protocol sources
-$(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
-	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
+# # Rule to build wayland-protocol sources
+# $(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
+# 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
 # Rule to build generic source files
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(WL_HEADERS) Makefile
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(WL_PROTO_DIR)/protocols.d Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
-$(PLUGINS_TARGET): $(PLUGINS_OBJS)
+$(PLUGINS_TARGET): $(PLUGINS_OBJS) $(WL_PROTO_DIR)/protocols.d
 	$(CC) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
+.NOTPARALLEL: $(WL_HEADERS)
+
 .PHONY: all
 all: $(TARGET) $(PLUGINS_TARGET)
 
 .PHONY: clean
 clean:
-	@-rm -r $(BUILDDIR) $(TARGET)
-
-.NOTPARALLEL: $(WL_PROTO_DIR)/%.o
+	@-rm -r $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR)
 
 .PHONY: install
 install: $(TARGET) $(PLUGINS_TARGET)
