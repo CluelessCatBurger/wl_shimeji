@@ -1,3 +1,22 @@
+/*
+    config.c - wl_shimeji's config file parser
+
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, see <https://www.gnu.org/licenses/>.
+*/
+
 #include "config.h"
 
 #include <stdio.h>
@@ -47,6 +66,8 @@ bool config_parse(const char* path)
             config_set_per_mascot_interactions(strncmp(value, "true", 4) == 0);
         } else if (strcmp(key, "tick_delay") == 0) {
             config_set_tick_delay(atoi(value));
+        } else if (strcmp(key, "overlay_layer") == 0) {
+            config_set_overlay_layer(atoi(value));
         }
     }
 
@@ -71,6 +92,7 @@ void config_write(const char* path)
     fprintf(file, "allow_dismiss_animations=%s\n", config.dismiss_animations ? "true" : "false");
     fprintf(file, "per_mascot_interactions=%s\n", config.affordances ? "true" : "false");
     fprintf(file, "tick_delay=%u\n", config.tick_delay);
+    fprintf(file, "overlay_layer=%d\n", config.overlay_layer);
 
     fclose(file);
 }
@@ -139,6 +161,12 @@ bool config_set_tick_delay(uint32_t value)
     return true;
 }
 
+bool config_set_overlay_layer(int32_t value)
+{
+    config.overlay_layer = value;
+    return true;
+}
+
 bool config_get_breeding()
 {
     return config.breeding;
@@ -190,4 +218,9 @@ uint32_t config_get_tick_delay()
         return 40000;
     }
     return config.tick_delay;
+}
+
+int32_t config_get_overlay_layer()
+{
+    return config.overlay_layer;
 }

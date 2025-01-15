@@ -1,7 +1,7 @@
 /*
     environment.h - wl_shimeji's environment handling
 
-    Copyright (C) 2024  CluelessCatBurger <github.com/CluelessCatBurger>
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -74,7 +74,11 @@ enum environment_init_status {
 #include "mascot.h"
 #include "plugins.h"
 
-enum environment_init_status environment_init(int flags, void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*));
+enum environment_init_status environment_init(int flags,
+    void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*),
+    void(*orphaned_mascot)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
+);
+
 void environment_dispatch();
 void environment_new_env_listener(void(*listener)(environment_t*));
 void environment_rem_env_listener(void(*listener)(environment_t*));
@@ -107,6 +111,7 @@ void environment_subsurface_associate_mascot(environment_subsurface_t* surface, 
 struct mascot* environment_subsurface_get_mascot(environment_subsurface_t* surface);
 const struct mascot_pose* environment_subsurface_get_pose(environment_subsurface_t* surface);
 
+// Environment info
 uint32_t environment_screen_width(environment_t* env);
 uint32_t environment_screen_height(environment_t* env);
 uint32_t environment_workarea_width(environment_t* env);
@@ -116,6 +121,11 @@ uint32_t environment_cursor_y(environment_t* env);
 int32_t environment_cursor_dx(environment_t* env);
 int32_t environment_cursor_dy(environment_t* env);
 uint32_t environment_cursor_get_tick_diff(environment_pointer_t* pointer, uint32_t tick);
+uint32_t environment_id(environment_t* env);
+const char* environment_name(environment_t* env);
+const char* environment_desc(environment_t* env);
+bool environment_logical_position(environment_t* env, int32_t* lx, int32_t* ly);
+bool environment_logical_size(environment_t* env, int32_t* lw, int32_t* lh);
 
 // After click on overlay, callback is calling providing absolute click position, and subsurface it was clicked on (if any)
 void environment_select_position(void (*callback)(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data), void* data);

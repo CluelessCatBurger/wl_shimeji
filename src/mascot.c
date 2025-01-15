@@ -71,8 +71,8 @@ struct mascot* mascot_get_target_by_affordance(struct mascot* mascot, const char
                 && strlen(mascot->affordance_manager->slots[i]->current_affordance) == strlen(affordance)
             ) {
                 struct mascot* candidate = mascot->affordance_manager->slots[i];
-
-                if (rand() > RAND_MAX/2) {
+                if (mascot->environment != candidate->environment) continue;
+                if (drand48() > 0.5) {
                     pthread_mutex_unlock(&mascot->affordance_manager->mutex);
                     return candidate;
                 }
@@ -716,7 +716,12 @@ bool mascot_drag_ended(struct mascot* mascot, bool throw)
 // Set the environment of the mascot
 bool mascot_environment_changed(struct mascot* mascot, environment_t* env)
 {
+    INFO("<Mascot:%s:%u> Environment changed", mascot->prototype->name, mascot->id);
     mascot->environment = env;
+    environment_destroy_subsurface(mascot->subsurface);
+    mascot->subsurface = environment_create_subsurface(env);
+    environment_subsurface_associate_mascot(mascot->subsurface, mascot);
+    mascot_reattach_pose(mascot);
     return true;
 }
 

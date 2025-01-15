@@ -45,6 +45,9 @@ struct layer_surface
     void (*resolution_callback)(uint32_t, uint32_t, void*);
     void* resolution_data;
 
+    void (*closed_callback)(void*);
+    void* closed_data;
+
     struct zwlr_layer_surface_v1* layer_surface;
 };
 
@@ -59,5 +62,5 @@ void layer_surface_unmap(struct layer_surface* _layer_surface);
 
 void layer_surface_enable_input(struct layer_surface* _layer_surface, bool enable);
 void layer_surface_set_dimensions_callback(struct layer_surface* _layer_surface, void (*callback)(uint32_t, uint32_t, void*), void* data);
-
+void layer_surface_set_closed_callback(struct layer_surface* _layer_surface, void (*callback)(void*), void* data);
 #endif

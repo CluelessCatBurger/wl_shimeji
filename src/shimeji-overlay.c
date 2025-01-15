@@ -1,7 +1,7 @@
 /*
     shimeji-overlay.c - Shimeji overlay daemon
 
-    Copyright (C) 2024  CluelessCatBurger <github.com/CluelessCatBurger>
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -40,6 +40,7 @@
 #include <string.h>
 #include "plugins.h"
 #include "config.h"
+#include "layer_surface.h"
 
 #define MASCOT_OVERLAYD_INSTANCE_EXISTS -1
 #define MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR -2
@@ -88,7 +89,22 @@ jmp_buf recovery_point;
 bool should_exit = false;
 int32_t signal_code = 0;
 
-void env_new(environment_t* environment)
+struct {
+    pthread_t** entries;
+    uint8_t* entry_states;
+    size_t entry_count;
+    size_t used_count;
+} thread_store = {0};
+
+struct {
+    struct mascot** entries;
+    uint8_t* entry_states;
+    size_t entry_count;
+    size_t used_count;
+    pthread_mutex_t mutex;
+} mascot_store = {0};
+
+static void env_new(environment_t* environment)
 {
     pthread_mutex_lock(&environment_store.mutex);
     if (environment_store.entry_count == environment_store.used_count) {
@@ -118,7 +134,7 @@ void env_new(environment_t* environment)
     pthread_mutex_unlock(&environment_store.mutex);
 }
 
-void env_delete(environment_t* environment)
+static void env_delete(environment_t* environment)
 {
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
@@ -134,20 +150,124 @@ void env_delete(environment_t* environment)
     pthread_mutex_unlock(&environment_store.mutex);
 }
 
-struct {
-    pthread_t** entries;
-    uint8_t* entry_states;
-    size_t entry_count;
-    size_t used_count;
-} thread_store = {0};
+static void orphaned_mascot(struct mascot* mascot) {
+    INFO("Mascot %s:%u is orphaned", mascot->prototype->name, mascot->id);
+    pthread_mutex_lock(&mascot_store.mutex);
+    bool found = false;
+    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+        if (mascot_store.entries[i] == mascot) {
+            mascot_store.entries[i] = NULL;
+            mascot_store.entry_states[i] = 0;
+            mascot_store.used_count--;
+            found = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mascot_store.mutex);
+    if (!found) {
+        ERROR("Orphaned mascot not found in store");
+    }
 
-struct {
-    struct mascot** entries;
-    uint8_t* entry_states;
-    size_t entry_count;
-    size_t used_count;
-    pthread_mutex_t mutex;
-} mascot_store = {0};
+    // Find new environment for mascot
+    pthread_mutex_lock(&environment_store.mutex);
+    environment_t* env = NULL;
+    float env_score = 0.0;
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            float r = drand48();
+            if (r > env_score) {
+                env = environment_store.entries[i];
+                env_score = r;
+            }
+        }
+    }
+
+    if (!env) {
+        WARN("No environment found for orphaned mascot");
+        pthread_mutex_unlock(&environment_store.mutex);
+        mascot_unlink(mascot);
+        return;
+    }
+
+    mascot_environment_changed(mascot, env);
+    pthread_mutex_unlock(&environment_store.mutex);
+
+    // Re-add mascot to store
+    pthread_mutex_lock(&mascot_store.mutex);
+    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+        if (!mascot_store.entry_states[i]) {
+            mascot_store.entries[i] = mascot;
+            mascot_store.entry_states[i] = 1;
+            mascot_store.used_count++;
+            pthread_mutex_unlock(&mascot_store.mutex);
+            return;
+        }
+    }
+    pthread_mutex_unlock(&mascot_store.mutex);
+
+}
+
+static void mascot_dropped_oob(struct mascot* mascot, int32_t x, int32_t y)
+{
+    if (!mascot) return;
+    int32_t lx, ly;
+    int32_t lw, lh;
+    if (!environment_logical_position(mascot->environment, &lx, &ly)) {
+        return;
+    }
+    if (!environment_logical_size(mascot->environment, &lw, &lh)) {
+        return;
+    }
+
+    // Find output and exact position where mascot is dropped
+    environment_t* env = NULL;
+
+    int32_t ldropx = lx + x;
+    int32_t ldropy = ly + y;
+
+    int32_t elx, ely;
+    int32_t elw, elh;
+
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            environment_t *target_env = environment_store.entries[i];
+
+            if (!environment_logical_position(target_env, &elx, &ely)) {
+                continue;
+            }
+            if (!environment_logical_size(target_env, &elw, &elh)) {
+                continue;
+            }
+
+            // Compositor have logical space, where 0,0 is top left corner.
+            // Each output have its own logical space, where 0,0 is top left corner of output.
+            // lx, ly is offset of output in compositor space. lw, lh is size of output in compositor space
+            // find if mascot within output rectangle
+            if (ldropx >= elx && ldropx < elx + elw && ldropy >= ely && ldropy < ely + elh) {
+                env = target_env;
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&environment_store.mutex);
+
+    if (!env) {
+        WARN("No environment found for mascot %s:%u", mascot->prototype->name, mascot->id);
+        return;
+    }
+
+    // Move mascot to new environment
+    mascot_environment_changed(mascot, env);
+
+    // Find mascot coordinates in new environment rectangle
+    int32_t new_x = ldropx - elx;
+    int32_t new_y = ldropy - ely;
+
+    mascot->X->value.i = new_x;
+    mascot->Y->value.i = mascot_screen_y_to_mascot_y(mascot, new_y);
+
+}
 
 // Sigaction handler for SIGSEGV and SIGINT
 void sigaction_handler(int signum, siginfo_t* info, void* context)
@@ -534,10 +654,14 @@ bool process_summon_mascot_packet(uint8_t* buff, uint16_t len, int fd)
     pthread_mutex_lock(&environment_store.mutex);
     // Select random environment
     environment_t* env = NULL;
+    float env_score = 0.0;
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (environment_store.entry_states[i]) {
-            env = environment_store.entries[i];
-            break;
+            float r = drand48();
+            if (r > env_score) {
+                env = environment_store.entries[i];
+                env_score = r;
+            }
         }
     }
     pthread_mutex_unlock(&environment_store.mutex);
@@ -1149,6 +1273,7 @@ int main(int argc, const char** argv)
         config_set_allow_dismiss_animations(true);
         config_set_per_mascot_interactions(true);
         config_set_tick_delay(40000);
+        config_set_overlay_layer(LAYER_TYPE_OVERLAY);
         config_write(config_file_path);
     }
 
@@ -1213,7 +1338,7 @@ int main(int argc, const char** argv)
     affordance_manager.slot_state = calloc(MASCOT_OVERLAYD_INSTANCE_DEFAULT_MASCOT_COUNT, sizeof(uint8_t));
 
     // Initialize environment
-    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete);
+    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete, orphaned_mascot, mascot_dropped_oob);
     if (env_init != ENV_INIT_OK) {
         char buf[1025+sizeof(size_t)];
         size_t strlen = snprintf(buf+1+sizeof(size_t), 1024, "Failed to initialize environment:\n%s", environment_get_error());
@@ -1324,8 +1449,9 @@ int main(int argc, const char** argv)
                     continue;
                 }
                 environment_t* e = environment_store.entries[j];
-                float r = (float)rand() / (float)RAND_MAX;
-                if (r / (float)RAND_MAX > env_weight) {
+                float r = drand48();
+                INFO("Random number for env %d: %f", j, r);
+                if (r > env_weight) {
                     env = e;
                     env_weight = r;
                 }

@@ -1,7 +1,7 @@
 /*
     layer_surface.c - wl_shimeji's overlay functionality
 
-    Copyright (C) 2024  CluelessCatBurger <github.com/CluelessCatBurger>
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -67,9 +67,9 @@ static void configure(void* data, struct zwlr_layer_surface_v1* wlr_layer_surfac
 
 static void closed(void* data, struct zwlr_layer_surface_v1* wlr_layer_surface)
 {
-    UNUSED(data);
     UNUSED(wlr_layer_surface);
-    printf("Close called on layer_surface");
+    struct layer_surface* _layer_surface = (struct layer_surface*)data;
+    if (_layer_surface->closed_callback) _layer_surface->closed_callback(_layer_surface->closed_data);
 }
 
 const struct zwlr_layer_surface_v1_listener wlr_shell_surface_listener = {
@@ -184,4 +184,12 @@ void layer_surface_set_dimensions_callback(struct layer_surface* _layer_surface,
 
     _layer_surface->resolution_callback = callback;
     _layer_surface->resolution_data = data;
+}
+
+void layer_surface_set_closed_callback(struct layer_surface* _layer_surface, void (*callback)(void*), void* data)
+{
+    assert(_layer_surface);
+
+    _layer_surface->closed_callback = callback;
+    _layer_surface->closed_data = data;
 }

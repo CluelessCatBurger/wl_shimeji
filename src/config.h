@@ -1,3 +1,22 @@
+/*
+    config.h - wl_shimeji's config file parser
+
+    Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
+
+    This program is free software; you can redistribute it and/or
+    modify it under the terms of the GNU General Public License
+    as published by the Free Software Foundation; either version 2
+    of the License, or (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, see <https://www.gnu.org/licenses/>.
+*/
+
 #ifndef CONFIG_PARSER_H
 #define CONFIG_PARSER_H
 
@@ -14,6 +33,7 @@
 #define CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS_ID 7
 #define CONFIG_PARAM_PER_MASCOT_INTERACTIONS_ID 8
 #define CONFIG_PARAM_TICK_DELAY_ID 9
+#define CONFIG_PARAM_OVERLAY_LAYER 10
 
 struct config {
     bool breeding;
@@ -23,6 +43,7 @@ struct config {
     bool cursor_data;
     bool dismiss_animations;
     bool affordances;
+    int32_t overlay_layer;
 
     uint32_t tick_delay;
 
@@ -44,6 +65,7 @@ bool config_set_ie_throw_policy(int32_t value);
 bool config_set_allow_dismiss_animations(bool value);
 bool config_set_per_mascot_interactions(bool value);
 bool config_set_tick_delay(uint32_t value);
+bool config_set_overlay_layer(int32_t value);
 
 bool config_get_breeding();
 bool config_get_dragging();
@@ -55,5 +77,6 @@ int32_t config_get_ie_throw_policy();
 bool config_get_allow_dismiss_animations();
 bool config_get_per_mascot_interactions();
 uint32_t config_get_tick_delay();
+int32_t config_get_overlay_layer();
 
 #endif
