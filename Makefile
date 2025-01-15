@@ -33,7 +33,8 @@ override WL_HEADERS := \
 	$(WL_PROTO_DIR)/tablet-v2.h \
 	$(WL_PROTO_DIR)/xdg-shell.h \
 	$(WL_PROTO_DIR)/fractional-scale-v1.h \
-	$(WL_PROTO_DIR)/wlr-layer-shell.h
+	$(WL_PROTO_DIR)/wlr-layer-shell.h \
+	$(WL_PROTO_DIR)/xdg-output.h
 
 override SRC := \
 	$(wildcard $(SRCDIR)/*.c) \
