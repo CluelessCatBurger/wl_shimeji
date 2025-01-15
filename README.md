@@ -164,17 +164,17 @@ if you don't pass unix fd using -cfd flag, unless you implementing another front
 overlay will close immediately after start.
 
 Arguments:
-  `-s`  - path to the overlay socket file.
-  `-c`  - path to the configuration directory.
-  `-cfd`, `--caller-fd` - paired unix socket fd used for communication. If closed and no other clients connected nor no mascots exists, overlay will close.
-  `-p`  - path to the plugins directory.
-  `-se` - summon everyone. If specified, overlay will summon all known mascots upon start.
-  `-v`, `--version`  - version of the overlay.
-  `--no-tablets` - disable wp_tablet_v2 wayland protocol support. (broken on kwin right now anyway)
-  `--no-viewporter` - disable wp_viewporter wayland protocol support. wl_shimeji will use wl_surface.set_buffer_scale() instead.
-  `--no-fractional-scale` - disable wp_fractional_scale wayland protocol support. Will use wl_output's scale info instead
-  `--no-cursor-shape` - disable wp_cursor_shape wayland protocol support. Will disable cursor shapes for different actions.
-  `--no-plugins` - disable plugins
+- `-s`  - path to the overlay socket file.
+- `-c`  - path to the configuration directory.
+- `-cfd`, `--caller-fd` - paired unix socket fd used for communication. If closed and no other clients connected nor no mascots exists, overlay will close.
+- `-p`  - path to the plugins directory.
+- `-se` - summon everyone. If specified, overlay will summon all known mascots upon start.
+- `-v`, `--version`  - version of the overlay.
+- `--no-tablets` - disable wp_tablet_v2 wayland protocol support. (broken on kwin right now anyway)
+- `--no-viewporter` - disable wp_viewporter wayland protocol support. wl_shimeji will use wl_surface.set_buffer_scale() instead.
+- `--no-fractional-scale` - disable wp_fractional_scale wayland protocol support. Will use wl_output's scale info instead
+- `--no-cursor-shape` - disable wp_cursor_shape wayland protocol support. Will disable cursor shapes for different actions.
+- `--no-plugins` - disable plugins
 
 # Features
 
