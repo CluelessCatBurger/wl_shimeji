@@ -36,83 +36,145 @@ make -j$(nproc)
 make install
 ```
 
-# Running
+# How to use
 
-## Run daemon directly
+## Converting to shimeji-ee format
+First, you need to find some Shimeji-ee mascots. They are usually distributed as zip archives. You can find them on the internet.
+When you got shimejis of your choice, you need to convert them to the wl_shimeji format. Simplest way to do it is to use `shimejictl import` command.
 
-Look `shimeji-overlayd --help` for more information
+```sh
+shimejictl import /path/to/shimeji-ee.zip
+```
 
-## Using shimejictl
+It will convert all shimejis from img/ directory of the Shimeji-ee instance to the wl_shimeji format and save them to .local/share/wl_shimeji/shimejis/ directory.
 
-`shimejictl` is a simple script that allows you to control shimeji overlay daemon, convert Shimeji-ee type mascots to the wl_shimeji format, and more.
+## Summoning mascots
+After you converted your mascots, you can summon them to the screen, but first you need to know the name of the mascot you want to summon.
 
-### Converting individual Shimeji-ee mascots
+```sh
+shimejictl list
+```
+It will print the list of all available mascots.
 
-  ```sh
-  shimejictl convert .../shimeji-ee/img/mascotname
-  ```
-Converts individual mascot from Shimeji-ee format to the wl_shimeji format. Note: The conf/ directory and .png assets must be included. The converted mascot will be written to the shimejis/ directory, relative to the configuration directory.
+Then you can summon mascots by three ways:
+1. By name, on random screen:
+```sh
+shimejictl summon mascot_name
+```
+2. By name, on specific screen and position:
+```sh
+shimejictl summon mascot_name --select
+```
+3. You can summon all known mascots at once (Note: it will only work if overlay is not running):
+```sh
+shimejictl summon all
+```
 
-### Converting entire Shimeji-ee instance
+All summon commands will start the overlay if it's not running.
 
-To convert all mascots at once, you can use `import` subcommand. It accepts path to either a Shimeji-ee instance (as a zip archive or an extracted directory) or a wl_shimeji configuration pack (usually ends with .wlshm).
+## Dismissing mascots
+You can dismiss mascots by using `shimejictl dismiss` command.
 
-  ```sh
-    shimejictl import /path/to/instance/file/or/directory
-  ```
-This command will convert all mascots from the Shimeji-ee instance to the wl_shimeji format and write them to the shimejis/ directory, relative to the configuration directory.
+```sh
+shimejictl dismiss
+```
+It will ask you to select the mascot you want to dismiss.
+Command also takes three flags:
+- `--all` - dismiss all mascots at once (mutually exclusive with `--all-other`)
+- `--all-other` - dismiss all mascots except the selected one (mutually exclusive with `--all`)
+- `--same` - tells overlay to target mascots of the same type as the selected one
 
-### Exporting configurations
+So for example following command will dismiss all mascots:
+```sh
+shimejictl dismiss --all
+```
+
+And this command will dismiss all mascots of the same type as the selected one:
+```sh
+shimejictl dismiss --all-other --same
+```
+
+## Stopping application
+You can stop the application by using `shimejictl stop` command.
+
+## Configuration
+You can configure some options of overlay by using `shimejictl config` command.
+```sh
+shimejictl config set "option_name" "value"
+```
+
+You also can get option value by using `get` action:
+```sh
+shimejictl config get "option_name"
+```
+
+Or values of all options by using `list` action:
+```sh
+shimejictl config list
+```
+
+Config file is usually located at .config/wl_shimeji/shimeji.conf
+
+# Advanced usage
+
+## Using custom config path
+`shimejictl` takes `--config-path` argument to specify custom path to the configuration directory.
+
+## Converting mascots on individual basis
+You can convert mascots to the wl_shimeji format on individual basis by using `shimejictl convert` command.
+
+```sh
+shimejictl convert .../Shimeji-EE/img/mascot_name
+```
+Following command will convert mascot with the name `mascot_name` from the Shimeji-ee instance to the wl_shimeji format and save it to .local/share/wl_shimeji/shimejis/ directory.
+IMPORTANT: `convert` command doesn't have full instance context, so conf/ subdirectory with actions.xml and behaviors.xml inside the mascot directory *IS REQUIRED*.
+
+## Getting mascot information
+Useful for debugging, `shimejictl info` command prints information about the selected mascot.
+
+```sh
+shimejictl info
+```
+
+## Launching overlay in the foreground
+`shimejictl foreground` command launches overlay in the foreground.
+
+```sh
+shimejictl foreground
+```
+
+## Exporting configurations
 To export already converted mascots to a configuration pack, use the export subcommand. This will create a zip archive containing all mascots and their configurations, named export.wlshm in the current directory.
 
-  ```sh
-    shimejictl export
-  ```
+```sh
+shimejictl export
+```
+
 You can also specify a custom output path by passing it as an argument:
 
-  ```sh
-    shimejictl export /path/to/output/file.wlshm
-  ```
+```sh
+shimejictl export /path/to/output/file.wlshm
+```
 
-### Summoning and dismissing
+You can import this configuration pack later by using `import` subcommand.
 
-  ```sh
-    shimejictl summon <mascot_name>
-  ```
-  Launches the overlay if it’s not running and summons the mascot with the name <mascot_name> to the selected location
+## Running overlay manually
+You can start overlay manually by running `shimeji-overlayd`. It's not recommended and *useless* in case you don't pass -se flag to it or
+if you don't pass unix fd using -cfd flag, unless you implementing another frontend for the overlay. If -se or -cfd not specified
+overlay will close immediately after start.
 
-  ```sh
-    shimejictl dismiss
-  ```
-  Selects mascot to dismiss and dismisses it. You can also dismiss all mascots at once, all other mascots, all mascots of same type, or all mascots of same type except the selected one.
-  To do it check `shimejictl dismiss --help`
-
-  ```sh
-    shimejictl summon all
-  ```
-  Summons all currently known mascots.
-
-### Helpful commands for debugging
-
-  ```sh
-    shimejictl info
-  ```
-  Prints information about selected mascot.
-
-  ```sh
-    shimejictl foreground
-  ```
-  Launches overlay in the foreground.
-
-### Configuring in runtime
-
-  You can set configuration options in runtime by using `config` subcommand.
-
-  ```sh
-    shimejictl config set "option_name" "value"
-  ```
-  To see all available options, use `shimejictl config --help`
-  `list` and `get` actions not implemented yet.
+Arguments:
+- `-s`  - path to the overlay socket file.
+- `-c`  - path to the configuration directory.
+- `-cfd`, `--caller-fd` - paired unix socket fd used for communication. If closed and no other clients connected nor no mascots exists, overlay will close.
+- `-p`  - path to the plugins directory.
+- `-se` - summon everyone. If specified, overlay will summon all known mascots upon start.
+- `-v`, `--version`  - version of the overlay.
+- `--no-tablets` - disable wp_tablet_v2 wayland protocol support. (broken on kwin right now anyway)
+- `--no-viewporter` - disable wp_viewporter wayland protocol support. wl_shimeji will use wl_surface.set_buffer_scale() instead.
+- `--no-fractional-scale` - disable wp_fractional_scale wayland protocol support. Will use wl_output's scale info instead
+- `--no-cursor-shape` - disable wp_cursor_shape wayland protocol support. Will disable cursor shapes for different actions.
+- `--no-plugins` - disable plugins
 
 # Features
 
@@ -165,8 +227,8 @@ Compiled plugins should be placed in the plugins/ directory (relative to the con
 
 ## TODO LIST:
 
-- [] Write documentation for plugins API
-- [] Add more configuration options
+- [ ] Write documentation for plugins API
+- [ ] Add more configuration options
 
 ## Notes:
 
