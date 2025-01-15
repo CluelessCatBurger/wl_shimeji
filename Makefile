@@ -67,8 +67,8 @@ $(WL_PROTO_DIR)/protocols.d:
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/stable/xdg-shell/xdg-shell.xml                   $(WL_PROTO_DIR)/xdg-shell.c
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/staging/fractional-scale/fractional-scale-v1.xml $(WL_PROTO_DIR)/fractional-scale-v1.h
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/staging/fractional-scale/fractional-scale-v1.xml $(WL_PROTO_DIR)/fractional-scale-v1.c
-	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml       $(WL_PROTO_DIR)/xdg-output.h
-	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml
+	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml   $(WL_PROTO_DIR)/xdg-output.h
+	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml   $(WL_PROTO_DIR)/xdg-output.c
 	$(WAYLAND_SCANNER) client-header $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.h
 	$(WAYLAND_SCANNER) private-code  $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.c
 
