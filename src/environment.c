@@ -1778,6 +1778,18 @@ environment_subsurface_t* environment_create_subsurface(environment_t* env)
 
 void environment_destroy_subsurface(environment_subsurface_t* surface)
 {
+    if (surface->fractional_scale) {
+        wp_fractional_scale_v1_destroy(surface->fractional_scale);
+    }
+
+    if (surface->viewport) {
+        wp_viewport_destroy(surface->viewport);
+    }
+
+    if (surface->surface) {
+        wl_surface_clear_data(surface->surface);
+    }
+
     if (surface->subsurface) {
         wl_subsurface_destroy(surface->subsurface);
     }
