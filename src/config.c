@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "layer_surface.h"
 #include "master_header.h"
 
 struct config config = {0};
@@ -222,5 +223,8 @@ uint32_t config_get_tick_delay()
 
 int32_t config_get_overlay_layer()
 {
+    if (!config.overlay_layer) {
+        return LAYER_TYPE_OVERLAY;
+    }
     return config.overlay_layer;
 }
