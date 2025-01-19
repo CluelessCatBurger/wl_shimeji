@@ -47,17 +47,15 @@ override OBJS := $(OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 override DEPS := $(OBJS:.o=.d)
 override DIRS := $(sort $(BUILDDIR) $(dir $(OBJS)))
 
-override PLUGINS_SRC := src/environment.c src/mascot.c src/expressions.c src/utils.c src/plugins.c src/config.c
-override PLUGINS_OBJS := $(SHARED_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
+override PLUGINS_SRC := src/environment.c src/mascot.c src/expressions.c src/utils.c src/plugins.c src/config.c \
+	$(WL_HEADERS:.h=.c)
+override PLUGINS_OBJS := $(PLUGINS_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
+override PLUGINS_OBJS := $(PLUGINS_OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 
 override _ := $(shell mkdir -p $(DIRS))
 
-# Ignore deleted header files
-%.h:
-	@:
-
 # Generate wayland-protocols headers & sources
-$(WL_PROTO_DIR)/protocols.d:
+protocols-autogen:
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/staging/cursor-shape/cursor-shape-v1.xml         $(WL_PROTO_DIR)/cursor-shape-v1.h
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/staging/cursor-shape/cursor-shape-v1.xml         $(WL_PROTO_DIR)/cursor-shape-v1.c
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/stable/viewporter/viewporter.xml                 $(WL_PROTO_DIR)/viewporter.h
@@ -73,22 +71,23 @@ $(WL_PROTO_DIR)/protocols.d:
 	$(WAYLAND_SCANNER) client-header $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.h
 	$(WAYLAND_SCANNER) private-code  $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.c
 
-# # Rule to build wayland-protocol sources
-# $(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
-# 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
-
-# Rule to build generic source files
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(WL_PROTO_DIR)/protocols.d Makefile
+# Rule to build wayland-protocol sources
+$(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
-$(PLUGINS_TARGET): $(PLUGINS_OBJS) $(WL_PROTO_DIR)/protocols.d
+# Rule to build generic source files
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
+	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
+
+$(PLUGINS_TARGET): $(PLUGINS_OBJS)
 	$(CC) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
-.NOTPARALLEL: $(WL_HEADERS)
+$(SRC): protocols-autogen
+$(PLUGINS_SRC): protocols-autogen
 
 .PHONY: all
 all: $(TARGET) $(PLUGINS_TARGET)
@@ -108,4 +107,4 @@ install: $(TARGET) $(PLUGINS_TARGET)
 # Handle header dependency rebuild
 sinclude $(DEPS)
 
-.DEFAULT_GOAL := all
+.DEFAULT_GOAL := $(TARGET)
