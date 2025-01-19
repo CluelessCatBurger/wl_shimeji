@@ -17,7 +17,6 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
-#include <wayland-client-core.h>
 #define _GNU_SOURCE
 #include <sys/mman.h>
 #include "mascot_atlas.h"
