@@ -79,7 +79,7 @@ enum environment_init_status environment_init(int flags,
     void(*orphaned_mascot)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
 );
 
-void environment_dispatch();
+int environment_dispatch();
 void environment_new_env_listener(void(*listener)(environment_t*));
 void environment_rem_env_listener(void(*listener)(environment_t*));
 

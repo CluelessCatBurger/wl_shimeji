@@ -17,6 +17,7 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
+#include <wayland-client-core.h>
 #define _GNU_SOURCE
 #include <sys/mman.h>
 #include "mascot_atlas.h"
@@ -1675,9 +1676,9 @@ enum environment_init_status environment_init(int flags,
     return init_status;
 }
 
-void environment_dispatch()
+int environment_dispatch()
 {
-    wl_display_dispatch(display);
+    return wl_display_dispatch(display);
 }
 
 void environment_unlink(environment_t *env)
@@ -2088,7 +2089,9 @@ void enviroment_wait_until_ready(environment_t* env)
 {
     while (!env->is_ready) {
         wl_display_roundtrip(display);
-        environment_dispatch();
+        if (environment_dispatch() == -1) {
+            ERROR("Failed to dispatch Wayland events! error code: %d", wl_display_get_error(display));
+        }
         if (env->root_surface)
         {
             if (env->root_surface->configure_serial) {

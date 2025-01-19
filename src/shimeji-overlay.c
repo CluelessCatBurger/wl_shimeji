@@ -1628,7 +1628,10 @@ int main(int argc, const char** argv)
                 }
             } else if (sd->type == SOCKET_TYPE_ENVIRONMENT) {
                 // Wayland event
-                environment_dispatch();
+                if (environment_dispatch() == -1) {
+                    LOG("ERROR", RED, "Failed to dispatch wayland events!");
+                    break;
+                }
             }
         }
 
