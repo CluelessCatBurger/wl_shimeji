@@ -1670,21 +1670,21 @@ class ShimejiCtl:
             with zipfile.ZipFile(self.args.path, "r") as zipf:
                 pack_manifest = json.load(zipf.open("pack_manifest.json"))
                 for shimeji in pack_manifest["shimejis"]:
-                    if os.path.exists(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}"):
+                    if os.path.exists(f"{self.shimeji_path}/{shimeji['name'].removeprefix('Shimeji.')}"):
                         if not self.args.force:
                             print(f"Shimeji {shimeji['name']} already exists, use -f to overwrite")
                             raise SystemExit(1)
                         else:
-                            shutil.rmtree(f"{self.shimeji_path}/{shimeji['name']}", ignore_errors=True)
+                            shutil.rmtree(f"{self.shimeji_path}/{shimeji['name'].removeprefix('Shimeji.')}", ignore_errors=True)
 
                     for file in zipf.namelist():
-                        if file.startswith(f"prototypes/{shimeji['name'].strip('Shimeji.')}/"):
+                        if file.startswith(f"prototypes/{shimeji['name'].removeprefix('Shimeji.')}/"):
                             if file.endswith('/'): continue
-                            prototype_prefix = f"prototypes/{shimeji['name'].strip('Shimeji.')}/"
+                            prototype_prefix = f"prototypes/{shimeji['name'].removeprefix('Shimeji.')}/"
                             filename = file.replace(prototype_prefix, "")
                             basedir = os.path.dirname(filename)
-                            os.makedirs(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}/{basedir}", exist_ok=True)
-                            with open(f"{self.shimeji_path}/{shimeji['name'].strip('Shimeji.')}/{filename}", "wb") as f:
+                            os.makedirs(f"{self.shimeji_path}/{shimeji['name'].removeprefix('Shimeji.')}/{basedir}", exist_ok=True)
+                            with open(f"{self.shimeji_path}/{shimeji['name'].removeprefix('Shimeji.')}/{filename}", "wb") as f:
                                 f.write(zipf.read(file))
                     print(f"Imported {shimeji['name']}")
         else:
@@ -1714,7 +1714,7 @@ class ShimejiCtl:
                 if not prototype.count("."):
                     prototype = f"Shimeji.{prototype}"
 
-                dirname = prototype.strip("Shimeji.")
+                dirname = prototype.removeprefix("Shimeji.")
 
                 if prototype in [name[0] for name in self.known_shimejis]:
                     # Find prototype directory
@@ -1722,7 +1722,7 @@ class ShimejiCtl:
                     zipf.write(prototype_dir, f"prototypes/{dirname}/")
                     for path, dirs, files in os.walk(prototype_dir):
                         for file in files:
-                            zipf.write(f"{path}/{file}", f"prototypes/{dirname}/{path.lstrip(prototype_dir)}/{file}")
+                            zipf.write(f"{path}/{file}", f"prototypes/{dirname}/{path.removeprefix(prototype_dir)}/{file}")
                     pack_manifest["shimejis"].append(json.load(open(f"{prototype_dir}/manifest.json")))
                     continue
 
