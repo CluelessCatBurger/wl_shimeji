@@ -542,6 +542,7 @@ enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
         }
         environment_commit(env);
     }
+    return ENV_INIT_OK;
 }
 
 // Wayland callbacks ----------------------------------------------------------
@@ -1825,7 +1826,7 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 
 
     wl_surface_attach(surface->surface, sprite->buffer, 0, 0);
-    wl_surface_damage(surface->surface, 0, 0 , INT32_MAX, INT32_MAX);
+    wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
     if (active_pointer.grabbed_surface != surface) {
         wl_surface_set_input_region(surface->surface, sprite->input_region);
     }
@@ -1847,12 +1848,6 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
     wl_surface_commit(surface->surface);
 
     if (viewporter) {
-        wp_viewport_set_source(
-            surface->viewport,
-            0, 0,
-            wl_fixed_from_int(sprite->width),
-            wl_fixed_from_int(sprite->height)
-        );
         wp_viewport_set_destination(
             surface->viewport,
             sprite->width / surface->env->scale,
