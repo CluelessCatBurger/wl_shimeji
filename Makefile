@@ -96,13 +96,16 @@ all: $(TARGET) $(PLUGINS_TARGET)
 clean:
 	@-rm -r $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR)
 
-.PHONY: install
-install: $(TARGET) $(PLUGINS_TARGET)
-	install -d $(DESTDIR)$(PREFIX)/bin/
+.PHONY: install_plugins
+install_plugins: $(TARGET) $(PLUGINS_TARGET)
 	install -d $(DESTDIR)$(PREFIX)/lib/
+	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
+
+.PHONY: install
+install: $(TARGET)
+	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
-	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
