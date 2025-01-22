@@ -27,6 +27,14 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
 ## Runtime requirements
 Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, and provide wl_subcompositor interface.
 
+# Installing
+
+## Community packages
+
+Below are the community packages for wl_shimeji. They are not maintained by me, so if you have any issues with them, please contact the package maintainer.
+
+- Arch Linux (AUR): [wl_shimeji-git](https://aur.archlinux.org/packages/wl_shimeji-git)
+
 # Building
 
 ```sh
