@@ -269,6 +269,54 @@ static void mascot_dropped_oob(struct mascot* mascot, int32_t x, int32_t y)
 
 }
 
+static void broadcast_input_enabled_listener(bool enabled)
+{
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            environment_set_input_state(environment_store.entries[i], enabled);
+        }
+    }
+    pthread_mutex_unlock(&environment_store.mutex);
+}
+
+static struct mascot* lookup_mascot_by_coords(environment_t* at_env, int32_t x, int32_t y)
+{
+    pthread_mutex_lock(&mascot_store.mutex);
+    struct mascot* mascot = NULL;
+    uint32_t score = 0;
+    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+        if (mascot_store.entry_states[i]) {
+            struct mascot* m = mascot_store.entries[i];
+            environment_subsurface_t* subsurface = m->subsurface;
+            if (environment_subsurface_get_environment(subsurface) == at_env) {
+                const struct mascot_pose* pose = environment_subsurface_get_pose(subsurface);
+                if (!pose) continue;
+                // Check if coordinates are within mascot's pose
+                // Mascot's rectangle is defined by anchor point and size
+                // We also respect scaling factor of environment
+                int32_t surface_anchor_point_x = m->X->value.i;
+                int32_t surface_anchor_point_y = mascot_screen_y_to_mascot_y(m, m->Y->value.i);
+                int32_t surface_width = pose->sprite[m->LookingRight->value.i]->width / environment_screen_scale(at_env);
+                int32_t surface_height = pose->sprite[m->LookingRight->value.i]->height / environment_screen_scale(at_env);
+
+                surface_anchor_point_x += pose->anchor_x / environment_screen_scale(at_env);
+                surface_anchor_point_y += pose->anchor_y / environment_screen_scale(at_env);
+
+                if (x >= surface_anchor_point_x && x < surface_anchor_point_x + surface_width &&
+                    y >= surface_anchor_point_y && y < surface_anchor_point_y + surface_height) {
+                    if ((!m->dragged_tick || m->dragged_tick > score) && !m->dragged) {
+                        mascot = m;
+                        score = m->dragged_tick;
+                    }
+                }
+            }
+        }
+    }
+    pthread_mutex_unlock(&mascot_store.mutex);
+    return mascot;
+}
+
 // Sigaction handler for SIGSEGV and SIGINT
 void sigaction_handler(int signum, siginfo_t* info, void* context)
 {
@@ -371,6 +419,7 @@ void summon_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (environment_store.entry_states[i]){
+            environment_select_position(environment_store.entries[i], NULL, NULL);
             environment_set_input_state(environment_store.entries[i], false);
         }
     }
@@ -444,7 +493,8 @@ void remove_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
     UNUSED(env);
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
-        if (environment_store.entry_states[i]){
+        if (environment_store.entry_states[i]) {
+            environment_select_position(environment_store.entries[i], NULL, NULL);
             environment_set_input_state(environment_store.entries[i], false);
         }
     }
@@ -520,6 +570,7 @@ void select_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (environment_store.entry_states[i]) {
+            environment_select_position(environment_store.entries[i], NULL, NULL);
             environment_set_input_state(environment_store.entries[i], false);
         }
     }
@@ -631,10 +682,10 @@ bool process_add_mascot_packet(uint8_t* buff, uint16_t len, int fd)
     data->fd = fd;
     memcpy(data->name, buff + 2, namelen);
     data->name[namelen] = 0;
-    environment_select_position(summon_mascot, data);
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (environment_store.entry_states[i]) {
+            environment_select_position(environment_store.entries[i], summon_mascot, data);
             environment_set_input_state(environment_store.entries[i], true);
         }
     }
@@ -817,7 +868,11 @@ bool process_config_packet(uint8_t* buff, uint16_t len, int fd)
                 return false;
         }
         char config_file_path[256] = {0};
-        snprintf(config_file_path, sizeof(config_file_path), "%s/shimeji.conf", config_path);
+        size_t printed = snprintf(config_file_path, sizeof(config_file_path), "%s/shimeji.conf", config_path);
+        if (printed >= sizeof(config_file_path)) {
+            ERROR("Config file path too long");
+            return false;
+        }
         config_write(config_file_path);
         rbuff[1] = 0x00; // Command CONFIG_RESULT, result SUCCESS
         send(fd, rbuff, 2, 0);
@@ -829,10 +884,10 @@ bool process_select_mascot_packet(uint8_t* buff, uint16_t len, int fd)
 {
     UNUSED(buff);
     if (len < 2) return false;
-    environment_select_position(select_mascot, (void*)(uintptr_t)fd);
     pthread_mutex_lock(&environment_store.mutex);
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (environment_store.entry_states[i]) {
+            environment_select_position(environment_store.entries[i], select_mascot, (void*)(uintptr_t)fd);
             environment_set_input_state(environment_store.entries[i], true);
         }
     }
@@ -1347,6 +1402,9 @@ int main(int argc, const char** argv)
         send(inhereted_fd, buf, 1025+sizeof(size_t), 0);
         ERROR("Failed to initialize environment: %s", environment_get_error());
     }
+
+    environment_set_broadcast_input_enabled_listener(broadcast_input_enabled_listener);
+    environment_set_mascot_by_coords_callback(lookup_mascot_by_coords);
 
     size_t plugin_count = 0;
 

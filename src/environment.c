@@ -17,6 +17,7 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
+
 #define _GNU_SOURCE
 #include <sys/mman.h>
 #include "mascot_atlas.h"
@@ -33,7 +34,9 @@
 #include "plugins.h"
 #include "config.h"
 #include "list.h"
+#include <wayland-cursor.h>
 
+bool why_tablet_v2_proximity_in_events_received_by_parent_question_mark = false;
 
 struct wl_display* display = NULL;
 struct wl_registry* registry = NULL;
@@ -41,6 +44,8 @@ struct wl_compositor* compositor = NULL;
 struct wl_shm* shm_manager = NULL;
 struct wl_subcompositor* subcompositor = NULL;
 struct wl_seat* seat = NULL;
+
+struct wl_cursor_theme* cursor_theme = NULL;
 
 // wlr extensions
 struct zwlr_layer_shell_v1* wlr_layer_shell = NULL;
@@ -62,10 +67,13 @@ void (*new_environment)(environment_t*) = NULL;
 void (*rem_environment)(environment_t*) = NULL;
 void (*orphaned_mascot)(struct mascot*) = NULL;
 void (*mascot_dropped_oob)(struct mascot*, int32_t x, int32_t y) = NULL;
+void (*env_broadcast_input_enabled)(bool) = NULL;
+struct mascot* (*mascot_by_coordinates)(environment_t*, int32_t, int32_t) = NULL;
 
 struct wl_buffer* anchor_buffer = NULL;
-
 struct wl_region* empty_region = NULL;
+
+int32_t active_grabbers_count = 0;
 
 #define CURRENT_DEVICE_TYPE_MOUSE 0
 #define CURRENT_DEVICE_TYPE_PEN 1
@@ -117,6 +125,10 @@ struct environment {
 
     struct list* referenced_mascots;
     struct ie_object* ie;
+
+    bool select_active;
+    void (*select_callback)(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data);
+    void* select_data;
 };
 
 struct wl_surface_data {
@@ -148,40 +160,82 @@ struct environment_subsurface {
     int32_t offset_x, offset_y;
 };
 
-struct environment_pointer {
-    wl_fixed_t x, y;
-    wl_fixed_t temp_x, temp_y;
-    wl_fixed_t mascot_x, mascot_y;
-    wl_fixed_t temp_dx, temp_dy;
-    wl_fixed_t dx, dy;
-    int32_t public_x, public_y;
-    uint32_t last_tick;
-    environment_subsurface_t* grabbed_surface;
-    uint8_t device_type;
+#define EVENT_FRAME_BUTTONS 0x01
+#define EVENT_FRAME_SURFACE 0x02
+#define EVENT_FRAME_MOTIONS 0x04
+#define EVENT_FRAME_AXIS    0x08
+#define EVENT_FRAME_PROXIMITY 0x10
 
-    // Devices
-    struct wl_pointer* pointer;
-    struct wl_touch* touch;
-    struct wl_tablet_tool* tablet_tool;
+// Primary button, usually left mouse button, on tablets and touchscreens corresponds to the down event
+#define EVENT_FRAME_PRIMARY_BUTTON 0x01
+#define EVENT_FRAME_SECONDARY_BUTTON 0x02
+#define EVENT_FRAME_THIRD_BUTTON 0x04
+// Button id passed with mask 0xFFFFFFF0, shifted right by 0xF (unused)
+#define EVENT_FRAME_MISC_BUTTON 0x08
 
+struct environment_event_frame {
+    uint32_t mask;
+
+    // Buttons
+    uint32_t buttons_pressed;
+    uint32_t buttons_released;
+
+    // Surface
+    struct wl_surface* surface_changed;
     uint32_t enter_serial;
 
-    uint8_t button_state;
+    // Motions
+    wl_fixed_t surface_local_x;
+    wl_fixed_t surface_local_y;
+};
+
+struct environment_pointer {
+    // Position of the pointer, in surface-local coordinates
+    int32_t x, y;
+    int32_t dx, dy;
+
+    int32_t surface_x, surface_y;
+
+    // Public position of the pointer, in global coordinates, exposed to mascots, only by plugins
+    int32_t public_x, public_y;
+
+    uint32_t reference_tick;
+
+    environment_subsurface_t* grabbed_subsurface;
+    enum {
+        ENVIRONMENT_POINTER_PROTOCOL_POINTER,
+        ENVIRONMENT_POINTER_PROTOCOL_TABLET,
+        ENVIRONMENT_POINTER_PROTOCOL_TOUCH
+    } protocol;
+
+    // Corresponding device
+    union {
+        struct wl_pointer* pointer;
+        struct zwp_tablet_tool_v2* tablet;
+        struct wl_touch* touch;
+    } device;
+
+    uint32_t enter_serial;
+    uint32_t buttons_state;
+
+    environment_t* above_environment;
 
     struct wl_surface* above_surface;
 
-    bool select_active;
-    void (*select_callback)(environment_t*, int32_t, int32_t, environment_subsurface_t*, void*);
-    void* select_data;
-
     // Cursor shapes
+    enum wp_cursor_shape_device_v1_shape current_shape;
     struct wp_cursor_shape_device_v1* cursor_shape_device;
-    struct wp_cursor_shape_device_v1* cursor_shape_device_tablet;
-    enum wp_cursor_shape_device_v1_shape cursor_shape;
+    struct wl_cursor* cursor;
+
+    // Staging changes
+    struct environment_event_frame frame;
 
 };
 
-environment_pointer_t active_pointer = {0};
+// Pointer with most recent activity
+environment_pointer_t* active_pointer = NULL;
+#define ACTIVATE_POINTER(pointer) active_pointer = pointer
+
 static uint32_t yconv(environment_t* env, uint32_t y);
 
 // Helper structs -----------------------------------------------------------
@@ -197,6 +251,7 @@ struct envs_queue {
 
 environment_t* environment_from_surface(struct wl_surface* surface)
 {
+    if (!surface) return NULL;
     struct wl_surface_data* data = wl_surface_get_user_data(surface);
     if (!data) return NULL;
     return data->associated_environment;
@@ -204,6 +259,7 @@ environment_t* environment_from_surface(struct wl_surface* surface)
 
 environment_subsurface_t* environment_subsurface_from_surface(struct wl_surface* surface)
 {
+    if (!surface) return NULL;
     struct wl_surface_data* data = wl_surface_get_user_data(surface);
     if (!data) return NULL;
     if (data->role != WL_SURFACE_ROLE_SUBSURFACE) return NULL;
@@ -212,6 +268,7 @@ environment_subsurface_t* environment_subsurface_from_surface(struct wl_surface*
 
 bool is_root_surface(struct wl_surface* surface)
 {
+    if (!surface) return NULL;
     struct wl_surface_data* data = wl_surface_get_user_data(surface);
     if (!data) return false;
     return data->role == WL_SURFACE_ROLE_PARENT_SURFACE;
@@ -219,6 +276,7 @@ bool is_root_surface(struct wl_surface* surface)
 
 struct layer_surface* layer_surface_from_surface(struct wl_surface* surface)
 {
+    if (!surface) return NULL;
     struct wl_surface_data* data = wl_surface_get_user_data(surface);
     if (!data) return NULL;
     if (data->role != WL_SURFACE_ROLE_LAYER_COMPONENT && data->role != WL_SURFACE_ROLE_PARENT_SURFACE) return NULL;
@@ -227,6 +285,7 @@ struct layer_surface* layer_surface_from_surface(struct wl_surface* surface)
 
 struct wl_surface_data* wl_surface_set_data(struct wl_surface* surface, uint8_t role, void* data, environment_t* env)
 {
+    if (!surface) return NULL;
     struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
     if (!surface_data) {
         surface_data = calloc(1, sizeof(struct wl_surface_data));
@@ -245,6 +304,7 @@ struct wl_surface_data* wl_surface_set_data(struct wl_surface* surface, uint8_t 
 
 void wl_surface_clear_data(struct wl_surface* surface)
 {
+    if (!surface) return;
     struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
     if (!surface_data) return;
     free(surface_data);
@@ -253,6 +313,7 @@ void wl_surface_clear_data(struct wl_surface* surface)
 
 void wl_surface_attach_callbacks(struct wl_surface* surface, void* callbacks)
 {
+    if (!surface) return;
     struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
     if (!surface_data) return;
     surface_data->callbacks = callbacks;
@@ -260,6 +321,7 @@ void wl_surface_attach_callbacks(struct wl_surface* surface, void* callbacks)
 
 void* wl_surface_get_callbacks(struct wl_surface* surface)
 {
+    if (!surface) return NULL;
     struct wl_surface_data* surface_data = wl_surface_get_user_data(surface);
     if (!surface_data) return NULL;
     return surface_data->callbacks;
@@ -392,7 +454,179 @@ uint32_t yconv(environment_t* env, uint32_t y)
     return (int32_t)environment_workarea_height(env) - y;
 }
 
+void enable_input_on_environments(bool enable)
+{
+    if (enable) {
+        // Get and increment atomically active grabbers
+        int32_t oldval = __atomic_fetch_add(&active_grabbers_count, 1, __ATOMIC_SEQ_CST);
+        if (!oldval) {
+            if (env_broadcast_input_enabled) {
+                env_broadcast_input_enabled(true);
+            }
+        }
+    } else {
+        // Get and decrement atomically active grabbers
+        int32_t oldval = __atomic_fetch_sub(&active_grabbers_count, 1, __ATOMIC_SEQ_CST);
+        if (oldval) {
+            if (env_broadcast_input_enabled) {
+                env_broadcast_input_enabled(false);
+            }
+        }
+    }
+}
+
 #ifndef PLUGINSUPPORT_IMPLEMENTATION
+
+bool environment_pointer_apply_cursor(environment_pointer_t* pointer, int32_t cursor_type)
+{
+    if (!pointer) return false;
+    if (!pointer->cursor_shape_device && !cursor_theme) return false;
+    struct wl_cursor* cursor = pointer->cursor;
+    struct wl_cursor_image* image = NULL;
+    int32_t cursor_shape = pointer->current_shape;
+
+    if (cursor_type != -1) {
+        switch (cursor_type) {
+            case mascot_hotspot_cursor_pointer:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+                }
+                break;
+
+            case mascot_hotspot_cursor_hand:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "hand1");
+                }
+                break;
+
+            case mascot_hotspot_cursor_crosshair:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "crosshair");
+                }
+                break;
+
+            case mascot_hotspot_cursor_text:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "text");
+                }
+                break;
+
+            case mascot_hotspot_cursor_move:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "move");
+                }
+                break;
+
+            case mascot_hotspot_cursor_wait:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "watch");
+                }
+                break;
+
+            case mascot_hotspot_cursor_help:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "question_arrow");
+                }
+                break;
+
+            case mascot_hotspot_cursor_progress:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "progress");
+                }
+                break;
+
+            case mascot_hotspot_cursor_deny:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "circle");
+                }
+                break;
+
+            default:
+                cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+                if (cursor_theme) {
+                    cursor = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+                }
+                break;
+        }
+    }
+
+    if (pointer->cursor_shape_device && cursor_shape != (int32_t)pointer->current_shape) {
+        wp_cursor_shape_device_v1_set_shape(pointer->cursor_shape_device, pointer->enter_serial, cursor_shape);
+        pointer->current_shape = cursor_shape;
+        return true;
+    }
+
+    if (!cursor) {
+        return false;
+    }
+
+    image = cursor->images[0];
+
+    if (pointer->cursor != cursor) {
+        if (pointer->protocol == ENVIRONMENT_POINTER_PROTOCOL_POINTER) {
+            wl_pointer_set_cursor(pointer->device.pointer, pointer->enter_serial, pointer->above_surface, image->hotspot_x, image->hotspot_y);
+        } else if (pointer->protocol == ENVIRONMENT_POINTER_PROTOCOL_TABLET) {
+            zwp_tablet_tool_v2_set_cursor(pointer->device.tablet, pointer->enter_serial, pointer->above_surface, image->hotspot_x, image->hotspot_y);
+        }
+        pointer->cursor = cursor;
+        return true;
+    }
+
+    return false;
+}
+
+environment_pointer_t* allocate_env_pointer(int32_t protocol, void* proxy_object)
+{
+    environment_pointer_t* pointer = (environment_pointer_t*)calloc(1, sizeof(environment_pointer_t));
+    if (!pointer) ERROR("Failed to allocate memory for environment pointer");
+
+    pointer->protocol = protocol;
+
+    if (protocol == ENVIRONMENT_POINTER_PROTOCOL_POINTER) {
+        pointer->device.pointer = (struct wl_pointer*)proxy_object;
+        if (cursor_shape_manager) {
+            pointer->cursor_shape_device = wp_cursor_shape_manager_v1_get_pointer(cursor_shape_manager, (struct wl_pointer*)proxy_object);
+            pointer->current_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+        }
+    } else if (protocol == ENVIRONMENT_POINTER_PROTOCOL_TABLET) {
+        pointer->device.tablet = (struct zwp_tablet_tool_v2*)proxy_object;
+        if (cursor_shape_manager) {
+            pointer->cursor_shape_device = wp_cursor_shape_manager_v1_get_tablet_tool_v2(cursor_shape_manager, (struct zwp_tablet_tool_v2*)proxy_object);
+            pointer->current_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+        }
+    } else if (protocol == ENVIRONMENT_POINTER_PROTOCOL_TOUCH) {
+        pointer->device.touch = (struct wl_touch*)proxy_object;
+    }
+
+    if (cursor_theme) {
+        pointer->cursor = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+    }
+
+    return pointer;
+}
+
+void free_env_pointer(environment_pointer_t* pointer)
+{
+    if (!pointer) return;
+
+    if (active_pointer == pointer) {
+        active_pointer = NULL;
+    }
+
+    if (pointer->cursor_shape_device) {
+        wp_cursor_shape_device_v1_destroy(pointer->cursor_shape_device);
+    }
+    free(pointer);
+}
 
 static void block_until_synced();
 static char error_m[1024] = {0};
@@ -444,7 +678,6 @@ static void environment_wants_to_close_callback(void* data)
 
 static void mascot_on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y);
 static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
-static void mascot_on_pointer_frame(void* data, struct wl_pointer* pointer);
 static void mascot_on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value);
 static void mascot_on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface);
 static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y);
@@ -452,10 +685,24 @@ static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uin
 static const struct wl_pointer_listener mascot_pointer_listener = {
     .enter = mascot_on_pointer_enter,
     .button = mascot_on_pointer_button,
-    .frame = mascot_on_pointer_frame,
+    .frame = NULL,
     .axis = mascot_on_pointer_axis,
     .leave = mascot_on_pointer_leave,
     .motion = mascot_on_pointer_motion,
+};
+
+static void environment_on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y);
+static void environment_on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state);
+static void environment_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y);
+static void environment_on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface);
+
+static const struct wl_pointer_listener environment_pointer_listener = {
+    .enter = environment_on_pointer_enter,
+    .button = environment_on_pointer_button,
+    .frame = NULL,
+    .axis = NULL,
+    .leave = environment_on_pointer_leave,
+    .motion = environment_on_pointer_motion,
 };
 
 static void xdg_output_logical_position(void* data, struct zxdg_output_v1* xdg_output, int32_t x, int32_t y);
@@ -535,7 +782,7 @@ enum environment_init_status dispatch_envs_queue(struct envs_queue* envs)
                 return init_status;
             }
             callbacks->data = (void*)env->root_environment_subsurface;
-            callbacks->pointer_listener = &mascot_pointer_listener;
+            callbacks->pointer_listener = &environment_pointer_listener;
 
             wl_surface_attach_callbacks(env->root_surface->surface, (void*)callbacks);
             wl_surface_attach(env->root_environment_subsurface->surface, anchor_buffer, 0, 0);
@@ -637,213 +884,391 @@ static const struct wl_output_listener wl_output_listener = {
 
 static void on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y)
 {
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
+
+    env_pointer->frame.mask |= EVENT_FRAME_SURFACE | EVENT_FRAME_MOTIONS;
+    env_pointer->frame.surface_changed = surface;
+    env_pointer->frame.enter_serial = serial;
+
+    env_pointer->frame.surface_local_x = x;
+    env_pointer->frame.surface_local_y = y;
+}
+
+static void on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface)
+{
+    UNUSED(pointer);
+    UNUSED(surface);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
+
+    env_pointer->frame.mask |= EVENT_FRAME_SURFACE | EVENT_FRAME_MOTIONS;
+    env_pointer->frame.surface_changed = NULL;
+    env_pointer->frame.enter_serial = serial;
+
+    env_pointer->frame.surface_local_x = 0;
+    env_pointer->frame.surface_local_y = 0;
+}
+
+static void on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
+{
+    UNUSED(time);
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
+
+    env_pointer->frame.mask |= EVENT_FRAME_MOTIONS;
+    env_pointer->frame.surface_local_x = x;
+    env_pointer->frame.surface_local_y = y;
+}
+
+static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
+{
+    UNUSED(time);
     UNUSED(serial);
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
+
+    env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
+
+    uint32_t btn_mask = 0;
+    if (button == BTN_LEFT) {
+        btn_mask = EVENT_FRAME_PRIMARY_BUTTON;
+    } else if (button == BTN_RIGHT) {
+        btn_mask = EVENT_FRAME_SECONDARY_BUTTON;
+    } else if (button == BTN_MIDDLE) {
+        btn_mask = EVENT_FRAME_THIRD_BUTTON;
+    } else {
+        btn_mask = EVENT_FRAME_MISC_BUTTON;
+    }
+
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        env_pointer->frame.buttons_pressed |= btn_mask;
+        env_pointer->frame.buttons_released &= ~btn_mask;
+    } else {
+        env_pointer->frame.buttons_released |= btn_mask;
+        env_pointer->frame.buttons_pressed &= ~btn_mask;
+    }
+}
+
+static void on_pointer_axis_source(void* data, struct wl_pointer* pointer, uint32_t axis_source)
+{
     UNUSED(data);
+    UNUSED(pointer);
+    UNUSED(axis_source);
+    return;
+}
 
-    active_pointer.enter_serial = serial;
-    active_pointer.pointer = pointer;
-    if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-        wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-    }
+static void on_pointer_axis_stop(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis)
+{
+    UNUSED(data);
+    UNUSED(pointer);
+    UNUSED(time);
+    UNUSED(axis);
+    return;
+}
 
-    struct environment_callbacks* callbacks = wl_surface_get_callbacks(surface);
-    if (!callbacks) {
+static void on_pointer_axis_discrete(void* data, struct wl_pointer* pointer, uint32_t axis, int32_t discrete)
+{
+    UNUSED(data);
+    UNUSED(pointer);
+    UNUSED(axis);
+    UNUSED(discrete);
+    return;
+}
+
+static void on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
+{
+    UNUSED(time);
+    UNUSED(pointer);
+    UNUSED(axis);
+    UNUSED(value);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
         return;
     }
 
-    if (!callbacks->pointer_listener) {
+    env_pointer->frame.mask |= EVENT_FRAME_AXIS;
+}
+
+static void on_pointer_frame(void* data, struct wl_pointer* pointer)
+{
+    UNUSED(pointer);
+
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
         return;
     }
 
-    if (!callbacks->pointer_listener->enter) {
-        return;
+    ACTIVATE_POINTER(env_pointer);
+
+    environment_t* env = env_pointer->above_environment;
+    environment_subsurface_t* env_subsurface = NULL;
+    struct environment_callbacks* surface_pointer_callbacks = NULL;
+
+    env_subsurface = environment_subsurface_from_surface(env_pointer->above_surface);
+    surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->above_surface);
+
+    // Workaround for hyprland
+    if (env_pointer->grabbed_subsurface) {
+        if ((env_pointer->frame.mask & (EVENT_FRAME_BUTTONS | EVENT_FRAME_SURFACE)) == (EVENT_FRAME_BUTTONS | EVENT_FRAME_SURFACE)) {
+            if (env_pointer->above_surface == env_pointer->grabbed_subsurface->surface) {
+                env_pointer->frame.mask &= ~EVENT_FRAME_BUTTONS;
+            }
+        }
     }
 
-    callbacks->pointer_listener->enter(callbacks->data, pointer, serial, surface, x, y);
+    // Once we leave the surface, we do not send any callbacks aside (leave)
+    if (env_pointer->frame.mask & EVENT_FRAME_SURFACE) {
+        if (surface_pointer_callbacks) {
+            if (surface_pointer_callbacks->pointer_listener) {
+                if (surface_pointer_callbacks->pointer_listener->leave) {
+                    surface_pointer_callbacks->pointer_listener->leave((void*)env_pointer, NULL, env_pointer->enter_serial, env_pointer->above_surface);
+                }
+            }
+        }
+
+        env_pointer->above_surface = env_pointer->frame.surface_changed;
+        env_pointer->enter_serial = env_pointer->frame.enter_serial;
+
+        environment_t * new_env = environment_from_surface(env_pointer->above_surface);
+        env_subsurface = environment_subsurface_from_surface(env_pointer->above_surface);
+        surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->above_surface);
+        if (new_env && new_env != env && env_pointer->grabbed_subsurface) {
+            struct mascot * mascot = environment_subsurface_get_mascot(env_pointer->grabbed_subsurface);
+            if (mascot) {
+                mascot_environment_changed(mascot, new_env);
+            }
+            env = new_env;
+        }
+        if (new_env) env_pointer->above_environment = new_env;
+
+        // Finally, send the enter callback for the new surface
+        if (surface_pointer_callbacks) {
+            if (surface_pointer_callbacks->pointer_listener) {
+                if (surface_pointer_callbacks->pointer_listener->enter) {
+                    surface_pointer_callbacks->pointer_listener->enter((void*)env_pointer, NULL, env_pointer->enter_serial, env_pointer->above_surface, env_pointer->frame.surface_local_x, env_pointer->frame.surface_local_y);
+                }
+            }
+        }
+
+    }
+
+    if (env_pointer->frame.mask & EVENT_FRAME_MOTIONS) {
+        if (surface_pointer_callbacks) {
+            if (surface_pointer_callbacks->pointer_listener) {
+                if (surface_pointer_callbacks->pointer_listener->motion) {
+                    surface_pointer_callbacks->pointer_listener->motion((void*)env_pointer, NULL, 0, env_pointer->frame.surface_local_x, env_pointer->frame.surface_local_y);
+                }
+            }
+        }
+        env_pointer->surface_x = wl_fixed_to_int(env_pointer->frame.surface_local_x);
+        env_pointer->surface_y = wl_fixed_to_int(env_pointer->frame.surface_local_y);
+
+        if (env_pointer->grabbed_subsurface) {
+            struct mascot * mascot = environment_subsurface_get_mascot(env_pointer->grabbed_subsurface);
+            if (mascot) {
+                environment_subsurface_move_to_pointer(env_pointer->grabbed_subsurface);
+            }
+        }
+    }
+
+
+    if (env_pointer->frame.mask & EVENT_FRAME_BUTTONS) {
+        if (!env_pointer->above_surface && env_pointer->grabbed_subsurface) {
+            // Impossible situation, but in case we somehow got button release after leave(), we should handle it
+            surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->grabbed_subsurface->surface);
+            env_subsurface = env_pointer->grabbed_subsurface;
+            env = env_subsurface->env;
+
+            env_pointer->above_surface = env_pointer->grabbed_subsurface->surface;
+        }
+
+        for (int i = 0; i < 4; i++) {
+            int32_t button = 1 << i;
+            if ((button & env_pointer->frame.buttons_released) && (button & env_pointer->buttons_state)) {
+                if (surface_pointer_callbacks) {
+                    if (surface_pointer_callbacks->pointer_listener) {
+                        if (surface_pointer_callbacks->pointer_listener->button) {
+                            surface_pointer_callbacks->pointer_listener->button((void*)env_pointer, NULL, 0, 0, button, WL_POINTER_BUTTON_STATE_RELEASED);
+                        }
+                    }
+                }
+                env_pointer->buttons_state &= ~button;
+            }
+            else if ((button & env_pointer->frame.buttons_pressed) && !(button & env_pointer->buttons_state)) {
+                if (surface_pointer_callbacks) {
+                    if (surface_pointer_callbacks) {
+                        if (surface_pointer_callbacks->pointer_listener) {
+                            if (surface_pointer_callbacks->pointer_listener->button) {
+                                surface_pointer_callbacks->pointer_listener->button((void*)env_pointer, NULL, 0, 0, button, WL_POINTER_BUTTON_STATE_PRESSED);
+                            }
+                        }
+                    }
+                }
+                env_pointer->buttons_state |= button;
+            }
+        }
+    }
+
+
+    if (env_pointer->frame.mask & EVENT_FRAME_AXIS) {
+        if (surface_pointer_callbacks) {
+            if (surface_pointer_callbacks->pointer_listener) {
+                if (surface_pointer_callbacks->pointer_listener->axis) {
+                    surface_pointer_callbacks->pointer_listener->axis((void*)env_pointer, NULL, 0, 0, 0);
+                }
+            }
+        }
+    }
+
+    env_pointer->frame = (struct environment_event_frame){0};
+}
+
+static void on_pointer_axis_value120(void* data, struct wl_pointer* pointer, uint32_t axis, int32_t value)
+{
+    UNUSED(data);
+    UNUSED(pointer);
+    UNUSED(axis);
+    UNUSED(value);
+    return ;
+}
+
+static void on_pointer_axis_relative_direction(void* data, struct wl_pointer* pointer, uint32_t axis, uint32_t direction)
+{
+    UNUSED(data);
+    UNUSED(pointer);
+    UNUSED(axis);
+    UNUSED(direction);
+    return ;
 }
 
 static void mascot_on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y)
 {
     UNUSED(serial);
-    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
+    UNUSED(pointer);
+    UNUSED(x);
+    UNUSED(y);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in mascot_on_pointer_enter!");
+    }
 
+    environment_subsurface_t* env_surface = environment_subsurface_from_surface(surface);
     if (!env_surface) {
-        active_pointer.x = wl_fixed_to_int(x);
-        active_pointer.y = wl_fixed_to_int(y);
-    } else {
-        active_pointer.mascot_x = wl_fixed_to_int(x);
-        active_pointer.mascot_y = wl_fixed_to_int(y);
-    }
-    active_pointer.temp_x = wl_fixed_to_int(x);
-    active_pointer.temp_y = wl_fixed_to_int(y);
-    active_pointer.pointer = pointer;
-    active_pointer.device_type = CURRENT_DEVICE_TYPE_MOUSE;
-    active_pointer.above_surface = surface;
-}
-
-static void on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface)
-{
-    UNUSED(data);
-
-    active_pointer.pointer = NULL;
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->leave) {
-            return;
-        }
-        callbacks->pointer_listener->leave(callbacks->data, pointer, serial, surface);
+        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_enter!");
+        return;
     }
 
-    active_pointer.above_surface = NULL;
-}
+    environment_t* env = environment_from_surface(surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in mascot_on_pointer_enter!");
+        return;
+    }
 
-static void on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
-{
-    UNUSED(data);
-
-    active_pointer.temp_x = wl_fixed_to_int(x);
-    active_pointer.temp_y = wl_fixed_to_int(y);
-
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->motion) {
-            return;
-        }
-        callbacks->pointer_listener->motion(callbacks->data, pointer, time, x, y);
+    // Apply cursors
+    if (env_pointer->grabbed_subsurface || env->select_active) {
+        environment_pointer_apply_cursor(env_pointer, -1); // Will set current cursor
     }
 }
 
 static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    UNUSED(pointer);
     UNUSED(time);
-
-    active_pointer.temp_x = wl_fixed_to_int(x);
-    active_pointer.temp_y = wl_fixed_to_int(y);
-    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
-
-    if (!env_surface || active_pointer.select_active) {
-        active_pointer.x = wl_fixed_to_int(x);
-        active_pointer.y = wl_fixed_to_int(y);
-    } else {
-        active_pointer.mascot_x = wl_fixed_to_int(x);
-        active_pointer.mascot_y = wl_fixed_to_int(y);
-        struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y);
-        if (hotspot) {
-            switch (hotspot->cursor) {
-                case mascot_hotspot_cursor_pointer:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
-                    break;
-
-                case mascot_hotspot_cursor_hand:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
-                    break;
-
-                case mascot_hotspot_cursor_crosshair:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
-                    break;
-
-                case mascot_hotspot_cursor_text:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
-                    break;
-
-                case mascot_hotspot_cursor_move:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
-                    break;
-
-                case mascot_hotspot_cursor_wait:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
-                    break;
-
-                case mascot_hotspot_cursor_help:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
-                    break;
-
-                case mascot_hotspot_cursor_progress:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
-                    break;
-
-                case mascot_hotspot_cursor_deny:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-                    break;
-
-                default:
-                    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-                    break;
-            }
-            if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-                wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-            }
-        } else if (!active_pointer.grabbed_surface && !active_pointer.select_active) {
-            active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-            if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-                wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-            }
-        }
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in mascot_on_pointer_motion!");
     }
 
-
-}
-
-static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
-{
-    UNUSED(data);
-
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->button) {
-            return;
-        }
-        callbacks->pointer_listener->button(callbacks->data, pointer, serial, time, button, state);
-    } else {
-        if (state == WL_POINTER_BUTTON_STATE_PRESSED)
-        {} else {
-            if (button == BTN_LEFT) {
-                if (active_pointer.grabbed_surface) {
-                    mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
-                }
-                active_pointer.button_state &= ~1;
-            } else if (button == BTN_MIDDLE) {
-                active_pointer.button_state &= ~2;
-            }
-        }
+    environment_subsurface_t* env_surface = environment_subsurface_from_surface(env_pointer->above_surface);
+    if (!env_surface) {
+        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_motion!");
+        return;
     }
+
+    struct mascot * mascot = environment_subsurface_get_mascot(env_surface);
+    if (!mascot) {
+        WARN("Unexpected! mascot_on_pointer_motion is called, but somehow we not above mascot???");
+        return;
+    }
+
+    environment_t * env = environment_from_surface(env_pointer->above_surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in mascot_on_pointer_motion!");
+        return;
+    }
+
+    int32_t global_x;
+    int32_t global_y;
+
+    int32_t anchor_x = 0;
+    int32_t anchor_y = 0;
+
+    if (env_surface->pose) {
+        anchor_x = env_surface->pose->anchor_x;
+        anchor_y = env_surface->pose->anchor_y;
+    }
+
+    // Transform surface_local coordinates to global coordinates
+    // global_x = env_surface->pose->anchor_x + wl_fixed_to_int(x) + env_surface->mascot->X->value.i;
+    // global_y = env_surface->pose->anchor_y + wl_fixed_to_int(y) + env_surface->mascot->Y->value.i;
+
+    global_x = mascot->X->value.i + wl_fixed_to_int(x) + anchor_x / env_surface->env->scale;
+    global_y = yconv(env_surface->env, mascot->Y->value.i) + wl_fixed_to_int(y) + anchor_y / env_surface->env->scale;
+
+    env_pointer->x = global_x;
+    env_pointer->y = global_y;
+
+    if (env_pointer->grabbed_subsurface) return;
+
+    // Get hotspot
+    struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
+    if (hotspot && !(env_pointer->grabbed_subsurface || env->select_active)) environment_pointer_apply_cursor(env_pointer, hotspot->cursor);
 }
+
 
 static void environment_on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
+
     UNUSED(serial);
     UNUSED(time);
     UNUSED(pointer);
-    environment_subsurface_t* envs = (environment_subsurface_t*)data;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in environment_on_pointer_button!");
+    }
+
+    environment_t* env = environment_from_surface(env_pointer->above_surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in environment_on_pointer_button!");
+        return;
+    }
 
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        if (button == BTN_LEFT) {
-            if (active_pointer.select_active) {
-                active_pointer.select_active = false;
-                active_pointer.select_callback(envs->env, active_pointer.x, yconv(envs->env, active_pointer.y), envs, active_pointer.select_data);
-                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-                if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-                    wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-                }
+        if (button == EVENT_FRAME_PRIMARY_BUTTON) {
+            if (env->select_active) {
+                env->select_active = false;
+                env->select_callback(env, env_pointer->x, yconv(env, env_pointer->y), environment_subsurface_from_surface(env_pointer->above_surface), env->select_data);
+                environment_pointer_apply_cursor(env_pointer, -2);
+            }
+        }
+    } else {
+        if (button == EVENT_FRAME_PRIMARY_BUTTON) {
+            if (env_pointer->grabbed_subsurface) {
+                env_pointer->dx = (env_pointer->x - env_pointer->dx);
+                env_pointer->dy = (env_pointer->y - env_pointer->dy);
+                mascot_drag_ended(environment_subsurface_get_mascot(env_pointer->grabbed_subsurface), true);
             }
         }
     }
@@ -851,289 +1276,193 @@ static void environment_on_pointer_button(void* data, struct wl_pointer* pointer
 
 static void mascot_on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface)
 {
-    UNUSED(pointer);
+
     UNUSED(serial);
-    UNUSED(surface);
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in mascot_on_pointer_enter!");
+    }
 
-    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
+    environment_subsurface_t* env_surface = environment_subsurface_from_surface(surface);
+    if (!env_surface) {
+        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_enter!");
+        return;
+    }
 
-    if (!active_pointer.grabbed_surface) {
-        active_pointer.button_state = 0;
+    environment_t* env = environment_from_surface(surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in mascot_on_pointer_enter!");
+        return;
+    }
+
+    // Apply cursors
+    if (env_pointer->grabbed_subsurface || env->select_active) {
+        environment_pointer_apply_cursor(env_pointer, -2); // Set cursor to default
         mascot_hotspot_hold(env_surface->mascot, 0, 0, 0, true);
-        if (!active_pointer.grabbed_surface && !active_pointer.select_active) {
-            active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-            if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-                wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-            }
-        }
     }
 }
 
 static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
 {
 
-    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in mascot_on_pointer_enter!");
+    }
+
+    environment_subsurface_t* env_surface = environment_subsurface_from_surface(env_pointer->above_surface);
+    if (!env_surface) {
+        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_enter!");
+        return;
+    }
+
+    environment_t* env = environment_from_surface(env_pointer->above_surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in mascot_on_pointer_enter!");
+        return;
+    }
+
+    struct mascot * mascot = environment_subsurface_get_mascot(env_surface);
+    if (!mascot) {
+        WARN("Unexpected lack of mascot while we are in mascot_on_pointer_button!");
+        return;
+    }
+
+    int pressed_button = -1;
+    if (button == EVENT_FRAME_PRIMARY_BUTTON) {
+        pressed_button = mascot_hotspot_button_left;
+    } else if (button == EVENT_FRAME_THIRD_BUTTON) {
+        pressed_button = mascot_hotspot_button_middle;
+    } else if (button == EVENT_FRAME_SECONDARY_BUTTON) {
+        pressed_button = mascot_hotspot_button_right;
+    }
 
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
-        enum mascot_hotspot_button pressed_button = -1;
-        if (button == BTN_LEFT) {
-            pressed_button = mascot_hotspot_button_left;
-            active_pointer.button_state |= 1;
-        } else if (button == BTN_MIDDLE) {
-            pressed_button = mascot_hotspot_button_middle;
-            active_pointer.button_state |= 2;
-        } else if (button == BTN_RIGHT) {
-            pressed_button = mascot_hotspot_button_right;
-            active_pointer.button_state |= 4;
-        }
-        if (env_surface) {
-            if (env_surface->mascot) {
-                active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-                active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
+        if (!env->select_active && !env_pointer->grabbed_subsurface) {
+            bool hotspot_press_result = mascot_hotspot_hold(mascot, env_pointer->surface_x, env_pointer->surface_y, pressed_button, false);
+            if (!hotspot_press_result && pressed_button == mascot_hotspot_button_left) {
+                mascot_drag_started(mascot, env_pointer);
             }
-            if (env_surface->env->root_environment_subsurface != env_surface && !active_pointer.select_active) {
-                bool hotspot_press_result = mascot_hotspot_hold(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, pressed_button, false);
-                if (!hotspot_press_result && pressed_button == mascot_hotspot_button_left) {
-                    mascot_drag_started(env_surface->mascot, &active_pointer);
+        } else {
+            environment_on_pointer_button(data, pointer, serial, time, button, state);
+        }
+
+    } else {
+        if (env_pointer->grabbed_subsurface && pressed_button == mascot_hotspot_button_left) {
+            env_pointer->dx = (env_pointer->x - env_pointer->dx);
+            env_pointer->dy = (env_pointer->y - env_pointer->dy);
+            mascot_drag_ended(mascot, true);
+        } else {
+            if (mascot->hotspot_active || env_pointer->grabbed_subsurface) {
+                mascot_hotspot_hold(mascot, env_pointer->surface_x, env_pointer->surface_y, pressed_button, true);
+                struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(mascot, env_pointer->surface_x, env_pointer->surface_y);
+                if (hotspot) {
+                    environment_pointer_apply_cursor(env_pointer, hotspot->cursor);
                 }
             } else {
+                environment_pointer_apply_cursor(env_pointer, -2);
                 environment_on_pointer_button(data, pointer, serial, time, button, state);
             }
         }
-    } else {
-        enum mascot_hotspot_button released_button = -1;
-        if (button == BTN_LEFT) {
-            active_pointer.button_state &= ~1;
-            released_button = mascot_hotspot_button_left;
-        } else if (button == BTN_MIDDLE) {
-            active_pointer.button_state &= ~2;
-            released_button = mascot_hotspot_button_middle;
-        } else if (button == BTN_RIGHT) {
-            active_pointer.button_state &= ~4;
-            released_button = mascot_hotspot_button_right;
-        }
-
-        if (active_pointer.grabbed_surface && released_button == mascot_hotspot_button_left) {
-            active_pointer.dx = (active_pointer.x - active_pointer.temp_dx);
-            active_pointer.dy = (active_pointer.y - active_pointer.temp_dy);
-            mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
-        } else {
-            if (env_surface->mascot) {
-                if (env_surface->mascot->hotspot_active) {
-                    mascot_hotspot_hold(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, released_button, true);
-                    struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y);
-                    if (hotspot) {
-                        switch (hotspot->cursor) {
-                            case mascot_hotspot_cursor_pointer:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER;
-                                break;
-
-                            case mascot_hotspot_cursor_hand:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRAB;
-                                break;
-
-                            case mascot_hotspot_cursor_crosshair:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
-                                break;
-
-                            case mascot_hotspot_cursor_text:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
-                                break;
-
-                            case mascot_hotspot_cursor_move:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE;
-                                break;
-
-                            case mascot_hotspot_cursor_wait:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_WAIT;
-                                break;
-
-                            case mascot_hotspot_cursor_help:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_HELP;
-                                break;
-
-                            case mascot_hotspot_cursor_progress:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_PROGRESS;
-                                break;
-
-                            case mascot_hotspot_cursor_deny:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-                                break;
-
-                            default:
-                                active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-                                break;
-                        }
-                        if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-                            wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-                        }
-                    }
-                }
-            }
-        }
     }
 }
-
-static void on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
-{
-    UNUSED(data);
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->axis) {
-            return;
-        }
-        callbacks->pointer_listener->axis(callbacks->data, pointer, time, axis, value);
-    }
-}
-
-static void on_pointer_frame(void* data, struct wl_pointer* pointer)
-{
-    UNUSED(data);
-
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->frame) {
-            return;
-        }
-        callbacks->pointer_listener->frame(callbacks->data, pointer);
-    }
-}
-
-static void mascot_on_pointer_frame(void* data, struct wl_pointer* pointer)
-{
-    UNUSED(pointer);
-    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
-    if (env_surface) {
-        if (env_surface->env->root_environment_subsurface != env_surface) {
-            active_pointer.mascot_x = active_pointer.temp_x;
-            active_pointer.mascot_y = active_pointer.temp_y;
-            // Set also global position
-            // mascot_x/y is surface-local position, if we above a surface, temo_x/y is local position too
-            // Position of mascot surface is sum of mascot->X/Y->value.i and surface->pose->anchor_x/y
-            // To get global position, we need to add mascot_x/y to that sum
-            if (env_surface->mascot) {
-                active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x / env_surface->env->scale;
-                active_pointer.y = yconv(env_surface->env, env_surface->mascot->Y->value.i) + active_pointer.mascot_y + env_surface->pose->anchor_y / env_surface->env->scale;
-            }
-        } else {
-            active_pointer.x = active_pointer.temp_x;
-            active_pointer.y = active_pointer.temp_y;
-        }
-    }
-
-}
-
-static void on_pointer_axis_source(void* data, struct wl_pointer* pointer, uint32_t axis_source)
-{
-    UNUSED(data);
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->axis_source) {
-            return;
-        }
-        callbacks->pointer_listener->axis_source(callbacks->data, pointer, axis_source);
-    }
-}
-
-static void on_pointer_axis_stop(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis)
-{
-    UNUSED(data);
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->axis_stop) {
-            return;
-        }
-        callbacks->pointer_listener->axis_stop(callbacks->data, pointer, time, axis);
-    }
-}
-
-static void on_pointer_axis_discrete(void* data, struct wl_pointer* pointer, uint32_t axis, int32_t discrete)
-{
-    UNUSED(data);
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->axis_discrete) {
-            return;
-        }
-        callbacks->pointer_listener->axis_discrete(callbacks->data, pointer, axis, discrete);
-    }
-}
-
 static void mascot_on_pointer_axis(void* data, struct wl_pointer* pointer, uint32_t time, uint32_t axis, wl_fixed_t value)
 {
     UNUSED(pointer);
     UNUSED(axis);
     UNUSED(time);
     UNUSED(value);
-    environment_subsurface_t* env_surface = (environment_subsurface_t*)data;
+
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in mascot_on_pointer_enter!");
+    }
+
+    environment_subsurface_t* env_surface = environment_subsurface_from_surface(env_pointer->above_surface);
+    if (!env_surface) {
+        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_enter!");
+        return;
+    }
+
+    environment_t* env = environment_from_surface(env_pointer->above_surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in mascot_on_pointer_enter!");
+        return;
+    }
+
+    struct mascot * mascot = environment_subsurface_get_mascot(env_surface);
+    if (!mascot) {
+        WARN("Unexpected lack of mascot while we are in mascot_on_pointer_button!");
+        return;
+    }
+
     if (env_surface) {
-        mascot_hotspot_click(env_surface->mascot, active_pointer.mascot_x, active_pointer.mascot_y, mascot_hotspot_button_middle);
+        mascot_hotspot_click(env_surface->mascot, env_pointer->surface_x, env_pointer->surface_y, mascot_hotspot_button_middle);
     }
 }
 
-static void on_pointer_axis_value120(void* data, struct wl_pointer* pointer, uint32_t axis, int32_t value)
+static void environment_on_pointer_enter(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y)
 {
-    UNUSED(data);
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->axis_value120) {
-            return;
-        }
-        callbacks->pointer_listener->axis_value120(callbacks->data, pointer, axis, value);
+    UNUSED(serial);
+    UNUSED(pointer);
+    UNUSED(x);
+    UNUSED(y);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in environment_on_pointer_enter!");
+    }
+
+    environment_t* env = environment_from_surface(surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in environment_on_pointer_enter!");
+        return;
+    }
+
+    // Apply cursors
+    if (env_pointer->grabbed_subsurface || env->select_active) {
+        environment_pointer_apply_cursor(env_pointer, -1); // Will set current cursor
     }
 }
 
-static void on_pointer_axis_relative_direction(void* data, struct wl_pointer* pointer, uint32_t axis, uint32_t direction)
+static void environment_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
 {
-    UNUSED(data);
-    if (active_pointer.above_surface) {
-        struct environment_callbacks* callbacks = wl_surface_get_callbacks(active_pointer.above_surface);
-        if (!callbacks) {
-            return;
-        }
-        if (!callbacks->pointer_listener) {
-            return;
-        }
-        if (!callbacks->pointer_listener->axis_relative_direction) {
-            return;
-        }
-        callbacks->pointer_listener->axis_relative_direction(callbacks->data, pointer, axis, direction);
+    UNUSED(time);
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in environment_on_pointer_motion!");
+    }
+
+    environment_t * env = environment_from_surface(env_pointer->above_surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in environment_on_pointer_motion!");
+        return;
+    }
+
+    // Apply position as is
+    env_pointer->x = wl_fixed_to_int(x);
+    env_pointer->y = wl_fixed_to_int(y);
+}
+
+static void environment_on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface)
+{
+    UNUSED(serial);
+    UNUSED(pointer);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        ERROR("Critical! No pointer in environment_on_pointer_leave!");
+    }
+
+    environment_t* env = environment_from_surface(surface);
+    if (!env) {
+        WARN("Unexpected lack of env while we are in environment_on_pointer_leave!");
+        return;
+    }
+
+    // Apply cursors
+    if (env_pointer->grabbed_subsurface || env->select_active) {
+        environment_pointer_apply_cursor(env_pointer, -2); // Set cursor to default
     }
 }
 
@@ -1157,16 +1486,18 @@ static void on_seat_capabilities(void* data, struct wl_seat* seat, uint32_t capa
     UNUSED(data);
     if (capabilities & WL_SEAT_CAPABILITY_POINTER) {
         struct wl_pointer* pointer = wl_seat_get_pointer(seat);
-        wl_pointer_add_listener(pointer, &wl_pointer_listener, NULL);
-        if (cursor_shape_manager) {
-            active_pointer.cursor_shape_device = wp_cursor_shape_manager_v1_get_pointer(cursor_shape_manager, pointer);
-            active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-        }
+
+        // Create environment pointer
+        environment_pointer_t* env_pointer = allocate_env_pointer(ENVIRONMENT_POINTER_PROTOCOL_POINTER, pointer);
+
+        wl_pointer_add_listener(pointer, &wl_pointer_listener, env_pointer);
     }
-    // if (capabilities & WL_SEAT_CAPABILITY_TOUCH) {
-    //     struct wl_touch* touch = wl_seat_get_touch(seat);
-    //     wl_touch_add_listener(touch, &wl_touch_listener, NULL);
-    // }
+    if (capabilities & WL_SEAT_CAPABILITY_TOUCH) {
+        // struct wl_touch* touch = wl_seat_get_touch(seat);
+        // environment_pointer_t* env_pointer = allocate_env_pointer(ENVIRONMENT_POINTER_PROTOCOL_TOUCH, touch);
+
+        // wl_touch_add_listener(touch, &wl_touch_listener, env_pointer);
+    }
 }
 
 static void on_seat_name(void* data, struct wl_seat* seat, const char* name)
@@ -1221,13 +1552,41 @@ static void on_tool_done(void* data, struct zwp_tablet_tool_v2* tool)
 
 static void on_tool_removed(void* data, struct zwp_tablet_tool_v2* tool)
 {
-    UNUSED(data);
-    zwp_tablet_tool_v2_destroy(tool);
-    if (active_pointer.device_type == CURRENT_DEVICE_TYPE_PEN && active_pointer.button_state & 1 << 4 && active_pointer.grabbed_surface) {
-        mascot_drag_ended(active_pointer.grabbed_surface->mascot, false);
-        active_pointer.button_state &= ~(1 << 4);
-        active_pointer.grabbed_surface = NULL;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
     }
+
+    if (env_pointer->grabbed_subsurface) {
+        env_pointer->dx = (env_pointer->x - env_pointer->dx);
+        env_pointer->dy = (env_pointer->y - env_pointer->dy);
+        mascot_drag_ended(env_pointer->grabbed_subsurface->mascot, true);
+        env_pointer->grabbed_subsurface = NULL;
+        env_pointer->grabbed_subsurface->mascot = NULL;
+    }
+
+    struct wl_pointer_listener* surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->above_surface);
+
+    if (surface_pointer_callbacks) {
+
+        for (int i = 0; i < 4; i++) {
+            int32_t button = 1 << i;
+            if (button & env_pointer->buttons_state) {
+                if (surface_pointer_callbacks->button) {
+                    surface_pointer_callbacks->button((void*)env_pointer, NULL, 0, 0, button, WL_POINTER_BUTTON_STATE_RELEASED);
+                }
+            }
+        }
+
+        if (surface_pointer_callbacks->leave) {
+            surface_pointer_callbacks->leave((void*)env_pointer, NULL, env_pointer->enter_serial, env_pointer->above_surface);
+        }
+    }
+
+    env_pointer->above_surface = NULL;
+
+    free_env_pointer(env_pointer);
+    zwp_tablet_tool_v2_destroy(tool);
 }
 
 static void on_tool_proximity_in(void* data, struct zwp_tablet_tool_v2* tool, uint32_t serial, struct zwp_tablet_v2* tablet, struct wl_surface* surface)
@@ -1238,10 +1597,15 @@ static void on_tool_proximity_in(void* data, struct zwp_tablet_tool_v2* tool, ui
     UNUSED(tablet);
     UNUSED(serial);
 
-    if (active_pointer.grabbed_surface) return;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
 
-    active_pointer.device_type = CURRENT_DEVICE_TYPE_PEN;
-    active_pointer.above_surface = surface;
+    env_pointer->frame.mask |= EVENT_FRAME_SURFACE | EVENT_FRAME_PROXIMITY;
+    env_pointer->frame.surface_changed = surface;
+    env_pointer->frame.enter_serial = serial;
+
 }
 
 static void on_tool_proximity_out(void* data, struct zwp_tablet_tool_v2* tool)
@@ -1249,67 +1613,116 @@ static void on_tool_proximity_out(void* data, struct zwp_tablet_tool_v2* tool)
     UNUSED(data);
     UNUSED(tool);
 
-    if (active_pointer.grabbed_surface) {
-        mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
-        active_pointer.grabbed_surface = NULL;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
     }
-    active_pointer.above_surface = NULL;
+
+    if (env_pointer->grabbed_subsurface && why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
+        return;
+    }
+
+    env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
+    env_pointer->frame.surface_changed = NULL;
+    env_pointer->frame.enter_serial = 0;
 }
 
 static void on_tool_down(void* data, struct zwp_tablet_tool_v2* tool, uint32_t serial)
 {
-    UNUSED(data);
     UNUSED(tool);
-    UNUSED(serial);
 
-    if (active_pointer.grabbed_surface) return;
-
-    environment_subsurface_t* env_surface = NULL;
-    if (active_pointer.above_surface) env_surface = environment_subsurface_from_surface(active_pointer.above_surface);
-    if (env_surface) {
-        active_pointer.device_type = CURRENT_DEVICE_TYPE_PEN;
-        active_pointer.button_state |= 1 << 4;
-        if (env_surface->mascot) {
-            active_pointer.x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-            active_pointer.y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
-            active_pointer.temp_x = env_surface->mascot->X->value.i + active_pointer.mascot_x + env_surface->pose->anchor_x;
-            active_pointer.temp_y = env_surface->mascot->Y->value.i + active_pointer.mascot_y + env_surface->pose->anchor_y;
-            mascot_drag_started(env_surface->mascot, &active_pointer);
-        }
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
     }
+
+    env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
+    env_pointer->frame.buttons_pressed |= EVENT_FRAME_PRIMARY_BUTTON;
+    env_pointer->frame.buttons_released &= ~EVENT_FRAME_PRIMARY_BUTTON;
+    env_pointer->frame.enter_serial = serial;
 }
 
 static void on_tool_up(void* data, struct zwp_tablet_tool_v2* tool)
 {
-    UNUSED(data);
     UNUSED(tool);
 
-    if (active_pointer.grabbed_surface) {
-        mascot_drag_ended(active_pointer.grabbed_surface->mascot, true);
-        active_pointer.grabbed_surface = NULL;
-        active_pointer.above_surface = NULL;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
     }
-    active_pointer.button_state &= ~(1 << 4);
+
+    env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
+    env_pointer->frame.buttons_released |= EVENT_FRAME_PRIMARY_BUTTON;
+    env_pointer->frame.buttons_pressed &= ~EVENT_FRAME_PRIMARY_BUTTON;
+
 }
 
 static void on_tool_button(void* data, struct zwp_tablet_tool_v2* tool, uint32_t serial, uint32_t button, uint32_t state)
 {
-    UNUSED(data);
     UNUSED(tool);
     UNUSED(serial);
     UNUSED(button);
     UNUSED(state);
+    UNUSED(data);
+    WARN("Tablet button event not implemented");
 }
 
 static void on_tool_motion(void* data, struct zwp_tablet_tool_v2* tool, wl_fixed_t x, wl_fixed_t y)
 {
-    UNUSED(data);
     UNUSED(tool);
 
-    if (active_pointer.grabbed_surface) {
-        active_pointer.temp_x = wl_fixed_to_int(x);
-        active_pointer.temp_y = wl_fixed_to_int(y);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
     }
+
+    env_pointer->frame.mask |= EVENT_FRAME_MOTIONS;
+    env_pointer->frame.surface_local_x = x;
+    env_pointer->frame.surface_local_y = y;
+
+    if (why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
+        if (!env_pointer->grabbed_subsurface) {
+            // Now our coordinates is in global space, we to map them back to surface space
+            int32_t global_x = wl_fixed_to_int(x);
+            int32_t global_y = wl_fixed_to_int(y);
+
+            int32_t local_x;
+            int32_t local_y;
+
+            environment_t* env = environment_from_surface(env_pointer->above_surface);
+            if (!env) return;
+
+            struct environment_subsurface* env_subsurface = environment_subsurface_from_surface(env_pointer->above_surface);
+            if (!env_subsurface) return;
+
+            struct mascot* mascot = env_subsurface->mascot;
+            if (!mascot) return;
+
+            int32_t anchor_x = 0;
+            int32_t anchor_y = 0;
+
+            if (env_subsurface->pose) {
+                anchor_x = env_subsurface->pose->anchor_x;
+                anchor_y = env_subsurface->pose->anchor_y;
+            }
+
+            // Transform global coordinates to surface_local coordinates
+            local_x = global_x - anchor_x * env->scale - mascot->X->value.i;
+            local_y = global_y - anchor_y * env->scale - yconv(env, mascot->Y->value.i);
+
+            env_pointer->frame.surface_local_x = wl_fixed_from_int(local_x);
+            env_pointer->frame.surface_local_y = wl_fixed_from_int(local_y);
+        } else {
+            environment_t* env = environment_from_surface(env_pointer->above_surface);
+            if (!env) return;
+            if (env_pointer->above_surface == env_pointer->grabbed_subsurface->surface) {
+                env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
+                env_pointer->frame.surface_changed = env->root_surface->surface;
+                env_pointer->frame.enter_serial = env_pointer->enter_serial;
+            }
+        }
+    }
+
 }
 
 static void on_tool_pressure(void* data, struct zwp_tablet_tool_v2* tool, uint32_t pressure)
@@ -1340,28 +1753,39 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
     UNUSED(tool);
     UNUSED(time);
 
-    environment_subsurface_t* env_surface = NULL;
-    if (active_pointer.above_surface) env_surface = environment_subsurface_from_surface(active_pointer.above_surface);
-
-    if (active_pointer.grabbed_surface) {
-        active_pointer.x = active_pointer.temp_x;
-        active_pointer.y = active_pointer.temp_y;
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
         return;
     }
 
-    if (env_surface) {
-        if (env_surface->env) {
-            if (env_surface->env->root_environment_subsurface == env_surface) {
-                active_pointer.x = active_pointer.temp_x;
-                active_pointer.y = active_pointer.temp_y;
+    // Workaround for KDE
+    if (env_pointer->frame.mask & EVENT_FRAME_PROXIMITY) {
+        if (env_pointer->frame.mask & EVENT_FRAME_SURFACE) {
+            environment_t* env = environment_from_surface(env_pointer->frame.surface_changed);
+            if (!env) {
+                return;
             }
-        } else {
-            if (env_surface->pose) {
-                active_pointer.mascot_x = active_pointer.temp_x - env_surface->mascot->X->value.i - env_surface->pose->anchor_x;
-                active_pointer.mascot_y = active_pointer.temp_y - env_surface->mascot->Y->value.i - env_surface->pose->anchor_y;
+
+            struct wl_surface* surface = env_pointer->frame.surface_changed;
+
+            if (!env->select_active && is_root_surface(surface)) {
+                if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && mascot_by_coordinates) {
+                    why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
+                    WARN("WORKAROUND: zwp_tablet_v2 proximity_in events are received by parent in KDE, not by subsurface. Applying stupid workaround.");
+                }
+                if (mascot_by_coordinates) {
+                    struct mascot* mascot = mascot_by_coordinates(env, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
+                    if (mascot) {
+                        env_pointer->frame.surface_changed = mascot->subsurface->surface;
+                    }
+                }
             }
         }
     }
+
+
+    // Run pointer's frame, we do not implement this again;
+    on_pointer_frame(data, NULL);
 }
 
 static const struct zwp_tablet_tool_v2_listener zwp_tablet_tool_v2_listener = {
@@ -1394,7 +1818,9 @@ static void on_tool_added(void* data, struct zwp_tablet_seat_v2* tablet_seat, st
 {
     UNUSED(data);
     UNUSED(tablet_seat);
-    zwp_tablet_tool_v2_add_listener(tool, &zwp_tablet_tool_v2_listener, NULL);
+
+    environment_pointer_t* env_pointer = allocate_env_pointer(ENVIRONMENT_POINTER_PROTOCOL_TABLET, tool);
+    zwp_tablet_tool_v2_add_listener(tool, &zwp_tablet_tool_v2_listener, env_pointer);
 }
 
 static void on_pad_added(void* data, struct zwp_tablet_seat_v2* tablet_seat, struct zwp_tablet_pad_v2* pad)
@@ -1657,6 +2083,8 @@ enum environment_init_status environment_init(int flags,
         return ENV_INIT_ERROR_GENERIC;
     }
 
+    wl_region_subtract(empty_region, 0, 0, INT32_MAX, INT32_MAX);
+
     dispatch_envs_queue(envs);
     envs->post_init = true;
     envs->envs_count = 0;
@@ -1823,22 +2251,18 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
         return;
     }
 
-
-
     wl_surface_attach(surface->surface, sprite->buffer, 0, 0);
     wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-    if (active_pointer.grabbed_surface != surface) {
+    if (!surface->drag_pointer) {
         wl_surface_set_input_region(surface->surface, sprite->input_region);
     }
 
     if (!surface->pose) {
         wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
         if (surface->mascot) {
-            environment_subsurface_move(surface, surface->mascot->X->value.i, surface->mascot->Y->value.i, false);
+            environment_subsurface_set_position(surface, surface->mascot->X->value.i, yconv(surface->env, surface->mascot->Y->value.i));
         }
         wl_surface_commit(surface->surface);
-        wl_display_flush(display);
-        wl_display_dispatch_pending(display);
     }
     surface->pose = pose;
 
@@ -1858,7 +2282,7 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
         wl_surface_set_buffer_scale(surface->surface, surface->env->scale);
     }
 
-    environment_subsurface_move(surface, surface->mascot->X->value.i, surface->mascot->Y->value.i, false);
+    environment_subsurface_set_position(surface, surface->mascot->X->value.i, yconv(surface->env, surface->mascot->Y->value.i));
 
     surface->env->pending_commit = true;
 }
@@ -1961,20 +2385,18 @@ void environment_subsurface_drag(environment_subsurface_t* surface, environment_
         return;
     }
     surface->is_grabbed = true;
-    layer_surface_enable_input(surface->env->root_surface, true);
+    enable_input_on_environments(true);
     wl_surface_set_input_region(surface->surface, empty_region);
     wl_subsurface_place_above(surface->subsurface, surface->env->root_environment_subsurface->surface);
     surface->drag_pointer = pointer;
-    pointer->grabbed_surface = surface;
+    pointer->grabbed_subsurface = surface;
+    pointer->above_environment = surface->env;
 
-    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING;
-    if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-        wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-    }
+    environment_pointer_apply_cursor(pointer, mascot_hotspot_cursor_hand);
 
-    active_pointer.temp_dx = active_pointer.x;
-    active_pointer.temp_dy = active_pointer.y;
-    active_pointer.last_tick = 0;
+    pointer->dx = pointer->x;
+    pointer->dy = pointer->y;
+    pointer->reference_tick = 0;
 
     surface->env->pending_commit = true;
 }
@@ -1983,31 +2405,41 @@ void environment_subsurface_release(environment_subsurface_t* surface) {
     if (!surface->surface) return;
     if (!surface->pose) return;
     if (!surface->env) return;
+    if (!surface->drag_pointer) return;
+
     surface->is_grabbed = false;
-    layer_surface_enable_input(surface->env->root_surface, false);
+    enable_input_on_environments(false);
     wl_surface_set_input_region(surface->surface, surface->pose->sprite[surface->mascot->LookingRight->value.i]->input_region);
     wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
 
-    if (surface->drag_pointer) {
-        surface->drag_pointer->grabbed_surface = NULL;
-    }
+    environment_pointer_t* drag_pointer = surface->drag_pointer;
+    drag_pointer->grabbed_subsurface = NULL;
+    drag_pointer->above_environment = NULL;
+    environment_pointer_apply_cursor(drag_pointer, -2);
 
-    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
-    if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-        wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-    }
-
-    INFO("Dropped mascot at %d, %d", active_pointer.x, active_pointer.y);
-    if (active_pointer.x < 0 || active_pointer.y < 0 || active_pointer.x > (int32_t)environment_workarea_width(surface->env) || active_pointer.y > (int32_t)environment_workarea_height(surface->env)) {
+    if (drag_pointer->x < 0 || drag_pointer->y < 0 || drag_pointer->x > (int32_t)environment_workarea_width(surface->env) || drag_pointer->y > (int32_t)environment_workarea_height(surface->env)) {
         if (mascot_dropped_oob) {
-            mascot_dropped_oob(surface->mascot, active_pointer.x, active_pointer.y);
+            mascot_dropped_oob(surface->mascot, drag_pointer->x, drag_pointer->y);
         }
     }
 
     surface->env->pending_commit = true;
     surface->drag_pointer = NULL;
 }
-bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface, uint32_t tick) {
+
+void environment_pointer_update_delta(environment_subsurface_t* subsurface, uint32_t tick)
+{
+    if (!subsurface) return;
+    if (!subsurface->drag_pointer) return;
+    environment_pointer_t* pointer = subsurface->drag_pointer;
+    if (pointer->reference_tick+1 < tick) {
+        pointer->dx = pointer->x;
+        pointer->dy = pointer->y;
+        pointer->reference_tick = tick;
+    }
+}
+
+bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface) {
     if (!surface) return false;
     if (!surface->surface) return false;
     if (!surface->pose) return false;
@@ -2015,42 +2447,35 @@ bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface, u
     if (!surface->drag_pointer) return false;
     if (!surface->is_grabbed) return false;
 
-    if (active_pointer.last_tick+1 < tick) {
-    // if (1) {
-        active_pointer.temp_dx = active_pointer.x;
-        active_pointer.temp_dy = active_pointer.y;
-        active_pointer.last_tick = tick;
-    }
-
     environment_subsurface_set_position(surface, surface->drag_pointer->x, surface->drag_pointer->y);
     if (surface->mascot) mascot_moved(surface->mascot, surface->drag_pointer->x, yconv(surface->env, surface->drag_pointer->y));
     return true;
 }
 
-uint32_t environment_cursor_x(environment_t* env) {
+int32_t environment_cursor_x(environment_t* env) {
     UNUSED(env);
-    return active_pointer.grabbed_surface ? active_pointer.x : active_pointer.public_x;
+    return active_pointer->grabbed_subsurface ? active_pointer->x : active_pointer->public_x;
 }
 
-uint32_t environment_cursor_y(environment_t* env) {
+int32_t environment_cursor_y(environment_t* env) {
     UNUSED(env);
-    return active_pointer.grabbed_surface ? active_pointer.y : active_pointer.public_y;
+    return active_pointer->grabbed_subsurface ? active_pointer->y : active_pointer->public_y;
 }
 
 int32_t environment_cursor_dx(environment_t* env) {
     UNUSED(env);
-    return active_pointer.dx/2;
+    return active_pointer->dx/2;
 }
 
 int32_t environment_cursor_dy(environment_t* env) {
     UNUSED(env);
-    return -active_pointer.dy;
+    return -active_pointer->dy;
 }
 
 
-uint32_t environment_cursor_get_tick_diff(environment_pointer_t* pointer, uint32_t tick)
+int32_t environment_cursor_get_tick_diff(environment_pointer_t* pointer, uint32_t tick)
 {
-    return tick - pointer->last_tick;
+    return tick - pointer->reference_tick;
 }
 
 void environment_subsurface_unmap(environment_subsurface_t *surface)
@@ -2119,15 +2544,12 @@ void environment_subsurface_set_offset(environment_subsurface_t* surface, int32_
 
 }
 
-void environment_select_position(void (*callback)(environment_t*, int32_t, int32_t, environment_subsurface_t*, void*), void* data)
+void environment_select_position(environment_t* env, void (*callback)(environment_t*, int32_t, int32_t, environment_subsurface_t*, void*), void* data)
 {
-    active_pointer.select_callback = callback;
-    active_pointer.select_active = true;
-    active_pointer.select_data = data;
-    active_pointer.cursor_shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CROSSHAIR;
-    if (active_pointer.cursor_shape_device && active_pointer.pointer) {
-        wp_cursor_shape_device_v1_set_shape(active_pointer.cursor_shape_device, active_pointer.enter_serial, active_pointer.cursor_shape);
-    }
+    env->select_callback = callback;
+    env->select_active = callback != NULL;
+    env->select_data = data;
+    environment_pointer_apply_cursor(active_pointer, mascot_hotspot_cursor_crosshair);
 }
 
 void environment_set_input_state(environment_t* env, bool active)
@@ -2163,8 +2585,8 @@ const char* environment_get_error() {
 void environment_set_public_cursor_position(environment_t* env, int32_t x, int32_t y)
 {
     UNUSED(env);
-    active_pointer.public_x = x;
-    active_pointer.public_y = y;
+    active_pointer->public_x = x;
+    active_pointer->public_y = y;
 }
 
 void environment_set_ie(environment_t* env, struct ie_object *ie)
@@ -2178,7 +2600,7 @@ bool environment_pre_tick(environment_t* env, uint32_t tick)
 {
     if (!env) return false;
     if (env->ie) {
-        enum plugin_execution_result exec_res = plugin_execute(env->ie->parent_plugin, env->ie, &active_pointer.public_x, &active_pointer.public_y, tick);
+        enum plugin_execution_result exec_res = plugin_execute(env->ie->parent_plugin, env->ie, &active_pointer->public_x, &active_pointer->public_y, tick);
         if (exec_res != PLUGIN_EXEC_OK) {
             if (exec_res == PLUGIN_EXEC_SEGFAULT) {
                 ERROR("Plugin execution failed with SEGFAULT");
@@ -2303,19 +2725,22 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
 
     enum environment_move_result result = environment_move_ok;
 
-    if (active_pointer.above_surface) {
-        environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer.above_surface);
-        if (above_surface == surface) {
-            active_pointer.mascot_x = active_pointer.x - (dx + surface->pose->anchor_x);
-            active_pointer.mascot_y = active_pointer.y - (dy + surface->pose->anchor_y);
-            if ((int)active_pointer.mascot_x < 0 || (int)active_pointer.mascot_x > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
-                || (int)active_pointer.mascot_y < 0 || (int)active_pointer.mascot_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
-                active_pointer.mascot_x = 0;
-                active_pointer.mascot_y = 0;
-                active_pointer.above_surface = NULL;
+    if (active_pointer) {
+        if (active_pointer->above_surface) {
+            environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer->above_surface);
+            if (above_surface == surface && surface->pose) {
+                active_pointer->surface_x = active_pointer->x - (dx + surface->pose->anchor_x);
+                active_pointer->surface_y = active_pointer->y - (dy + surface->pose->anchor_y);
+                if ((int)active_pointer->surface_x < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
+                    || (int)active_pointer->surface_y < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
+                    active_pointer->surface_x = 0;
+                    active_pointer->surface_y = 0;
+                    active_pointer->above_surface = NULL;
+                }
             }
         }
     }
+
 
     int32_t surface_anchor_x = 0, surface_anchor_y = 0;
     surface_anchor_x = surface->offset_x;
@@ -2339,22 +2764,22 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
     return result;
 }
 
-uint32_t environment_screen_width(environment_t* env)
+int32_t environment_screen_width(environment_t* env)
 {
     return env->output.width / env->scale;
 }
 
-uint32_t environment_screen_height(environment_t* env)
+int32_t environment_screen_height(environment_t* env)
 {
     return env->output.height / env->scale;
 }
 
-uint32_t environment_workarea_width(environment_t* env)
+int32_t environment_workarea_width(environment_t* env)
 {
     return env->width;
 }
 
-uint32_t environment_workarea_height(environment_t* env)
+int32_t environment_workarea_height(environment_t* env)
 {
     return env->height;
 }
@@ -2408,4 +2833,67 @@ enum environment_border_type environment_get_border_type(environment_t *env, int
     else if (ie_border_type == environment_border_type_ceiling) return environment_border_type_ceiling;
     else if (ie_border_type == environment_border_type_floor) return environment_border_type_floor;
     else return environment_border_type_none;
+}
+
+
+void environment_set_broadcast_input_enabled_listener(void(*listener)(bool))
+{
+    env_broadcast_input_enabled = listener;
+}
+
+void environment_set_mascot_by_coords_callback(struct mascot* (*callback)(environment_t*, int32_t, int32_t))
+{
+    mascot_by_coordinates = callback;
+}
+
+bool environment_migrate_subsurface(environment_subsurface_t* surface, environment_t* env)
+{
+    if (!surface) return false;
+    if (!env) return false;
+
+    if (surface->env == env) return true;
+
+    const struct mascot_pose* pose = environment_subsurface_get_pose(surface);
+
+    // First, unmap the surface
+    environment_subsurface_unmap(surface);
+
+    // Next we change our vision of the environment
+    surface->env = env;
+
+    // Get all user data from the surface
+    struct wl_surface_data* userdata = wl_surface_get_user_data(surface->surface);
+
+    if (surface->viewport) wp_viewport_destroy(surface->viewport);
+    if (surface->fractional_scale) wp_fractional_scale_v1_destroy(surface->fractional_scale);
+    wl_subsurface_destroy(surface->subsurface);
+    wl_surface_destroy(surface->surface);
+
+    // Create new surface and subsurface
+    surface->surface = wl_compositor_create_surface(compositor);
+    if (!surface->surface) ERROR("Failed to create surface!");
+
+    surface->subsurface = wl_subcompositor_get_subsurface(subcompositor, surface->surface, env->root_surface->surface);
+    if (!surface->subsurface) ERROR("Failed to create subsurface!");
+
+    if (viewporter) {
+        surface->viewport = wp_viewporter_get_viewport(viewporter, surface->surface);
+        if (!surface->viewport) ERROR("Failed to create viewport!");
+    }
+
+    if (env->output.scale && (!fractional_manager || !viewporter)) {
+        wl_surface_set_buffer_scale(surface->surface, env->output.scale);
+    }
+
+    wl_surface_set_data(surface->surface, userdata->role, surface, env);
+    wl_surface_attach_callbacks(surface->surface, userdata->callbacks);
+
+    free(userdata);
+
+    // Map the surface again
+    environment_subsurface_attach(surface, pose);
+
+    return true;
+
+    // Subsurface stays unmapped until new pose is set
 }

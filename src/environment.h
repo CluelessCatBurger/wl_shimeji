@@ -101,26 +101,29 @@ void environment_subsurface_release(environment_subsurface_t* surface);
 void environment_subsurface_unmap(environment_subsurface_t* surface);
 void environment_subsurface_reorder(environment_subsurface_t* surface, environment_subsurface_t* sibling, bool above);
 
+void environment_pointer_update_delta(environment_subsurface_t* subsurface, uint32_t tick);
+
 void environment_subsurface_attach(environment_subsurface_t* surface, const struct mascot_pose* pose);
 enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback);
 enum environment_move_result environment_subsurface_set_position(environment_subsurface_t* surface, int32_t dx, int32_t dy);
 environment_t* environment_subsurface_get_environment(environment_subsurface_t* surface);
-bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface, uint32_t tick);
+bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface);
 void environment_subsurface_set_offset(environment_subsurface_t* surface, int32_t x, int32_t y);
 void environment_subsurface_associate_mascot(environment_subsurface_t* surface, struct mascot* mascot_ptr);
 struct mascot* environment_subsurface_get_mascot(environment_subsurface_t* surface);
 const struct mascot_pose* environment_subsurface_get_pose(environment_subsurface_t* surface);
+bool environment_migrate_subsurface(environment_subsurface_t* surface, environment_t* env);
 
 // Environment info
-uint32_t environment_screen_width(environment_t* env);
-uint32_t environment_screen_height(environment_t* env);
-uint32_t environment_workarea_width(environment_t* env);
-uint32_t environment_workarea_height(environment_t* env);
-uint32_t environment_cursor_x(environment_t* env);
-uint32_t environment_cursor_y(environment_t* env);
+int32_t environment_screen_width(environment_t* env);
+int32_t environment_screen_height(environment_t* env);
+int32_t environment_workarea_width(environment_t* env);
+int32_t environment_workarea_height(environment_t* env);
+int32_t environment_cursor_x(environment_t* env);
+int32_t environment_cursor_y(environment_t* env);
 int32_t environment_cursor_dx(environment_t* env);
 int32_t environment_cursor_dy(environment_t* env);
-uint32_t environment_cursor_get_tick_diff(environment_pointer_t* pointer, uint32_t tick);
+int32_t environment_cursor_get_tick_diff(environment_pointer_t* pointer, uint32_t tick);
 uint32_t environment_id(environment_t* env);
 const char* environment_name(environment_t* env);
 const char* environment_desc(environment_t* env);
@@ -128,7 +131,7 @@ bool environment_logical_position(environment_t* env, int32_t* lx, int32_t* ly);
 bool environment_logical_size(environment_t* env, int32_t* lw, int32_t* lh);
 
 // After click on overlay, callback is calling providing absolute click position, and subsurface it was clicked on (if any)
-void environment_select_position(void (*callback)(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data), void* data);
+void environment_select_position(environment_t* env, void (*callback)(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data), void* data);
 void environment_set_input_state(environment_t* env, bool active);
 
 float environment_screen_scale(environment_t* env);
@@ -149,5 +152,9 @@ bool environment_ie_allows_move(environment_t* env);
 bool environment_ie_throw(environment_t* env, float x_velocity, float y_velocity, float gravity, uint32_t tick);
 bool environment_ie_stop_movement(environment_t* env);
 bool environment_ie_restore(environment_t* env);
+
+// Misc
+void environment_set_broadcast_input_enabled_listener(void(*listener)(bool));
+void environment_set_mascot_by_coords_callback(struct mascot* (*callback)(environment_t*, int32_t, int32_t));
 
 #endif

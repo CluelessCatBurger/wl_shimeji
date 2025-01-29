@@ -155,7 +155,11 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
                 ERROR("Could not create atlas from dir \"%s\": Allocation failed for spng_ctx", dirname);
             }
             char filepath[256] = {0};
-            snprintf(filepath, 256, "%s/%s", dirname, direntry->d_name);
+            size_t printed = snprintf(filepath, 256, "%s/%s", dirname, direntry->d_name);
+            if (printed >= 256) {
+                WARN("Could not create atlas from dir \"%s\": Path too long for sprite %s", dirname, direntry->d_name);
+                continue;
+            }
             filelist[local_ecount-1] = fopen(filepath, "r");
             if (!filelist[local_ecount-1]) {
                 WARN("Could not create atlas from dir \"%s\": Some error prevented sprites from opening: %s", dirname, strerrordesc_np(errno));

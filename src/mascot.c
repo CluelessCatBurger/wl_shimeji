@@ -716,13 +716,10 @@ bool mascot_drag_ended(struct mascot* mascot, bool throw)
 // Set the environment of the mascot
 bool mascot_environment_changed(struct mascot* mascot, environment_t* env)
 {
+    if (!env) ERROR("MascotEnvironmentChanged: mascot is NULL");
     INFO("<Mascot:%s:%u> Environment changed", mascot->prototype->name, mascot->id);
     mascot->environment = env;
-    environment_destroy_subsurface(mascot->subsurface);
-    mascot->subsurface = environment_create_subsurface(env);
-    environment_subsurface_associate_mascot(mascot->subsurface, mascot);
-    mascot_reattach_pose(mascot);
-    return true;
+    return environment_migrate_subsurface(mascot->subsurface, env);
 }
 
 struct mascot* mascot_new

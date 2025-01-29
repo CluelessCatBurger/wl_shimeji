@@ -141,7 +141,7 @@ enum mascot_tick_result resist_action_tick(struct mascot *mascot, struct mascot_
     int posx = mascot->X->value.i;
     int posy = mascot->Y->value.i;
 
-    environment_subsurface_move_to_pointer(mascot->subsurface, tick);
+    environment_pointer_update_delta(mascot->subsurface, tick);
 
     if (abs(mascot->X->value.i - posx) >= 5 || abs(mascot->Y->value.i - posy) >= 5) {
         mascot->dragged_tick = tick;
