@@ -8,8 +8,8 @@ override PLUGINS_TARGET = $(BUILDDIR)/libpluginsupport.so
 
 PREFIX ?= /usr/local
 
-override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -O2 -Wall -Wextra -fno-strict-aliasing
-override LDFLAGS += $(shell pkg-config wayland-client spng --libs) -lm
+override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
+override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor spng --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
 override WLR_PROTOCOLS_DIR = $(shell pkg-config wlr-protocols --variable=pkgdatadir)
