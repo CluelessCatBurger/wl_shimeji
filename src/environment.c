@@ -36,6 +36,10 @@
 #include "list.h"
 #include <wayland-cursor.h>
 
+// Workarounds section (SMH my head hyprland)
+bool we_on_hyprland = false;
+bool we_on_kde = false;
+
 bool why_tablet_v2_proximity_in_events_received_by_parent_question_mark = false;
 
 struct wl_display* display = NULL;
@@ -559,7 +563,7 @@ bool environment_pointer_apply_cursor(environment_pointer_t* pointer, int32_t cu
         }
     }
 
-    if (pointer->cursor_shape_device && cursor_shape != (int32_t)pointer->current_shape) {
+    if (pointer->cursor_shape_device) {
         wp_cursor_shape_device_v1_set_shape(pointer->cursor_shape_device, pointer->enter_serial, cursor_shape);
         pointer->current_shape = cursor_shape;
         return true;
@@ -571,17 +575,14 @@ bool environment_pointer_apply_cursor(environment_pointer_t* pointer, int32_t cu
 
     image = cursor->images[0];
 
-    if (pointer->cursor != cursor) {
-        if (pointer->protocol == ENVIRONMENT_POINTER_PROTOCOL_POINTER) {
-            wl_pointer_set_cursor(pointer->device.pointer, pointer->enter_serial, pointer->above_surface, image->hotspot_x, image->hotspot_y);
-        } else if (pointer->protocol == ENVIRONMENT_POINTER_PROTOCOL_TABLET) {
-            zwp_tablet_tool_v2_set_cursor(pointer->device.tablet, pointer->enter_serial, pointer->above_surface, image->hotspot_x, image->hotspot_y);
-        }
-        pointer->cursor = cursor;
-        return true;
+    if (pointer->protocol == ENVIRONMENT_POINTER_PROTOCOL_POINTER) {
+        wl_pointer_set_cursor(pointer->device.pointer, pointer->enter_serial, pointer->above_surface, image->hotspot_x, image->hotspot_y);
+    } else if (pointer->protocol == ENVIRONMENT_POINTER_PROTOCOL_TABLET) {
+        zwp_tablet_tool_v2_set_cursor(pointer->device.tablet, pointer->enter_serial, pointer->above_surface, image->hotspot_x, image->hotspot_y);
     }
+    pointer->cursor = cursor;
+    return true;
 
-    return false;
 }
 
 environment_pointer_t* allocate_env_pointer(int32_t protocol, void* proxy_object)
@@ -1022,9 +1023,16 @@ static void on_pointer_frame(void* data, struct wl_pointer* pointer)
     // Workaround for hyprland
     if (env_pointer->grabbed_subsurface) {
         if ((env_pointer->frame.mask & (EVENT_FRAME_BUTTONS | EVENT_FRAME_SURFACE)) == (EVENT_FRAME_BUTTONS | EVENT_FRAME_SURFACE)) {
-            if (env_pointer->above_surface == env_pointer->grabbed_subsurface->surface) {
+            if (env_pointer->above_surface == env_pointer->grabbed_subsurface->surface && env_pointer->frame.surface_changed) {
                 env_pointer->frame.mask &= ~EVENT_FRAME_BUTTONS;
             }
+        }
+    }
+    if (we_on_hyprland) {
+        // Empty frame, sent on mascot release
+        if (!env_pointer->frame.mask) {
+            env_pointer->frame.mask = EVENT_FRAME_BUTTONS;
+            env_pointer->frame.buttons_released = EVENT_FRAME_PRIMARY_BUTTON;
         }
     }
 
@@ -1176,10 +1184,7 @@ static void mascot_on_pointer_enter(void* data, struct wl_pointer* pointer, uint
         return;
     }
 
-    // Apply cursors
-    if (env_pointer->grabbed_subsurface || env->select_active) {
-        environment_pointer_apply_cursor(env_pointer, -1); // Will set current cursor
-    }
+    environment_pointer_apply_cursor(env_pointer, -1);
 }
 
 static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
@@ -1212,20 +1217,37 @@ static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uin
     int32_t global_x;
     int32_t global_y;
 
-    int32_t anchor_x = 0;
-    int32_t anchor_y = 0;
-
-    if (env_surface->pose) {
-        anchor_x = env_surface->pose->anchor_x;
-        anchor_y = env_surface->pose->anchor_y;
-    }
-
     // Transform surface_local coordinates to global coordinates
     // global_x = env_surface->pose->anchor_x + wl_fixed_to_int(x) + env_surface->mascot->X->value.i;
     // global_y = env_surface->pose->anchor_y + wl_fixed_to_int(y) + env_surface->mascot->Y->value.i;
 
-    global_x = mascot->X->value.i + wl_fixed_to_int(x) + anchor_x / env_surface->env->scale;
-    global_y = yconv(env_surface->env, mascot->Y->value.i) + wl_fixed_to_int(y) + anchor_y / env_surface->env->scale;
+    bool is_dragged_surface = false;
+    if (env_pointer->grabbed_subsurface) {
+        if (env_pointer->grabbed_subsurface->surface == env_pointer->above_surface) {
+            is_dragged_surface = true;
+        }
+    }
+
+    if (is_dragged_surface) {
+        // Previous position
+        global_x = env_pointer->x;
+        global_y = env_pointer->y;
+
+        global_x += wl_fixed_to_int(x) - env_pointer->surface_x;
+        global_y += wl_fixed_to_int(y) - env_pointer->surface_y;
+    } else {
+        int32_t anchor_x = 0;
+        int32_t anchor_y = 0;
+
+        if (env_surface->pose) {
+            anchor_x = env_surface->pose->anchor_x;
+            anchor_y = env_surface->pose->anchor_y;
+        }
+
+        global_x = mascot->X->value.i + wl_fixed_to_int(x) + anchor_x / env_surface->env->scale;
+        global_y = yconv(env_surface->env, mascot->Y->value.i) + wl_fixed_to_int(y) + anchor_y / env_surface->env->scale;
+    }
+
 
     env_pointer->x = global_x;
     env_pointer->y = global_y;
@@ -1235,6 +1257,8 @@ static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uin
     // Get hotspot
     struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
     if (hotspot && !(env_pointer->grabbed_subsurface || env->select_active)) environment_pointer_apply_cursor(env_pointer, hotspot->cursor);
+    else if (!hotspot && !(env_pointer->grabbed_subsurface || env->select_active)) environment_pointer_apply_cursor(env_pointer, -2);
+    else environment_pointer_apply_cursor(env_pointer, -1);
 }
 
 
@@ -1298,7 +1322,6 @@ static void mascot_on_pointer_leave(void* data, struct wl_pointer* pointer, uint
 
     // Apply cursors
     if (env_pointer->grabbed_subsurface || env->select_active) {
-        environment_pointer_apply_cursor(env_pointer, -2); // Set cursor to default
         mascot_hotspot_hold(env_surface->mascot, 0, 0, 0, true);
     }
 }
@@ -1359,6 +1382,8 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
                 struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(mascot, env_pointer->surface_x, env_pointer->surface_y);
                 if (hotspot) {
                     environment_pointer_apply_cursor(env_pointer, hotspot->cursor);
+                } else {
+                    environment_pointer_apply_cursor(env_pointer, -2);
                 }
             } else {
                 environment_pointer_apply_cursor(env_pointer, -2);
@@ -1419,10 +1444,7 @@ static void environment_on_pointer_enter(void* data, struct wl_pointer* pointer,
         return;
     }
 
-    // Apply cursors
-    if (env_pointer->grabbed_subsurface || env->select_active) {
-        environment_pointer_apply_cursor(env_pointer, -1); // Will set current cursor
-    }
+    environment_pointer_apply_cursor(env_pointer, -1);
 }
 
 static void environment_on_pointer_motion(void* data, struct wl_pointer* pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y)
@@ -1443,6 +1465,8 @@ static void environment_on_pointer_motion(void* data, struct wl_pointer* pointer
     // Apply position as is
     env_pointer->x = wl_fixed_to_int(x);
     env_pointer->y = wl_fixed_to_int(y);
+
+    environment_pointer_apply_cursor(env_pointer, -1);
 }
 
 static void environment_on_pointer_leave(void* data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface)
@@ -1460,10 +1484,6 @@ static void environment_on_pointer_leave(void* data, struct wl_pointer* pointer,
         return;
     }
 
-    // Apply cursors
-    if (env_pointer->grabbed_subsurface || env->select_active) {
-        environment_pointer_apply_cursor(env_pointer, -2); // Set cursor to default
-    }
 }
 
 static const struct wl_pointer_listener wl_pointer_listener = {
@@ -2034,6 +2054,20 @@ enum environment_init_status environment_init(int flags,
     void(*orph_listener)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
 )
 {
+
+    const char* session = getenv("XDG_CURRENT_DESKTOP");
+    if (session) {
+        if (!strcmp(session, "KDE")) {
+            WARN("KDE session detected, applying workaround for tablet proximity_in events");
+            why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
+            we_on_kde = true;
+        }
+        if (!strcmp(session, "Hyprland")) {
+            WARN("Hyprland session detected, applying workaround for mascot dragging");
+            we_on_hyprland = true;
+        }
+    }
+
     // Wayland display connection and etc
     display = wl_display_connect(NULL);
     if (!display) {
@@ -2725,21 +2759,21 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
 
     enum environment_move_result result = environment_move_ok;
 
-    if (active_pointer) {
-        if (active_pointer->above_surface) {
-            environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer->above_surface);
-            if (above_surface == surface && surface->pose) {
-                active_pointer->surface_x = active_pointer->x - (dx + surface->pose->anchor_x);
-                active_pointer->surface_y = active_pointer->y - (dy + surface->pose->anchor_y);
-                if ((int)active_pointer->surface_x < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
-                    || (int)active_pointer->surface_y < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
-                    active_pointer->surface_x = 0;
-                    active_pointer->surface_y = 0;
-                    active_pointer->above_surface = NULL;
-                }
-            }
-        }
-    }
+    // if (active_pointer) {
+    //     if (active_pointer->above_surface) {
+    //         environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer->above_surface);
+    //         if (above_surface == surface && surface->pose) {
+    //             active_pointer->surface_x = active_pointer->x - (dx + surface->pose->anchor_x);
+    //             active_pointer->surface_y = active_pointer->y - (dy + surface->pose->anchor_y);
+    //             if ((int)active_pointer->surface_x < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
+    //                 || (int)active_pointer->surface_y < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
+    //                 active_pointer->surface_x = 0;
+    //                 active_pointer->surface_y = 0;
+    //                 active_pointer->above_surface = NULL;
+    //             }
+    //         }
+    //     }
+    // }
 
 
     int32_t surface_anchor_x = 0, surface_anchor_y = 0;
