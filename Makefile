@@ -90,6 +90,7 @@ $(TARGET): $(OBJS)
 
 # Rule to build shimejictl
 $(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/shimejictl.py
+	mkdir utils
 	$(PYTHON3) scripts/py-compose.py -s $< -o $@
 
 $(SRC): protocols-autogen
