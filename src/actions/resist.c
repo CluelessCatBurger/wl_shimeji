@@ -154,6 +154,9 @@ enum mascot_tick_result resist_action_tick(struct mascot *mascot, struct mascot_
     int posx = aux_data->prev_x;
     int posy = aux_data->prev_y;
 
+    aux_data->prev_x = mascot->X->value.i;
+    aux_data->prev_y = mascot->Y->value.i;
+
     environment_pointer_update_delta(mascot->subsurface, tick);
 
     if (abs(mascot->X->value.i - posx) >= 5 || abs(mascot->Y->value.i - posy) >= 5) {
