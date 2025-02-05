@@ -11,8 +11,8 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
 # Requirements
 
 ## Build requirements
-- libspng
-  - Arch: `pacman -S libspng`
+- python-pillow
+  - Arch: `pacman -S python-pillow`
 - libwayland-client:
   - Arch: `pacman -S wayland`
 - wayland-protocols:
