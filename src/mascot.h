@@ -487,6 +487,9 @@ struct mascot {
     pthread_mutex_t tick_lock;
     uint16_t refcounter;
 
+    // Auxiliary data for the actions
+    void* action_data;
+
 };
 
 

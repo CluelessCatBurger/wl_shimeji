@@ -20,6 +20,11 @@
 #include "dragging.h"
 #include "environment.h"
 
+struct dragging_aux_data {
+    int32_t prev_x;
+    int32_t prev_y;
+};
+
 enum mascot_tick_result dragging_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     UNUSED(tick);
@@ -71,6 +76,11 @@ enum mascot_tick_result dragging_action_init(struct mascot *mascot, struct masco
 
     mascot_announce_affordance(mascot, NULL);
 
+    free(mascot->action_data);
+    mascot->action_data = calloc(1, sizeof(struct dragging_aux_data));
+    struct dragging_aux_data* aux_data = (struct dragging_aux_data*)mascot->action_data;
+    aux_data->prev_x = mascot->X->value.i;
+    aux_data->prev_y = mascot->Y->value.i;
     return mascot_tick_ok;
 }
 
@@ -134,8 +144,13 @@ enum mascot_tick_result dragging_action_tick(struct mascot *mascot, struct masco
 {
     UNUSED(actionref);
 
-    int posx = mascot->X->value.i;
-    int posy = mascot->Y->value.i;
+    struct dragging_aux_data* aux_data = (struct dragging_aux_data*)mascot->action_data;
+
+    int posx = aux_data->prev_x;
+    int posy = aux_data->prev_y;
+
+    aux_data->prev_x = mascot->X->value.i;
+    aux_data->prev_y = mascot->Y->value.i;
 
     environment_pointer_update_delta(mascot->subsurface, tick);
 
@@ -147,10 +162,6 @@ enum mascot_tick_result dragging_action_tick(struct mascot *mascot, struct masco
     int new_x = mascot->X->value.i;
     int foot_x = mascot->FootX->value.i;
     int foot_dx = mascot->FootDX->value.i;
-
-    DEBUG("FOOTX %d", mascot->FootX->value.i);
-    DEBUG("FOOTDX %d", mascot->FootDX->value.i);
-    DEBUG("CURSORX %d", mascot->X->value.i);
 
     mascot->FootDX->value.i = (foot_dx + (new_x - foot_x) * 0.1) * 0.8;
     mascot->FootX->value.i = foot_x + (mascot->FootDX->value.i);
@@ -164,4 +175,6 @@ void dragging_action_clean(struct mascot *mascot)
     mascot->frame_index = 0;
     mascot->next_frame_tick = 0;
     mascot->action_duration = 0;
+    free(mascot->action_data);
+    mascot->action_data = NULL;
 }

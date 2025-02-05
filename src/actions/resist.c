@@ -18,7 +18,12 @@
 */
 
 #include "actionbase.h"
-#include "dragging.h"
+#include "resist.h"
+
+struct resist_aux_data {
+    int32_t prev_x;
+    int32_t prev_y;
+};
 
 enum mascot_tick_result resist_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
@@ -73,6 +78,12 @@ enum mascot_tick_result resist_action_init(struct mascot *mascot, struct mascot_
 
     mascot_announce_affordance(mascot, NULL);
     mascot->state = mascot_state_drag_resist;
+
+    free(mascot->action_data);
+    mascot->action_data = calloc(1, sizeof(struct resist_aux_data));
+    struct resist_aux_data* aux_data = (struct resist_aux_data*)mascot->action_data;
+    aux_data->prev_x = mascot->X->value.i;
+    aux_data->prev_y = mascot->Y->value.i;
 
     return mascot_tick_ok;
 }
@@ -138,13 +149,16 @@ enum mascot_tick_result resist_action_tick(struct mascot *mascot, struct mascot_
 {
     UNUSED(actionref);
 
-    int posx = mascot->X->value.i;
-    int posy = mascot->Y->value.i;
+    struct resist_aux_data* aux_data = (struct resist_aux_data*)mascot->action_data;
+
+    int posx = aux_data->prev_x;
+    int posy = aux_data->prev_y;
 
     environment_pointer_update_delta(mascot->subsurface, tick);
 
     if (abs(mascot->X->value.i - posx) >= 5 || abs(mascot->Y->value.i - posy) >= 5) {
         mascot->dragged_tick = tick;
+        resist_action_clean(mascot);
         mascot_set_behavior(mascot, mascot->prototype->drag_behavior);
         return mascot_tick_reenter;
     }
@@ -157,4 +171,6 @@ void resist_action_clean(struct mascot *mascot)
     mascot->frame_index = 0;
     mascot->next_frame_tick = 0;
     mascot->action_duration = 0;
+    free(mascot->action_data);
+    mascot->action_data = NULL;
 }

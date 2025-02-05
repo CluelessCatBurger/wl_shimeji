@@ -808,6 +808,9 @@ void mascot_unlink(struct mascot* mascot)
         plugin_execute_ie_detach_mascot(mascot->associated_ie->parent_plugin, mascot->associated_ie, mascot);
     }
     mascot_detach_affordance_manager(mascot);
+
+    free(mascot->action_data);
+
     pthread_mutex_unlock(&mascot->tick_lock);
     pthread_mutex_destroy(&mascot->tick_lock);
 
@@ -905,6 +908,9 @@ static void mascot_init_(struct mascot* mascot, const struct mascot_prototype* p
     mascot->hotspot_behavior = NULL;
 
     mascot->associated_ie = NULL;
+
+    free(mascot->action_data);
+    mascot->action_data = NULL;
 
 }
 
