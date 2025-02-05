@@ -1688,7 +1688,29 @@ int main(int argc, const char** argv)
                 // Wayland event
                 if (environment_dispatch() == -1) {
                     LOG("ERROR", RED, "Failed to dispatch wayland events!");
-                    break;
+                    pthread_mutex_lock(&mascot_store.mutex);
+                    for (size_t i = 0; i < mascot_store.entry_count; i++) {
+                        if (mascot_store.entry_states[i]) {
+                            struct mascot* mascot = mascot_store.entries[i];
+                            mascot_announce_affordance(mascot, NULL);
+                            mascot_detach_affordance_manager(mascot);
+                            mascot_store.entry_states[i] = 0;
+                            mascot_store.entries[i] = NULL;
+                            mascot_store.used_count--;
+                            mascot_unlink(mascot);
+                        }
+                    }
+                    pthread_mutex_unlock(&mascot_store.mutex);
+                    pthread_mutex_lock(&environment_store.mutex);
+                    for (size_t i = 0; i < environment_store.entry_count; i++) {
+                        if (environment_store.entry_states[i]) {
+                            struct environment* env = environment_store.entries[i];
+                            environment_commit(env);
+                        }
+                    }
+                    pthread_mutex_unlock(&environment_store.mutex);
+                    environment_dispatch();
+                    return 1;
                 }
             }
         }
