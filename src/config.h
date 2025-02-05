@@ -35,6 +35,10 @@
 #define CONFIG_PARAM_TICK_DELAY_ID 9
 #define CONFIG_PARAM_OVERLAY_LAYER 10
 
+#define POINTER_PRIMARY_BUTTON 0x01
+#define POINTER_SECONDARY_BUTTON 0x02
+#define POINTER_THIRD_BUTTON 0x04
+
 struct config {
     bool breeding;
     bool dragging;
@@ -49,6 +53,29 @@ struct config {
 
     uint32_t mascot_limit;
     int32_t ie_throw_policy;
+
+    // Button mappings
+    int32_t pointer_left_value;
+    int32_t pointer_right_value;
+    int32_t pointer_middle_value;
+
+    // Tablets config
+    bool enable_tablets;
+
+    // Mappings for tool up/down events
+    int32_t on_tool_pen_value;
+    int32_t on_tool_eraser_value;
+    int32_t on_tool_brush_value;
+    int32_t on_tool_pencil_value;
+    int32_t on_tool_airbrush_value;
+    int32_t on_tool_finger_value;
+    int32_t on_tool_lens_value;
+    int32_t on_tool_mouse_value;
+
+    // Mappings for tool button events
+    int32_t on_tool_button1_value;
+    int32_t on_tool_button2_value;
+    int32_t on_tool_button3_value;
 };
 
 // Uses global variable
@@ -66,6 +93,21 @@ bool config_set_allow_dismiss_animations(bool value);
 bool config_set_per_mascot_interactions(bool value);
 bool config_set_tick_delay(uint32_t value);
 bool config_set_overlay_layer(int32_t value);
+bool config_set_tablets_enabled(bool value);
+bool config_set_pointer_left_button(int32_t value);
+bool config_set_pointer_right_button(int32_t value);
+bool config_set_pointer_middle_button(int32_t value);
+bool config_set_on_tool_pen(int32_t value);
+bool config_set_on_tool_eraser(int32_t value);
+bool config_set_on_tool_brush(int32_t value);
+bool config_set_on_tool_pencil(int32_t value);
+bool config_set_on_tool_airbrush(int32_t value);
+bool config_set_on_tool_finger(int32_t value);
+bool config_set_on_tool_lens(int32_t value);
+bool config_set_on_tool_mouse(int32_t value);
+bool config_set_on_tool_button1(int32_t value);
+bool config_set_on_tool_button2(int32_t value);
+bool config_set_on_tool_button3(int32_t value);
 
 bool config_get_breeding();
 bool config_get_dragging();
@@ -78,5 +120,20 @@ bool config_get_allow_dismiss_animations();
 bool config_get_per_mascot_interactions();
 uint32_t config_get_tick_delay();
 int32_t config_get_overlay_layer();
+bool config_get_tablets_enabled();
+uint32_t config_get_pointer_left_button();
+uint32_t config_get_pointer_right_button();
+uint32_t config_get_pointer_middle_button();
+uint32_t config_get_on_tool_pen();
+uint32_t config_get_on_tool_eraser();
+uint32_t config_get_on_tool_brush();
+uint32_t config_get_on_tool_pencil();
+uint32_t config_get_on_tool_airbrush();
+uint32_t config_get_on_tool_finger();
+uint32_t config_get_on_tool_lens();
+uint32_t config_get_on_tool_mouse();
+uint32_t config_get_on_tool_button1();
+uint32_t config_get_on_tool_button2();
+uint32_t config_get_on_tool_button3();
 
 #endif

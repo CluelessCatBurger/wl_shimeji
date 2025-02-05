@@ -171,11 +171,11 @@ struct environment_subsurface {
 #define EVENT_FRAME_PROXIMITY 0x10
 
 // Primary button, usually left mouse button, on tablets and touchscreens corresponds to the down event
-#define EVENT_FRAME_PRIMARY_BUTTON 0x01
-#define EVENT_FRAME_SECONDARY_BUTTON 0x02
+#define EVENT_FRAME_PRIMARY_BUTTON POINTER_PRIMARY_BUTTON
+#define EVENT_FRAME_SECONDARY_BUTTON POINTER_SECONDARY_BUTTON
 #define EVENT_FRAME_THIRD_BUTTON 0x04
 // Button id passed with mask 0xFFFFFFF0, shifted right by 0xF (unused)
-#define EVENT_FRAME_MISC_BUTTON 0x08
+#define EVENT_FRAME_MISC_BUTTON POINTER_THIRD_BUTTON
 
 struct environment_event_frame {
     uint32_t mask;
@@ -219,6 +219,9 @@ struct environment_pointer {
         struct wl_touch* touch;
     } device;
 
+    // Device aux data
+    void* aux_data;
+
     uint32_t enter_serial;
     uint32_t buttons_state;
 
@@ -237,7 +240,9 @@ struct environment_pointer {
 };
 
 // Pointer with most recent activity
-environment_pointer_t* active_pointer = NULL;
+environment_pointer_t default_active_pointer = {0};
+environment_pointer_t* active_pointer = &default_active_pointer;
+
 #define ACTIVATE_POINTER(pointer) active_pointer = pointer
 
 static uint32_t yconv(environment_t* env, uint32_t y);
@@ -620,7 +625,15 @@ void free_env_pointer(environment_pointer_t* pointer)
     if (!pointer) return;
 
     if (active_pointer == pointer) {
-        active_pointer = NULL;
+        active_pointer = &default_active_pointer;
+        active_pointer->x = pointer->x;
+        active_pointer->y = pointer->y;
+        active_pointer->public_x = pointer->public_x;
+        active_pointer->public_y = pointer->public_y;
+        active_pointer->dx = pointer->dx;
+        active_pointer->dy = pointer->dy;
+        active_pointer->surface_x = pointer->surface_x;
+        active_pointer->surface_y = pointer->surface_y;
     }
 
     if (pointer->cursor_shape_device) {
@@ -944,11 +957,11 @@ static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t s
 
     uint32_t btn_mask = 0;
     if (button == BTN_LEFT) {
-        btn_mask = EVENT_FRAME_PRIMARY_BUTTON;
+        btn_mask = config_get_pointer_left_button();
     } else if (button == BTN_RIGHT) {
-        btn_mask = EVENT_FRAME_SECONDARY_BUTTON;
+        btn_mask = config_get_pointer_right_button();
     } else if (button == BTN_MIDDLE) {
-        btn_mask = EVENT_FRAME_THIRD_BUTTON;
+        btn_mask = config_get_pointer_middle_button();
     } else {
         btn_mask = EVENT_FRAME_MISC_BUTTON;
     }
@@ -1536,9 +1549,13 @@ static const struct wl_seat_listener wl_seat_listener = {
 
 static void on_tool_type(void* data, struct zwp_tablet_tool_v2* tool, uint32_t type)
 {
-    UNUSED(data);
     UNUSED(tool);
-    UNUSED(type);
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
+
+    env_pointer->aux_data = (void*)(uintptr_t)type;
 }
 
 static void on_tool_hardware_serial(void* data, struct zwp_tablet_tool_v2* tool, uint32_t hi, uint32_t lo)
@@ -1581,8 +1598,6 @@ static void on_tool_removed(void* data, struct zwp_tablet_tool_v2* tool)
         env_pointer->dx = (env_pointer->x - env_pointer->dx);
         env_pointer->dy = (env_pointer->y - env_pointer->dy);
         mascot_drag_ended(env_pointer->grabbed_subsurface->mascot, true);
-        env_pointer->grabbed_subsurface = NULL;
-        env_pointer->grabbed_subsurface->mascot = NULL;
     }
 
     struct wl_pointer_listener* surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->above_surface);
@@ -1606,6 +1621,7 @@ static void on_tool_removed(void* data, struct zwp_tablet_tool_v2* tool)
     env_pointer->above_surface = NULL;
 
     free_env_pointer(env_pointer);
+    zwp_tablet_tool_v2_set_user_data(tool, NULL);
     zwp_tablet_tool_v2_destroy(tool);
 }
 
@@ -1639,7 +1655,8 @@ static void on_tool_proximity_out(void* data, struct zwp_tablet_tool_v2* tool)
     }
 
     if (env_pointer->grabbed_subsurface && why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
-        return;
+        env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
+        env_pointer->frame.buttons_released |= EVENT_FRAME_PRIMARY_BUTTON;
     }
 
     env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
@@ -1656,9 +1673,34 @@ static void on_tool_down(void* data, struct zwp_tablet_tool_v2* tool, uint32_t s
         return;
     }
 
+    uint32_t button_mask = 0;
+    uint64_t tool_type = (uintptr_t)env_pointer->aux_data;
+
+    if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_PEN) {
+        button_mask = config_get_on_tool_pen();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_ERASER) {
+        button_mask = config_get_on_tool_eraser();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_BRUSH) {
+        button_mask = config_get_on_tool_brush();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_PENCIL) {
+        button_mask = config_get_on_tool_pencil();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_AIRBRUSH) {
+        button_mask = config_get_on_tool_airbrush();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_MOUSE) {
+        button_mask = config_get_on_tool_mouse();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_LENS) {
+        button_mask = config_get_on_tool_lens();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_FINGER) {
+        button_mask = config_get_on_tool_finger();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_MOUSE) {
+        button_mask = config_get_on_tool_mouse();
+    } else {
+        button_mask = EVENT_FRAME_MISC_BUTTON;
+    }
+
     env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
-    env_pointer->frame.buttons_pressed |= EVENT_FRAME_PRIMARY_BUTTON;
-    env_pointer->frame.buttons_released &= ~EVENT_FRAME_PRIMARY_BUTTON;
+    env_pointer->frame.buttons_pressed |= button_mask;
+    env_pointer->frame.buttons_released &= ~button_mask;
     env_pointer->frame.enter_serial = serial;
 }
 
@@ -1671,9 +1713,34 @@ static void on_tool_up(void* data, struct zwp_tablet_tool_v2* tool)
         return;
     }
 
+    uint32_t button_mask = 0;
+    uint64_t tool_type = (uintptr_t)env_pointer->aux_data;
+
+    if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_PEN) {
+        button_mask = config_get_on_tool_pen();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_ERASER) {
+        button_mask = config_get_on_tool_eraser();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_BRUSH) {
+        button_mask = config_get_on_tool_brush();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_PENCIL) {
+        button_mask = config_get_on_tool_pencil();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_AIRBRUSH) {
+        button_mask = config_get_on_tool_airbrush();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_MOUSE) {
+        button_mask = config_get_on_tool_mouse();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_LENS) {
+        button_mask = config_get_on_tool_lens();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_FINGER) {
+        button_mask = config_get_on_tool_finger();
+    } else if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_MOUSE) {
+        button_mask = config_get_on_tool_mouse();
+    } else {
+        button_mask = EVENT_FRAME_MISC_BUTTON;
+    }
+
     env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
-    env_pointer->frame.buttons_released |= EVENT_FRAME_PRIMARY_BUTTON;
-    env_pointer->frame.buttons_pressed &= ~EVENT_FRAME_PRIMARY_BUTTON;
+    env_pointer->frame.buttons_released |= button_mask;
+    env_pointer->frame.buttons_pressed &= ~button_mask;
 
 }
 
@@ -1681,10 +1748,41 @@ static void on_tool_button(void* data, struct zwp_tablet_tool_v2* tool, uint32_t
 {
     UNUSED(tool);
     UNUSED(serial);
-    UNUSED(button);
-    UNUSED(state);
-    UNUSED(data);
-    WARN("Tablet button event not implemented");
+    environment_pointer_t* env_pointer = (environment_pointer_t*)data;
+    if (!env_pointer) {
+        return;
+    }
+
+    uint32_t btn_mask = 0;
+    uint64_t tool_type = (uintptr_t)env_pointer->aux_data;
+    if (tool_type == ZWP_TABLET_TOOL_V2_TYPE_MOUSE) {
+        if (button == BTN_LEFT) {
+            btn_mask = config_get_pointer_left_button();
+        } else if (button == BTN_RIGHT) {
+            btn_mask = config_get_pointer_right_button();
+        } else if (button == BTN_MIDDLE) {
+            btn_mask = config_get_pointer_middle_button();
+        }
+    }
+
+    if (!btn_mask) {
+        if (button == BTN_STYLUS) {
+            btn_mask = config_get_on_tool_button1();
+        } else if (button == BTN_STYLUS2) {
+            btn_mask = config_get_on_tool_button2();
+        } else if (button == BTN_STYLUS3) {
+            btn_mask = config_get_on_tool_button3();
+        }
+    }
+
+    env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        env_pointer->frame.buttons_pressed |= btn_mask;
+        env_pointer->frame.buttons_released &= ~btn_mask;
+    } else {
+        env_pointer->frame.buttons_released |= btn_mask;
+        env_pointer->frame.buttons_pressed &= ~btn_mask;
+    }
 }
 
 static void on_tool_motion(void* data, struct zwp_tablet_tool_v2* tool, wl_fixed_t x, wl_fixed_t y)
@@ -2483,27 +2581,40 @@ bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface) {
 
     environment_subsurface_set_position(surface, surface->drag_pointer->x, surface->drag_pointer->y);
     if (surface->mascot) mascot_moved(surface->mascot, surface->drag_pointer->x, yconv(surface->env, surface->drag_pointer->y));
+    environment_commit(surface->env);
     return true;
 }
 
-int32_t environment_cursor_x(environment_t* env) {
+int32_t environment_cursor_x(struct mascot* mascot, environment_t* env) {
     UNUSED(env);
-    return active_pointer->grabbed_subsurface ? active_pointer->x : active_pointer->public_x;
+    environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
+    if (!pointer) pointer = active_pointer;
+    if (!pointer) return 0;
+    return pointer->grabbed_subsurface ? pointer->x : pointer->public_x;
 }
 
-int32_t environment_cursor_y(environment_t* env) {
+int32_t environment_cursor_y(struct mascot* mascot, environment_t* env) {
     UNUSED(env);
-    return active_pointer->grabbed_subsurface ? active_pointer->y : active_pointer->public_y;
+    environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
+    if (!pointer) pointer = active_pointer;
+    if (!pointer) return 0;
+    return pointer->grabbed_subsurface ? pointer->y : pointer->public_y;
 }
 
-int32_t environment_cursor_dx(environment_t* env) {
+int32_t environment_cursor_dx(struct mascot* mascot, environment_t* env) {
     UNUSED(env);
-    return active_pointer->dx/2;
+    environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
+    if (!pointer) pointer = active_pointer;
+    if (!pointer) return 0;
+    return pointer->dx/2;
 }
 
-int32_t environment_cursor_dy(environment_t* env) {
+int32_t environment_cursor_dy(struct mascot* mascot, environment_t* env) {
     UNUSED(env);
-    return -active_pointer->dy;
+    environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
+    if (!pointer) pointer = active_pointer;
+    if (!pointer) return 0;
+    return -pointer->dy;
 }
 
 
@@ -2619,6 +2730,7 @@ const char* environment_get_error() {
 void environment_set_public_cursor_position(environment_t* env, int32_t x, int32_t y)
 {
     UNUSED(env);
+    if (!active_pointer) return;
     active_pointer->public_x = x;
     active_pointer->public_y = y;
 }
@@ -2892,8 +3004,22 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
     // First, unmap the surface
     environment_subsurface_unmap(surface);
 
+    // Unlink subsurface from the old environment
+    struct mascot* mascot = environment_subsurface_get_mascot(surface);
+    if (mascot) {
+        uint32_t mascot_index = list_find(surface->env->referenced_mascots, mascot);
+        if (mascot_index != UINT32_MAX) {
+            list_remove(surface->env->referenced_mascots, mascot_index);
+        }
+    }
+
     // Next we change our vision of the environment
     surface->env = env;
+
+    // Link subsurface to the new environment
+    if (mascot) {
+        list_add(env->referenced_mascots, mascot);
+    }
 
     // Get all user data from the surface
     struct wl_surface_data* userdata = wl_surface_get_user_data(surface->surface);
@@ -2915,7 +3041,7 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
         if (!surface->viewport) ERROR("Failed to create viewport!");
     }
 
-    if (env->output.scale && (!fractional_manager || !viewporter)) {
+    if (env->output.scale && !fractional_manager && !viewporter) {
         wl_surface_set_buffer_scale(surface->surface, env->output.scale);
     }
 

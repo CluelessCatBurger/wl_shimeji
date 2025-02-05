@@ -1,3 +1,9 @@
 [submodule "src/third_party/json.h"]
 	path = src/third_party/json.h
 	url = https://github.com/sheredom/json.h
+[submodule "src/third_party/qoi"]
+	path = src/third_party/qoi
+	url = https://github.com/phoboslab/qoi
+[submodule "src/shimejictl/qoi"]
+	path = src/shimejictl/qoi
+	url = https://github.com/mathpn/py-qoi

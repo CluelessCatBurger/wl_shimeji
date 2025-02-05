@@ -29,6 +29,34 @@ struct config config = {0};
 
 bool config_parse(const char* path)
 {
+
+    config.breeding = true;
+    config.dragging = true;
+    config.ie_interactions = false;
+    config.ie_throwing = false;
+    config.cursor_data = true;
+    config.dismiss_animations = true;
+    config.affordances = true;
+    config.overlay_layer = LAYER_TYPE_OVERLAY;
+    config.tick_delay = 40000;
+    config.mascot_limit = 512;
+    config.ie_throw_policy = 3;
+    config.pointer_left_value = -1;
+    config.pointer_right_value = -1;
+    config.pointer_middle_value = -1;
+    config.enable_tablets = true;
+    config.on_tool_pen_value = -1;
+    config.on_tool_eraser_value = -1;
+    config.on_tool_brush_value = -1;
+    config.on_tool_pencil_value = -1;
+    config.on_tool_airbrush_value = -1;
+    config.on_tool_finger_value = -1;
+    config.on_tool_lens_value = -1;
+    config.on_tool_mouse_value = -1;
+    config.on_tool_button1_value = -1;
+    config.on_tool_button2_value = -1;
+    config.on_tool_button3_value = -1;
+
     FILE* file = fopen(path, "r");
     if (!file) {
         return false;
@@ -69,6 +97,36 @@ bool config_parse(const char* path)
             config_set_tick_delay(atoi(value));
         } else if (strcmp(key, "overlay_layer") == 0) {
             config_set_overlay_layer(atoi(value));
+        } else if (strcmp(key, "tablets_enabled") == 0) {
+            config_set_tablets_enabled(strncmp(value, "true", 4) == 0);
+        } else if (strcmp(key, "pointer_left_value") == 0) {
+            config_set_pointer_left_button(atoi(value));
+        } else if (strcmp(key, "pointer_right_value") == 0) {
+            config_set_pointer_right_button(atoi(value));
+        } else if (strcmp(key, "pointer_middle_value") == 0) {
+            config_set_pointer_middle_button(atoi(value));
+        } else if (strcmp(key, "on_tool_pen_value") == 0) {
+            config_set_on_tool_pen(atoi(value));
+        } else if (strcmp(key, "on_tool_eraser_value") == 0) {
+            config_set_on_tool_eraser(atoi(value));
+        } else if (strcmp(key, "on_tool_brush_value") == 0) {
+            config_set_on_tool_brush(atoi(value));
+        } else if (strcmp(key, "on_tool_pencil_value") == 0) {
+            config_set_on_tool_pencil(atoi(value));
+        } else if (strcmp(key, "on_tool_airbrush_value") == 0) {
+            config_set_on_tool_airbrush(atoi(value));
+        } else if (strcmp(key, "on_tool_finger_value") == 0) {
+            config_set_on_tool_finger(atoi(value));
+        } else if (strcmp(key, "on_tool_lens_value") == 0) {
+            config_set_on_tool_lens(atoi(value));
+        } else if (strcmp(key, "on_tool_mouse_value") == 0) {
+            config_set_on_tool_mouse(atoi(value));
+        } else if (strcmp(key, "on_tool_button1_value") == 0) {
+            config_set_on_tool_button1(atoi(value));
+        } else if (strcmp(key, "on_tool_button2_value") == 0) {
+            config_set_on_tool_button2(atoi(value));
+        } else if (strcmp(key, "on_tool_button3_value") == 0) {
+            config_set_on_tool_button3(atoi(value));
         }
     }
 
@@ -94,6 +152,21 @@ void config_write(const char* path)
     fprintf(file, "per_mascot_interactions=%s\n", config.affordances ? "true" : "false");
     fprintf(file, "tick_delay=%u\n", config.tick_delay);
     fprintf(file, "overlay_layer=%d\n", config.overlay_layer);
+    fprintf(file, "tablets_enabled=%s\n", config.enable_tablets ? "true" : "false");
+    if (config.pointer_left_value != -1) fprintf(file, "pointer_left_value=%d\n", config.pointer_left_value);
+    if (config.pointer_right_value != -1) fprintf(file, "pointer_right_value=%d\n", config.pointer_right_value);
+    if (config.pointer_middle_value != -1) fprintf(file, "pointer_middle_value=%d\n", config.pointer_middle_value);
+    if (config.on_tool_pen_value != -1) fprintf(file, "on_tool_pen_value=%d\n", config.on_tool_pen_value);
+    if (config.on_tool_eraser_value != -1) fprintf(file, "on_tool_eraser_value=%d\n", config.on_tool_eraser_value);
+    if (config.on_tool_brush_value != -1) fprintf(file, "on_tool_brush_value=%d\n", config.on_tool_brush_value);
+    if (config.on_tool_pencil_value != -1) fprintf(file, "on_tool_pencil_value=%d\n", config.on_tool_pencil_value);
+    if (config.on_tool_airbrush_value != -1) fprintf(file, "on_tool_airbrush_value=%d\n", config.on_tool_airbrush_value);
+    if (config.on_tool_finger_value != -1) fprintf(file, "on_tool_finger_value=%d\n", config.on_tool_finger_value);
+    if (config.on_tool_lens_value != -1) fprintf(file, "on_tool_lens_value=%d\n", config.on_tool_lens_value);
+    if (config.on_tool_mouse_value != -1) fprintf(file, "on_tool_mouse_value=%d\n", config.on_tool_mouse_value);
+    if (config.on_tool_button1_value != -1) fprintf(file, "on_tool_button1_value=%d\n", config.on_tool_button1_value);
+    if (config.on_tool_button2_value != -1) fprintf(file, "on_tool_button2_value=%d\n", config.on_tool_button2_value);
+    if (config.on_tool_button3_value != -1) fprintf(file, "on_tool_button3_value=%d\n", config.on_tool_button3_value);
 
     fclose(file);
 }
@@ -227,4 +300,240 @@ int32_t config_get_overlay_layer()
         return LAYER_TYPE_OVERLAY;
     }
     return config.overlay_layer;
+}
+
+bool config_get_tablets_enabled()
+{
+    return config.enable_tablets;
+}
+
+uint32_t config_get_pointer_left_button()
+{
+    if (config.pointer_left_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.pointer_left_value;
+}
+
+uint32_t config_get_pointer_right_button()
+{
+    if (config.pointer_right_value == -1) return POINTER_SECONDARY_BUTTON;
+    return config.pointer_right_value;
+}
+
+uint32_t config_get_pointer_middle_button()
+{
+    if (config.pointer_middle_value == -1) return POINTER_THIRD_BUTTON;
+    return config.pointer_middle_value;
+}
+
+uint32_t config_get_on_tool_pen()
+{
+    if (config.on_tool_pen_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_pen_value;
+}
+
+uint32_t config_get_on_tool_eraser()
+{
+    if (config.on_tool_eraser_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_eraser_value;
+}
+
+uint32_t config_get_on_tool_brush()
+{
+    if (config.on_tool_brush_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_brush_value;
+}
+
+uint32_t config_get_on_tool_pencil()
+{
+    if (config.on_tool_pencil_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_pencil_value;
+}
+
+uint32_t config_get_on_tool_airbrush()
+{
+    if (config.on_tool_airbrush_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_airbrush_value;
+}
+
+uint32_t config_get_on_tool_finger()
+{
+    if (config.on_tool_finger_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_finger_value;
+}
+
+uint32_t config_get_on_tool_lens()
+{
+    if (config.on_tool_lens_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_lens_value;
+}
+
+uint32_t config_get_on_tool_mouse()
+{
+    if (config.on_tool_mouse_value == -1) return POINTER_PRIMARY_BUTTON;
+    return config.on_tool_mouse_value;
+}
+
+uint32_t config_get_on_tool_button1()
+{
+    if (config.on_tool_button1_value == -1) return POINTER_SECONDARY_BUTTON;
+    return config.on_tool_button1_value;
+}
+
+uint32_t config_get_on_tool_button2()
+{
+    if (config.on_tool_button2_value == -1) return POINTER_SECONDARY_BUTTON;
+    return config.on_tool_button2_value;
+}
+
+uint32_t config_get_on_tool_button3()
+{
+    if (config.on_tool_button3_value == -1) return POINTER_SECONDARY_BUTTON;
+    return config.on_tool_button3_value;
+}
+
+
+bool config_set_tablets_enabled(bool value)
+{
+    config.enable_tablets = value;
+    return true;
+}
+
+bool config_set_pointer_left_button(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.pointer_left_value = value;
+    return true;
+}
+
+bool config_set_pointer_right_button(int32_t value)
+{
+    if (value == -1) value = POINTER_SECONDARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.pointer_right_value = value;
+    return true;
+}
+
+bool config_set_pointer_middle_button(int32_t value)
+{
+    if (value == -1) value = POINTER_THIRD_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.pointer_middle_value = value;
+    return true;
+}
+
+bool config_set_on_tool_pen(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_pen_value = value;
+    return true;
+}
+
+bool config_set_on_tool_eraser(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_eraser_value = value;
+    return true;
+}
+
+bool config_set_on_tool_brush(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_brush_value = value;
+    return true;
+}
+
+bool config_set_on_tool_pencil(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_pencil_value = value;
+    return true;
+}
+
+bool config_set_on_tool_airbrush(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_airbrush_value = value;
+    return true;
+}
+
+bool config_set_on_tool_finger(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_finger_value = value;
+    return true;
+}
+
+bool config_set_on_tool_lens(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_lens_value = value;
+    return true;
+}
+
+bool config_set_on_tool_mouse(int32_t value)
+{
+    if (value == -1) value = POINTER_PRIMARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_mouse_value = value;
+    return true;
+}
+
+bool config_set_on_tool_button1(int32_t value)
+{
+    if (value == -1) value = POINTER_SECONDARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_button1_value = value;
+    return true;
+}
+
+bool config_set_on_tool_button2(int32_t value)
+{
+    if (value == -1) value = POINTER_SECONDARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_button2_value = value;
+    return true;
+}
+
+bool config_set_on_tool_button3(int32_t value)
+{
+    if (value == -1) value = POINTER_SECONDARY_BUTTON;
+    if ((uint32_t)value > POINTER_THIRD_BUTTON) {
+        return false;
+    }
+    config.on_tool_button3_value = value;
+    return true;
 }
