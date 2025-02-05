@@ -24,8 +24,10 @@
 #include <sys/stat.h>
 
 #include "mascot_atlas.h"
-#include <spng.h>
 #include <errno.h>
+
+#define QOI_IMPLEMENTATION
+#include "third_party/qoi/qoi.h"
 
 void _find_ireg(const uint8_t* buffer, uint32_t width, uint32_t height, uint32_t* out_x, uint32_t* out_y, uint32_t* out_width, uint32_t* out_height) {
     uint32_t minX = UINT32_MAX;
@@ -94,83 +96,166 @@ void _write_memfd(int fd, uint64_t* memfd_pos, const uint8_t* buffer, size_t buf
 }
 
 
+bool _recursive_walk(const char* dirname, uint32_t* file_count, char*** file_paths, const char* prefix)
+{
+    INFO("Performing recursive walk for dir \"%s\"", dirname);
+    char** paths_array = calloc(64, sizeof(char*));
+    uint16_t paths_array_size = 64;
+    if (!paths_array) {
+        ERROR("Failed to perform recursive walk for dir \"%s\": Allocation failed for paths array", dirname);
+    }
+
+    DIR* dir;
+    if (!(dir = opendir(dirname))) {
+        WARN("Failed to perform recursive walk for dir \"%s\": %s", dirname, strerrordesc_np(errno));
+        goto fail_walk;
+    }
+
+    struct dirent* direntry = NULL;
+    while ((direntry = readdir(dir))) {
+        if (direntry->d_type == DT_DIR) {
+            if (direntry->d_name[0] == '.') continue;
+            char subdir[256] = {0};
+            size_t printed = snprintf(subdir, 256, "%s/%s", dirname, direntry->d_name);
+            if (printed >= 256) {
+                WARN("Failed to perform recursive walk for dir \"%s\": Path too long for subdir %s", dirname, direntry->d_name);
+                continue;
+            }
+            char **subdir_file_paths = NULL;
+            uint32_t subdir_file_count = 0;
+
+            if (!_recursive_walk(subdir, &subdir_file_count, &subdir_file_paths, direntry->d_name)) {
+                WARN("Failed to perform recursive walk for dir \"%s\": Subdir %s failed", dirname, direntry->d_name);
+                continue;
+            }
+            for (uint16_t i = 0; i < subdir_file_count; i++) {
+                if (*file_count >= paths_array_size) {
+                    char** new_paths_array = realloc(paths_array, paths_array_size * 2 * sizeof(char*));
+                    if (!new_paths_array) {
+                        ERROR("Failed to perform recursive walk for dir \"%s\": Reallocation failed for paths array", dirname);
+                    }
+                    paths_array = new_paths_array;
+                    paths_array_size *= 2;
+                }
+                char name[256] = {0};
+                size_t printed = snprintf(name, 256, "%s/%s", prefix, subdir_file_paths[i]);
+                UNUSED(printed);
+                paths_array[*file_count] = !(*prefix) ? strdup(name+1) : strdup(name);
+                if (!paths_array[*file_count]) {
+                    ERROR("Failed to perform recursive walk for dir \"%s\": Allocation failed for file %s", dirname, direntry->d_name);
+                }
+                (*file_count)++;
+            }
+            free(subdir_file_paths);
+        } else if (direntry->d_type == DT_REG) {
+            if (*file_count >= paths_array_size) {
+                char** new_paths_array = realloc(paths_array, paths_array_size * 2 * sizeof(char*));
+                if (!new_paths_array) {
+                    ERROR("Failed to perform recursive walk for dir \"%s\": Reallocation failed for paths array", dirname);
+                }
+                paths_array = new_paths_array;
+                paths_array_size *= 2;
+            }
+            char name[256] = {0};
+            size_t printed = snprintf(name, 256, "%s/%s", prefix, direntry->d_name);
+            UNUSED(printed);
+            paths_array[*file_count] = !(*prefix) ? strdup(name+1) : strdup(name);
+            if (!paths_array[*file_count]) {
+                ERROR("Failed to perform recursive walk for dir \"%s\": Allocation failed for file %s", dirname, direntry->d_name);
+            }
+            (*file_count)++;
+        }
+
+    }
+
+    closedir(dir);
+
+    *file_paths = paths_array;
+    return true;
+
+fail_walk:
+    if (paths_array) {
+        for (uint16_t i = 0; i < paths_array_size; i++) {
+            if (paths_array[i]) free(paths_array[i]);
+        }
+    }
+    free(paths_array);
+    closedir(dir);
+    return false;
+}
+
 struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct wl_shm* shm_global, const char* dirname)
 {
 
     if (!compositor || !shm_global || !strlen(dirname)) return NULL;
 
-    struct dirent* direntry = NULL;
-    spng_ctx** png_ctxs = NULL;
+    qoi_desc* qois = NULL;
     uint16_t sprite_count = 0;
     struct mascot_atlas* atlas = NULL;
+    char** file_paths = NULL;
+    uint32_t file_count = 0;
 
     DEBUG("Creating mascot atlas from dir \"%s\"", dirname);
 
-    DIR* dir;
-    if (!(dir = opendir(dirname))) {
-        WARN("Could not create atlas from dir \"%s\": %s", dirname, strerrordesc_np(errno));
+    if (!_recursive_walk(dirname, &file_count, &file_paths, "")) {
+        WARN("Could not create atlas from dir \"%s\": Recursive walk failed", dirname);
         return NULL;
     }
 
-    while ((direntry = readdir(dir)))
-    {
-        if (direntry->d_type != DT_REG) continue;
-        int namelen = strnlen(direntry->d_name, 32);
-        if (namelen < 5) continue;
-        if (!strcasecmp(direntry->d_name + namelen -4, ".png")) sprite_count ++;
+    if (!file_count) {
+        WARN("Could not create atlas from dir \"%s\": No files found", dirname);
+        free(file_paths);
+        return NULL;
     }
-    rewinddir(dir);
+
+    for (uint32_t i = 0; i < file_count; i++) {
+        if (strnlen(file_paths[i], 128) < 5) continue;
+        if (!strcasecmp(file_paths[i] + strnlen(file_paths[i], 128) - 4, ".qoi")) {
+            sprite_count ++;
+        }
+    }
 
     if (!sprite_count) {
-        closedir(dir);
+        free(file_paths);
         WARN("Could not create atlas from dir \"%s\": No sprites found", dirname);
         return NULL;
     }
 
-    png_ctxs = calloc(sprite_count, sizeof(spng_ctx*));
+    qois = calloc(sprite_count, sizeof(qoi_desc));
     char ** namelist = calloc(sprite_count, sizeof(char*));
-    FILE ** filelist = calloc(sprite_count, sizeof(FILE*));
+    void ** pixels = calloc(sprite_count, sizeof(void*));
 
-    if (!png_ctxs) {
+    if (!qois) {
         ERROR("Could not create atlas from dir \"%s\": Allocation failed for png_ctxs", dirname);
     }
     if (!namelist) {
         ERROR("Could not create atlas from dir \"%s\":Allocation failed for namelists", dirname);
     }
-    if (!filelist) {
+    if (!pixels) {
         ERROR("Could not create atlas from dir \"%s\": Allocation failed for filelists", dirname);
     }
 
     uint16_t local_ecount = 0;
-    while ((direntry = readdir(dir))) {
-        if (direntry->d_type != DT_REG) continue;
-        int namelen = strnlen(direntry->d_name, 32);
-        if (namelen < 5) continue;
-        if (!strcasecmp(direntry->d_name + namelen -4, ".png")) {
+    for (uint32_t i = 0; i < file_count; i++) {
+        if (strnlen(file_paths[i], 128) < 5) continue;
+        if (!strcasecmp(file_paths[i] + strnlen(file_paths[i], 128) - 4, ".qoi")) {
             if (local_ecount > sprite_count) break;
             else local_ecount ++;
-            png_ctxs[local_ecount-1] = spng_ctx_new(0);
-            if (!png_ctxs[local_ecount-1])
+            char fullpath[256] = {0};
+            size_t printed = snprintf(fullpath, 256, "%s/%s", dirname, file_paths[i]);
+            UNUSED(printed);
+            pixels[i] = qoi_read(fullpath, &qois[local_ecount-1], 4);
+            if (!pixels[i])
             {
-                ERROR("Could not create atlas from dir \"%s\": Allocation failed for spng_ctx", dirname);
+                WARN("Could not create atlas from dir \"%s\": Failed to read QOI file \"%s\"", dirname, file_paths[i]);
+                goto fail_free_qoi_ctxs;
             }
-            char filepath[256] = {0};
-            size_t printed = snprintf(filepath, 256, "%s/%s", dirname, direntry->d_name);
-            if (printed >= 256) {
-                WARN("Could not create atlas from dir \"%s\": Path too long for sprite %s", dirname, direntry->d_name);
-                continue;
+            namelist[local_ecount-1] = strdup(file_paths[i]);
+            if (!namelist[local_ecount-1]) {
+                ERROR("Could not create atlas from dir \"%s\": Allocation failed for namelist", dirname);
             }
-            filelist[local_ecount-1] = fopen(filepath, "r");
-            if (!filelist[local_ecount-1]) {
-                WARN("Could not create atlas from dir \"%s\": Some error prevented sprites from opening: %s", dirname, strerrordesc_np(errno));
-                closedir(dir);
-                goto fail_free_png_ctxs;
-            }
-            spng_set_png_file(png_ctxs[local_ecount-1], filelist[local_ecount-1]);
-            namelist[local_ecount-1] = strdup(direntry->d_name);
         }
     }
-    closedir(dir);
 
     int memfd = memfd_create(dirname, 0);
     uint64_t memfd_pos = 0;
@@ -185,45 +270,29 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
     if (!atlas->sprites) ERROR("Could not create atlas from dir \"%s\": Allocation failed for atlas sprites array", dirname);
 
     for (uint16_t sprite_i = 0; sprite_i < sprite_count; sprite_i ++) {
-        size_t bufsize;
-        uint32_t width, height;
-        struct spng_ihdr image_header = {0};
-        spng_decoded_image_size(png_ctxs[sprite_i], SPNG_FMT_RGBA8, &bufsize);
-        spng_get_ihdr(png_ctxs[sprite_i], &image_header);
-        width = image_header.width;
-        height = image_header.height;
-
-        uint8_t* buffer = calloc(1, bufsize);
-        if (!buffer) ERROR("Could not create atlas from dir \"%s\": Allocation failed for decoded buffer (%d bytes) for sprite %s", dirname, bufsize, namelist[sprite_i]);
-
-        spng_decode_image(png_ctxs[sprite_i], buffer, bufsize, SPNG_FMT_RGBA8, 0);
-
-        spng_ctx_free(png_ctxs[sprite_i]);
-        fclose(filelist[sprite_i]);
-
         uint64_t memfd_offset = memfd_pos;
         uint32_t input_x, input_y, input_width, input_height;
 
-        _find_ireg(buffer, width, height, &input_x, &input_y, &input_width, &input_height);
+        _find_ireg(pixels[sprite_i], qois[sprite_i].width, qois[sprite_i].height, &input_x, &input_y, &input_width, &input_height);
 
         atlas->sprites[(sprite_i*2)] = (struct mascot_sprite) {
-            .height = height,
-            .width = width,
+            .width = qois[sprite_i].width,
+            .height = qois[sprite_i].height,
             .memfd_offset = memfd_offset,
             .input_region = wl_compositor_create_region(compositor)
         };
 
         atlas->sprites[(sprite_i*2)+1] = (struct mascot_sprite) {
-            .height = height,
-            .width = width,
-            .memfd_offset = memfd_offset + bufsize,
+            .width = qois[sprite_i].width,
+            .height = qois[sprite_i].height,
+            .memfd_offset = memfd_offset + qois[sprite_i].width*qois[sprite_i].height*4,
             .input_region = wl_compositor_create_region(compositor)
         };
 
         wl_region_add(atlas->sprites[(sprite_i*2)].input_region, input_x, input_y, input_width, input_height);
-        wl_region_add(atlas->sprites[(sprite_i*2)+1].input_region, width - input_x - input_width, input_y, input_width, input_height);
+        wl_region_add(atlas->sprites[(sprite_i*2)+1].input_region, qois[sprite_i].width - input_x - input_width, input_y, input_width, input_height);
 
-        _write_memfd(memfd, &memfd_pos, buffer, bufsize, width, height);
+        _write_memfd(memfd, &memfd_pos, pixels[sprite_i], qois[sprite_i].width*qois[sprite_i].height*4, qois[sprite_i].width, qois[sprite_i].height);
 
     }
 
@@ -242,8 +311,12 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
 
     atlas->name_order = namelist;
     atlas->sprite_count = sprite_count;
-    free(png_ctxs);
-    free(filelist);
+
+    for (uint16_t i = 0; i < sprite_count; i++) free(pixels[i]);
+    for (uint32_t i = 0; i < file_count; i++) free(file_paths[i]);
+    free(file_paths);
+    free(qois);
+    free(pixels);
 
     close(memfd);
 
@@ -251,13 +324,14 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
 
     return atlas;
 
-fail_free_png_ctxs:
+fail_free_qoi_ctxs:
     free(atlas);
-    for (uint16_t i = 0; i < sprite_count; i++) spng_ctx_free(png_ctxs[i]);
+    for (uint16_t i = 0; i < sprite_count; i++) free(pixels[i]);
     for (uint16_t i = 0; i < sprite_count; i++) free(namelist[i]);
-    for (uint16_t i = 0; i < sprite_count; i++) fclose(filelist[i]);
-    free(png_ctxs);
+    for (uint32_t i = 0; i < file_count; i++) free(file_paths[i]);
+    free(qois);
     free(namelist);
+    free(file_paths);
     return NULL;
 }
 

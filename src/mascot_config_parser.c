@@ -2046,7 +2046,7 @@ struct config_behavior_loader_result load_behaviors(struct mascot_prototype* pro
                     if (behavior_obj.status == MASCOT_BEHAVIOR_PARSE_ERROR_NOT_DEFINED) {
                         deffered_resolving[deffered_count++] = (struct json_object_s*)definition->value->payload;
                     } else if (behavior_obj.status == MASCOT_BEHAVIOR_PARSE_ERROR_ACTION_NOT_DEFINED) {
-                        if (behavior_obj.behavior->name) WARN("Behavior %s has an action that is not defined", behavior_obj.behavior->name);
+                        if (behavior_obj.behavior) WARN("Behavior %s has an action that is not defined", behavior_obj.behavior->name);
                         else WARN("Behavior has an action that is not defined");
                     }
                     definition = definition->next;
@@ -2106,6 +2106,25 @@ struct config_behavior_loader_result load_behaviors(struct mascot_prototype* pro
 
 enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype * prototype, const char *path)
 {
+    static int64_t minver = -1;
+    static int64_t curver = -1;
+    static bool version_constraints_processed = false;
+
+    if (!version_constraints_processed) {
+        minver = version_to_i64(WL_SHIMEJI_MASCOT_MIN_VER);
+        curver = version_to_i64(WL_SHIMEJI_MASCOT_CUR_VER);
+        if (minver > curver) {
+            ERROR("Invalid version constraints: min version is greater than current version");
+        }
+        if (minver < 0) {
+            ERROR("Invalid version constraints: min version is invalid");
+        }
+        if (curver < 0) {
+            ERROR("Invalid version constraints: current version is invalid");
+        }
+        version_constraints_processed = true;
+    }
+
     if (!prototype || !path) {
         return PROTOTYPE_LOAD_NULL_POINTER;
     }
@@ -2151,6 +2170,8 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     char behaviors_path[128] = {0};
     char actions_path[128]   = {0};
     char programs_path[128]  = {0};
+    char version_str[128]     = {0};
+    int64_t version = 0;
     while (element) {
         if (!strcmp(element->name->string, "name")) {
             if (element->value->type != json_type_string) {
@@ -2159,7 +2180,16 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
             }
             prototype->name = strdup(((struct json_string_s*)(element->value->payload))->string);
         } else if (!strcmp(element->name->string, "version")) {
-
+            if (element->value->type != json_type_string) {
+                WARN("Cannot load prototype from %s: Invalid JSON: version expected to be a string", filename_buf);
+                return PROTOTYPE_LOAD_MANIFEST_INVALID;
+            }
+            version = version_to_i64(((struct json_string_s*)(element->value->payload))->string);
+            if (version < 0) {
+                WARN("Cannot load prototype from %s: Invalid JSON: Mascot config version is invalid");
+                return PROTOTYPE_LOAD_MANIFEST_INVALID;
+            }
+            strncpy(version_str, ((struct json_string_s*)(element->value->payload))->string, 128);
         } else if (!strcmp(element->name->string, "display_name")) {
             if (element->value->type != json_type_string) {
                 WARN("Cannot load prototype from %s: Invalid JSON: display_name expected to be a string", filename_buf);
@@ -2192,6 +2222,16 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
             snprintf(behaviors_path, 128, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
         }
         element = element->next;
+    }
+
+    if (version < minver) {
+        WARN("Cannot load prototype from %s: Mascot config version is too old! Minimum supported version is %s but got %s", filename_buf, WL_SHIMEJI_MASCOT_MIN_VER, version_str);
+        return PROTOTYPE_LOAD_VERSION_TOO_OLD;
+    }
+
+    if (version > curver) {
+        WARN("Cannot load prototype from %s: Mascot config version is too new! Highest supported version is %s but got %s", filename_buf, WL_SHIMEJI_MASCOT_CUR_VER, version_str);
+        return PROTOTYPE_LOAD_VERSION_TOO_NEW;
     }
 
     if (!prototype->name) {

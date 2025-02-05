@@ -6,10 +6,12 @@ override ASSETS_DIR := assets
 override TARGET = $(BUILDDIR)/shimeji-overlayd
 override PLUGINS_TARGET = $(BUILDDIR)/libpluginsupport.so
 
+override PYTHON3 := $(shell which python3)
+
 PREFIX ?= /usr/local
 
 override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
-override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor spng --libs) -lm
+override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
 override WLR_PROTOCOLS_DIR = $(shell pkg-config wlr-protocols --variable=pkgdatadir)
@@ -86,15 +88,19 @@ $(PLUGINS_TARGET): $(PLUGINS_OBJS)
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
+# Rule to build shimejictl
+$(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/shimejictl.py
+	$(PYTHON3) scripts/py-compose.py -s $< -o $@
+
 $(SRC): protocols-autogen
 $(PLUGINS_SRC): protocols-autogen
 
 .PHONY: all
-all: $(TARGET) $(PLUGINS_TARGET)
+all: $(TARGET) $(PLUGINS_TARGET) $(UTILS_DIR)/shimejictl
 
 .PHONY: clean
 clean:
-	@-rm -r $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR)
+	@-rm -r $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR) $(UTILS_DIR)/shimejictl
 
 .PHONY: install_plugins
 install_plugins: $(TARGET) $(PLUGINS_TARGET)
@@ -102,7 +108,7 @@ install_plugins: $(TARGET) $(PLUGINS_TARGET)
 	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
 
 .PHONY: install
-install: $(TARGET)
+install: $(TARGET) $(UTILS_DIR)/shimejictl
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
