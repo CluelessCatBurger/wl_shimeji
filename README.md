@@ -13,16 +13,12 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
 ## Build requirements
 - libspng
   - Arch: `pacman -S libspng`
-  - Debian: `apt install libspng libspng-dev`
 - libwayland-client:
   - Arch: `pacman -S wayland`
-  - Debian: `apt install libwayland-client0 libwayland-client-dev`
 - wayland-protocols:
   - Arch: `pacman -S wayland-protocols`
-  - Debian: `apt install wayland-protocols`
 - wlr-protocols:
   - Arch: `pacman -S wlr-protocols`
-  - Debian: `apt install wlr-protocols`
 
 ## Runtime requirements
 Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, and provide wl_subcompositor interface.
