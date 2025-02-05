@@ -399,9 +399,8 @@ bool mascot_anchor_y(struct expression_vm_state* state)
 bool mascot_environment_cursor_x(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_cursor_x(state->ref_mascot->environment);
+    state->stack[state->sp] = environment_cursor_x(state->ref_mascot, state->ref_mascot->environment);
     state->sp++;
-    DEBUG("mascot.environment.cursor.x: %d", environment_cursor_x(state->ref_mascot->environment));
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ENVIRONMENT_CURSOR_X { "mascot.environment.cursor.x", mascot_environment_cursor_x }
@@ -409,7 +408,7 @@ bool mascot_environment_cursor_x(struct expression_vm_state* state)
 bool mascot_environment_cursor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = (int32_t)environment_cursor_y(state->ref_mascot->environment);
+    state->stack[state->sp] = (int32_t)environment_cursor_y(state->ref_mascot, state->ref_mascot->environment);
     state->sp++;
     return true;
 }
@@ -418,7 +417,7 @@ bool mascot_environment_cursor_y(struct expression_vm_state* state)
 bool mascot_environment_cursor_dx(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = (int32_t)environment_cursor_dx(state->ref_mascot->environment);
+    state->stack[state->sp] = (int32_t)environment_cursor_dx(state->ref_mascot, state->ref_mascot->environment);
     state->sp++;
     return true;
 }
@@ -427,7 +426,7 @@ bool mascot_environment_cursor_dx(struct expression_vm_state* state)
 bool mascot_environment_cursor_dy(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = -(int32_t)environment_cursor_dy(state->ref_mascot->environment);
+    state->stack[state->sp] = -(int32_t)environment_cursor_dy(state->ref_mascot, state->ref_mascot->environment);
     state->sp++;
     return true;
 }
