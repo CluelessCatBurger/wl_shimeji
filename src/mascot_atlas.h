@@ -20,18 +20,24 @@
 #ifndef MASCOT_ATLAS
 #define MASCOT_ATLAS
 
-#include "master_header.h"
-#include "wayland_includes.h"
 #include <stdint.h>
 
+struct mascot_sprite;
+struct mascot_atlas;
+
+#include "master_header.h"
+#include "environment.h"
 
 #define MASCOT_ENOSPRITE 1
 
 struct mascot_sprite {
-    struct wl_buffer* buffer;
-    struct wl_region* input_region;
-    uint64_t memfd_offset;
+    environment_buffer_t* buffer;
+    uint64_t offset;
     uint32_t height, width;
+    struct {
+        uint32_t x, y;
+        uint32_t w, h;
+    } ireg;
 };
 
 struct mascot_atlas {
@@ -40,7 +46,7 @@ struct mascot_atlas {
     char ** name_order;
 };
 
-struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct wl_shm* shm_global, const char* dirname);
+struct mascot_atlas* mascot_atlas_new(const char* dirname);
 void mascot_atlas_destroy(struct mascot_atlas* atlas);
 
 struct mascot_sprite* mascot_atlas_get(const struct mascot_atlas* atlas, uint16_t index, bool right);

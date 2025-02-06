@@ -1,0 +1,14 @@
+src/wayland-protocols
+
+*.so
+*.png
+*.out
+*.tar*
+*.zip
+.clangd
+.vscode
+build
+scripts/*
+!scripts/*.py
+!scripts/PKGBUILD
+*__pycache__*

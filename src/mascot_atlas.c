@@ -64,7 +64,7 @@ void _find_ireg(const uint8_t* buffer, uint32_t width, uint32_t height, uint32_t
     }
 }
 
-void _write_memfd(int fd, uint64_t* memfd_pos, const uint8_t* buffer, size_t buffer_len, uint32_t width, uint32_t height) {
+void _write_buffers(environment_buffer_factory_t* factory, uint64_t* buffer_factory_pos, const uint8_t* buffer, size_t buffer_len, uint32_t width, uint32_t height) {
     uint8_t* buffers = calloc(2, buffer_len);
 
     if(!buffers) ERROR("Failed to write buffers to memfd: Allocation failed for buffer with size %d", buffer_len*2);
@@ -89,9 +89,9 @@ void _write_memfd(int fd, uint64_t* memfd_pos, const uint8_t* buffer, size_t buf
         }
     }
 
-    *memfd_pos += write(fd, buffers, buffer_len);
-    *memfd_pos += write(fd, buffers+buffer_len, buffer_len);
-
+    // Write the buffers to the factory
+    environment_buffer_factory_write(factory, buffers, buffer_len * 2);
+    *buffer_factory_pos += buffer_len * 2;
     free(buffers);
 }
 
@@ -184,10 +184,10 @@ fail_walk:
     return false;
 }
 
-struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct wl_shm* shm_global, const char* dirname)
+struct mascot_atlas* mascot_atlas_new(const char* dirname)
 {
 
-    if (!compositor || !shm_global || !strlen(dirname)) return NULL;
+    if (!strlen(dirname)) return NULL;
 
     qoi_desc* qois = NULL;
     uint16_t sprite_count = 0;
@@ -257,11 +257,8 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
         }
     }
 
-    int memfd = memfd_create(dirname, 0);
-    uint64_t memfd_pos = 0;
-    if (memfd < 0) {
-        ERROR("Could not create atlas from dir \"%s\": memfd_create failed: %s", dirname, strerrordesc_np(errno));
-    }
+    environment_buffer_factory_t* buffer_factory = environment_buffer_factory_new();
+    uint64_t buffer_factory_pos = 0;
 
     atlas = calloc(1, sizeof(struct mascot_atlas));
     if (!atlas) ERROR("Could not create atlas from dir \"%s\": Allocation failed for atlas struct", dirname);
@@ -270,7 +267,7 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
     if (!atlas->sprites) ERROR("Could not create atlas from dir \"%s\": Allocation failed for atlas sprites array", dirname);
 
     for (uint16_t sprite_i = 0; sprite_i < sprite_count; sprite_i ++) {
-        uint64_t memfd_offset = memfd_pos;
+        uint64_t buffer_factory_offset = buffer_factory_pos;
         uint32_t input_x, input_y, input_width, input_height;
 
         _find_ireg(pixels[sprite_i], qois[sprite_i].width, qois[sprite_i].height, &input_x, &input_y, &input_width, &input_height);
@@ -278,36 +275,39 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
         atlas->sprites[(sprite_i*2)] = (struct mascot_sprite) {
             .width = qois[sprite_i].width,
             .height = qois[sprite_i].height,
-            .memfd_offset = memfd_offset,
-            .input_region = wl_compositor_create_region(compositor)
+            .offset = buffer_factory_offset,
+            .ireg = {
+                .x = input_x,
+                .y = input_y,
+                .w = input_width,
+                .h = input_height
+            }
         };
 
         atlas->sprites[(sprite_i*2)+1] = (struct mascot_sprite) {
             .width = qois[sprite_i].width,
             .height = qois[sprite_i].height,
-            .memfd_offset = memfd_offset + qois[sprite_i].width*qois[sprite_i].height*4,
-            .input_region = wl_compositor_create_region(compositor)
+            .offset = buffer_factory_offset + qois[sprite_i].width*qois[sprite_i].height*4,
+            .ireg = {
+                .x = qois[sprite_i].width - input_x - input_width,
+                .y = input_y,
+                .w = input_width,
+                .h = input_height
+            }
         };
-
-        wl_region_add(atlas->sprites[(sprite_i*2)].input_region, input_x, input_y, input_width, input_height);
-        wl_region_add(atlas->sprites[(sprite_i*2)+1].input_region, qois[sprite_i].width - input_x - input_width, input_y, input_width, input_height);
-
-        _write_memfd(memfd, &memfd_pos, pixels[sprite_i], qois[sprite_i].width*qois[sprite_i].height*4, qois[sprite_i].width, qois[sprite_i].height);
-
+        _write_buffers(buffer_factory, &buffer_factory_pos, pixels[sprite_i], qois[sprite_i].width*qois[sprite_i].height*4, qois[sprite_i].width, qois[sprite_i].height);
     }
 
-    struct wl_shm_pool* shm_pool = wl_shm_create_pool(shm_global, memfd, memfd_pos);
+    environment_buffer_factory_done(buffer_factory);
+
     for (uint16_t mascot_sprite = 0; mascot_sprite < sprite_count*2; mascot_sprite ++) {
-        atlas->sprites[mascot_sprite].buffer = wl_shm_pool_create_buffer(
-            shm_pool, atlas->sprites[mascot_sprite].memfd_offset,
-            atlas->sprites[mascot_sprite].width, atlas->sprites[mascot_sprite].height,
-            atlas->sprites[mascot_sprite].width*4, WL_SHM_FORMAT_ARGB8888
-        );
+        atlas->sprites[mascot_sprite].buffer = environment_buffer_factory_create_buffer(buffer_factory, atlas->sprites[mascot_sprite].width, atlas->sprites[mascot_sprite].height, atlas->sprites[mascot_sprite].width*4, atlas->sprites[mascot_sprite].offset);
+        environment_buffer_add_to_input_region(atlas->sprites[mascot_sprite].buffer, atlas->sprites[mascot_sprite].ireg.x, atlas->sprites[mascot_sprite].ireg.y, atlas->sprites[mascot_sprite].ireg.w, atlas->sprites[mascot_sprite].ireg.h);
         if (mascot_sprite%2 == 0) DEBUG("Atlas \"%s\": Created sprite \"%s\"", dirname, namelist[mascot_sprite/2]);
         else DEBUG("Atlas \"%s\": Created sprite \"%s\" (Right)", dirname, namelist[mascot_sprite/2]);
     }
 
-    wl_shm_pool_destroy(shm_pool);
+    environment_buffer_factory_destroy(buffer_factory);
 
     atlas->name_order = namelist;
     atlas->sprite_count = sprite_count;
@@ -317,8 +317,6 @@ struct mascot_atlas* mascot_atlas_new(struct wl_compositor* compositor, struct w
     free(file_paths);
     free(qois);
     free(pixels);
-
-    close(memfd);
 
     DEBUG("Sucessfully created atlas for directory \"%s\", located at %p", dirname, atlas);
 
@@ -341,8 +339,7 @@ void mascot_atlas_destroy(struct mascot_atlas* atlas)
 
     for (uint16_t i = 0; i < atlas->sprite_count*2; i++) {
         if (i % 2 == 0) free(atlas->name_order[i/2]);
-        if (atlas->sprites[i].buffer) wl_buffer_destroy(atlas->sprites[i].buffer);
-        if (atlas->sprites[i].input_region) wl_region_destroy(atlas->sprites[i].input_region);
+        environment_buffer_destroy(atlas->sprites[i].buffer);
     }
 
     free(atlas->name_order);

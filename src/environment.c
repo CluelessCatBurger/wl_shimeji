@@ -1,5 +1,5 @@
 /*
-    environment.c - wl_shimeji's environment handling
+    environment-wayland.h - wl_shimeji's environment handling, wayland backend
 
     Copyright (C) 2025  CluelessCatBurger <github.com/CluelessCatBurger>
 
@@ -17,12 +17,12 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
-
 #define _GNU_SOURCE
+
+#include "wayland_includes.h"
 #include <sys/mman.h>
 #include "mascot_atlas.h"
 #include "mascot.h"
-#include "wayland_includes.h"
 #include "layer_surface.h"
 #include <fcntl.h>
 #include <stdint.h>
@@ -39,6 +39,9 @@
 // Workarounds section (SMH my head hyprland)
 bool we_on_hyprland = false;
 bool we_on_kde = false;
+
+// Disable workarounds
+bool disable_tablet_workarounds = false;
 
 bool why_tablet_v2_proximity_in_events_received_by_parent_question_mark = false;
 
@@ -237,6 +240,22 @@ struct environment_pointer {
     // Staging changes
     struct environment_event_frame frame;
 
+};
+
+struct environment_buffer_factory {
+    struct wl_shm_pool* pool;
+    uint64_t size;
+    int memfd;
+    bool done;
+};
+
+struct environment_buffer {
+    struct wl_buffer* buffer;
+    struct wl_region* region;
+    uint32_t size;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride;
 };
 
 // Pointer with most recent activity
@@ -1887,7 +1906,7 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
             struct wl_surface* surface = env_pointer->frame.surface_changed;
 
             if (!env->select_active && is_root_surface(surface)) {
-                if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && mascot_by_coordinates) {
+                if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && mascot_by_coordinates && !disable_tablet_workarounds) {
                     why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
                     WARN("WORKAROUND: zwp_tablet_v2 proximity_in events are received by parent in KDE, not by subsurface. Applying stupid workaround.");
                 }
@@ -2383,10 +2402,10 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
         return;
     }
 
-    wl_surface_attach(surface->surface, sprite->buffer, 0, 0);
+    wl_surface_attach(surface->surface, sprite->buffer->buffer, 0, 0);
     wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
     if (!surface->drag_pointer) {
-        wl_surface_set_input_region(surface->surface, sprite->input_region);
+        wl_surface_set_input_region(surface->surface, sprite->buffer->region);
     }
 
     if (!surface->pose) {
@@ -2541,7 +2560,7 @@ void environment_subsurface_release(environment_subsurface_t* surface) {
 
     surface->is_grabbed = false;
     enable_input_on_environments(false);
-    wl_surface_set_input_region(surface->surface, surface->pose->sprite[surface->mascot->LookingRight->value.i]->input_region);
+    wl_surface_set_input_region(surface->surface, surface->pose->sprite[surface->mascot->LookingRight->value.i]->buffer->region);
     wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
 
     environment_pointer_t* drag_pointer = surface->drag_pointer;
@@ -3056,4 +3075,122 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
     return true;
 
     // Subsurface stays unmapped until new pose is set
+}
+
+void environment_disable_tablet_workarounds(bool value)
+{
+    disable_tablet_workarounds = value;
+    if (disable_tablet_workarounds & why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
+        WARN("Tablet v2 proximity_in events received by parent workaround is disabled");
+        why_tablet_v2_proximity_in_events_received_by_parent_question_mark = false;
+    }
+}
+
+const char* environment_get_backend_name()
+{
+    return "Wayland";
+}
+
+
+environment_buffer_factory_t* environment_buffer_factory_new()
+{
+    if (!compositor) ERROR("Failed to create buffer factory: wl_compositor is not available");
+    if (!shm_manager) ERROR("Failed to create buffer factory: wl_shm is not available");
+    environment_buffer_factory_t* factory = (environment_buffer_factory_t*)calloc(1, sizeof(environment_buffer_factory_t));
+    if (!factory) ERROR("Failed to create buffer factory: Out of memory");
+
+    factory->memfd = memfd_create("environment_factory_buffer", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (factory->memfd < 0) {
+        free(factory);
+        WARN("Failed to create buffer factory: Failed to create memfd");
+        return NULL;
+    }
+
+    return factory;
+}
+
+void environment_buffer_factory_destroy(environment_buffer_factory_t* factory)
+{
+    if (!factory) return;
+    if (factory->pool) wl_shm_pool_destroy(factory->pool);
+    close(factory->memfd);
+    free(factory);
+}
+
+bool environment_buffer_factory_write(environment_buffer_factory_t* factory, const void* data, size_t size)
+{
+    if (!factory) return false;
+    if (write(factory->memfd, data, size) != (ssize_t)size) {
+        WARN("Failed to write data to buffer factory");
+        return false;
+    }
+    factory->size += size;
+    return true;
+}
+
+void environment_buffer_factory_done(environment_buffer_factory_t* factory)
+{
+    if (!factory) return;
+    if (factory->done) return;
+
+    factory->pool = wl_shm_create_pool(shm_manager, factory->memfd, factory->size);
+    if (!factory->pool) ERROR("Failed to create buffer factory pool");
+
+    factory->done = true;
+}
+
+environment_buffer_t* environment_buffer_factory_create_buffer(environment_buffer_factory_t* factory, int32_t width, int32_t height, uint32_t stride, uint32_t offset)
+{
+    if (!factory) return NULL;
+    if (!factory->done) return NULL;
+
+    environment_buffer_t* buffer = (environment_buffer_t*)calloc(1, sizeof(environment_buffer_t));
+    if (!buffer) ERROR("Failed to create buffer: Out of memory");
+
+    buffer->buffer = wl_shm_pool_create_buffer(factory->pool, offset, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+    if (!buffer->buffer) {
+        free(buffer);
+        WARN("Failed to create buffer: Failed to create wl_buffer");
+        return NULL;
+    }
+
+    return buffer;
+}
+
+void environment_buffer_add_to_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+    if (!buffer) return;
+    if (!buffer->buffer) return;
+
+    if (!buffer->region) {
+        buffer->region = wl_compositor_create_region(compositor);
+        if (!buffer->region) {
+            WARN("Failed to add buffer to input region: Failed to create region");
+            return;
+        }
+    }
+    wl_region_add(buffer->region, x, y, width, height);
+}
+
+void environment_buffer_subtract_from_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+    if (!buffer) return;
+    if (!buffer->buffer) return;
+
+    if (!buffer->region) {
+        buffer->region = wl_compositor_create_region(compositor);
+        if (!buffer->region) {
+            WARN("Failed to subtract buffer from input region: Failed to create region");
+            return;
+        }
+    }
+    wl_region_subtract(buffer->region, x, y, width, height);
+}
+
+void environment_buffer_destroy(environment_buffer_t* buffer)
+{
+    if (!buffer) return;
+    if (buffer->region) wl_region_destroy(buffer->region);
+    if (buffer->buffer) wl_buffer_destroy(buffer->buffer);
+    free(buffer);
 }

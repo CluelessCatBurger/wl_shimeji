@@ -21,7 +21,6 @@
 #define ENVIRONMENT_H
 
 #include "master_header.h"
-#include "wayland_includes.h"
 
 #define ENV_DISABLE_TABLETS 1
 #define ENV_DISABLE_FRACTIONAL_SCALE 2
@@ -31,6 +30,8 @@
 typedef struct environment environment_t;
 typedef struct environment_subsurface environment_subsurface_t;
 typedef struct environment_pointer environment_pointer_t; // Any pointers, including tablets
+typedef struct environment_buffer_factory environment_buffer_factory_t;
+typedef struct environment_buffer environment_buffer_t;
 
 enum environment_border_type {
     environment_border_type_none,
@@ -85,8 +86,6 @@ void environment_rem_env_listener(void(*listener)(environment_t*));
 
 const char* environment_get_error();
 
-struct wl_compositor* environment_get_compositor();
-struct wl_shm* environment_get_shm();
 int environment_get_display_fd();
 
 void environment_unlink(environment_t* env);
@@ -156,5 +155,19 @@ bool environment_ie_restore(environment_t* env);
 // Misc
 void environment_set_broadcast_input_enabled_listener(void(*listener)(bool));
 void environment_set_mascot_by_coords_callback(struct mascot* (*callback)(environment_t*, int32_t, int32_t));
+void environment_disable_tablet_workarounds(bool value);
+const char* environment_get_backend_name();
+
+
+// Buffers
+environment_buffer_factory_t* environment_buffer_factory_new();
+void environment_buffer_factory_destroy(environment_buffer_factory_t* factory);
+bool environment_buffer_factory_write(environment_buffer_factory_t* factory, const void* data, size_t size);
+void environment_buffer_factory_done(environment_buffer_factory_t* factory);
+environment_buffer_t* environment_buffer_factory_create_buffer(environment_buffer_factory_t* factory, int32_t width, int32_t height, uint32_t stride, uint32_t offset);
+
+void environment_buffer_add_to_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height);
+void environment_buffer_subtract_from_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height);
+void environment_buffer_destroy(environment_buffer_t* buffer);
 
 #endif

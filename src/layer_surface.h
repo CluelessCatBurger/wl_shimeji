@@ -21,12 +21,14 @@
 #define LAYER_SURFACE_H
 
 #include "master_header.h"
-#include "wayland_includes.h"
 
 #define LAYER_TYPE_OVERLAY ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY
 #define LAYER_TYPE_TOP ZWLR_LAYER_SHELL_V1_LAYER_TOP
 #define LAYER_TYPE_BOTTOM ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM
 #define LAYER_TYPE_BACKGROUND ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND
+
+
+#include "wayland_includes.h"
 
 struct layer_surface
 {

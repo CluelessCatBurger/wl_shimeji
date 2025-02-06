@@ -101,15 +101,15 @@ all: $(TARGET) $(PLUGINS_TARGET) $(UTILS_DIR)/shimejictl
 
 .PHONY: clean
 clean:
-	@-rm -r $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR) $(UTILS_DIR)/shimejictl
+	@-rm -rf $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR) $(UTILS_DIR)/shimejictl $(UTILS_DIR)
 
 .PHONY: install_plugins
-install_plugins: $(TARGET) $(PLUGINS_TARGET)
+install_plugins:
 	install -d $(DESTDIR)$(PREFIX)/lib/
 	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
 
 .PHONY: install
-install: $(TARGET) $(UTILS_DIR)/shimejictl
+install: $(UTILS_DIR)/shimejictl
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl

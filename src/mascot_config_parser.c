@@ -2253,7 +2253,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
         return PROTOTYPE_LOAD_MANIFEST_INVALID;
     }
 
-    struct mascot_atlas* atlas = mascot_atlas_new(environment_get_compositor(), environment_get_shm(), assets_path);
+    struct mascot_atlas* atlas = mascot_atlas_new(assets_path);
     prototype->atlas = atlas;
     if (!atlas) {
         WARN("Cannot load prototype from %s: Failed to create atlas", filename_buf);
