@@ -2625,7 +2625,7 @@ int32_t environment_cursor_dx(struct mascot* mascot, environment_t* env) {
     environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
     if (!pointer) pointer = active_pointer;
     if (!pointer) return 0;
-    return pointer->dx/2;
+    return pointer->dx;
 }
 
 int32_t environment_cursor_dy(struct mascot* mascot, environment_t* env) {
