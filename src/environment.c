@@ -1407,7 +1407,7 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
         if (env_pointer->grabbed_subsurface && pressed_button == mascot_hotspot_button_left) {
             env_pointer->dx = (env_pointer->x - env_pointer->dx);
             env_pointer->dy = (env_pointer->y - env_pointer->dy);
-            mascot_drag_ended(mascot, true);
+            mascot_drag_ended(environment_subsurface_get_mascot(env_pointer->grabbed_subsurface), true);
         } else {
             if (mascot->hotspot_active || env_pointer->grabbed_subsurface) {
                 mascot_hotspot_hold(mascot, env_pointer->surface_x, env_pointer->surface_y, pressed_button, true);
