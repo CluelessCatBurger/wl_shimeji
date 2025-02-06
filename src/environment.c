@@ -2174,7 +2174,7 @@ enum environment_init_status environment_init(int flags,
 
     const char* session = getenv("XDG_CURRENT_DESKTOP");
     if (session) {
-        if (!strcmp(session, "KDE")) {
+        if (!strcmp(session, "KDE") && !disable_tablet_workarounds) {
             WARN("KDE session detected, applying workaround for tablet proximity_in events");
             why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
             we_on_kde = true;

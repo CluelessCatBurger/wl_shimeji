@@ -1283,6 +1283,8 @@ int main(int argc, const char** argv)
             env_init_flags |= ENV_DISABLE_CURSOR_SHAPE;
         } else if (strcmp(argv[i], "--no-plugins") == 0) {
             disable_plugins = true;
+        } else if (strcmp(argv[i], "-dwt") == 0 || strcmp(argv[i], "--disable-tablets-workarounds") == 0) {
+            environment_disable_tablet_workarounds(true);
         } else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--version")) {
             printf("%s\n", WL_SHIMEJI_VERSION);
             return 0;
