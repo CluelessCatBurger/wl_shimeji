@@ -189,9 +189,9 @@ enum mascot_tick_result simple_action_tick(struct mascot *mascot, struct mascot_
         if (velx != 0.0) {
             // new_x += velx;
             if (looking_right) {
-                new_x += velx;
-            } else {
                 new_x -= velx;
+            } else {
+                new_x += velx;
             }
         }
 
