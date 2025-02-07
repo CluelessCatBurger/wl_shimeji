@@ -3203,15 +3203,16 @@ uint64_t environment_interpolate(environment_t *env)
     if (!env) return 0;
     if (!env->is_ready) return 0;
 
-    int32_t framerate = config_get_framerate();
-    if (framerate < 0) framerate = (env->output.refresh / 1000);
-    if (!framerate) return 0;
+    float framerate = config_get_framerate();
+    if (framerate < 0) framerate = (env->output.refresh / 1000.0);
+    if (framerate < 1.0) return 0;
 
     float progress_fraction = framerate / 25.0;
     // Iterate through references mascots
-    for (uint32_t i = 0; i < list_size(env->referenced_mascots); i++) {
+    for (uint32_t i = 0, c = list_count(env->referenced_mascots); i < list_size(env->referenced_mascots) && c > 0; i++) {
         struct mascot* mascot = list_get(env->referenced_mascots, i);
         if (mascot) {
+            c--;
             if (mascot->subsurface) {
                 if (mascot->subsurface->interpolation_data.x == mascot->subsurface->interpolation_data.new_x && mascot->subsurface->interpolation_data.y == mascot->subsurface->interpolation_data.new_y) {
                     continue;
