@@ -2910,25 +2910,6 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
 
     enum environment_move_result result = environment_move_ok;
 
-
-
-    // if (active_pointer) {
-    //     if (active_pointer->above_surface) {
-    //         environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer->above_surface);
-    //         if (above_surface == surface && surface->pose) {
-    //             active_pointer->surface_x = active_pointer->x - (dx + surface->pose->anchor_x);
-    //             active_pointer->surface_y = active_pointer->y - (dy + surface->pose->anchor_y);
-    //             if ((int)active_pointer->surface_x < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->width / surface->env->scale
-    //                 || (int)active_pointer->surface_y < 0 || (int)active_pointer->surface_y > (int)surface->pose->sprite[surface->mascot->LookingRight->value.i]->height / surface->env->scale) {
-    //                 active_pointer->surface_x = 0;
-    //                 active_pointer->surface_y = 0;
-    //                 active_pointer->above_surface = NULL;
-    //             }
-    //         }
-    //     }
-    // }
-
-
     int32_t surface_anchor_x = 0, surface_anchor_y = 0;
     surface_anchor_x = surface->offset_x;
     surface_anchor_y = surface->offset_y;
@@ -3282,4 +3263,5 @@ void environment_subsurface_reset_interpolation(environment_subsurface_t* subsur
     subsurface->interpolation_data.prev_y = subsurface->y;
     subsurface->interpolation_data.x = subsurface->x;
     subsurface->interpolation_data.y = subsurface->y;
+
 }
