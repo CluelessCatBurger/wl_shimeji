@@ -39,17 +39,6 @@ void list_free_(struct list* list)
     free(list);
 }
 
-void* list_get_(struct list* list, uint32_t index)
-{
-    if (index >= list->entry_count) {
-        return NULL;
-    }
-    if (!list->entry_used[index]) {
-        return NULL;
-    }
-    return list->entries[index];
-}
-
 uint32_t list_add_(struct list* list, void* entry)
 {
     if (!entry) {
@@ -84,24 +73,4 @@ void list_remove_(struct list* list, uint32_t index)
     }
     list->entry_used[index] = 0;
     list->occupied--;
-}
-
-uint32_t list_find_(struct list* list, void* entry)
-{
-    if (!entry) {
-        return UINT32_MAX;
-    }
-    for (uint32_t i = 0; i < list->entry_count; i++) {
-        if (list->entry_used[i]) {
-            if (list->entries[i] == entry) {
-                return i;
-            }
-        }
-    }
-    return UINT32_MAX;
-}
-
-uint32_t list_count_(struct list* list)
-{
-    return list->occupied;
 }

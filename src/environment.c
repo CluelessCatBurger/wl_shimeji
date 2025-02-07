@@ -2455,6 +2455,7 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback, bool use_interpolation)
 {
     if (!surface->surface) return environment_move_invalid;
+    if (!config_get_framerate()) use_interpolation = false;
 
     enum environment_move_result result = environment_move_ok;
 
@@ -3232,7 +3233,8 @@ uint64_t environment_interpolate(environment_t *env)
     if (!env->is_ready) return 0;
 
     int32_t framerate = config_get_framerate();
-    if (framerate < 1) framerate = (env->output.refresh / 1000);
+    if (framerate < 0) framerate = (env->output.refresh / 1000);
+    if (!framerate) return 0;
 
     float progress_fraction = framerate / 25.0;
     // Iterate through references mascots
@@ -3240,6 +3242,10 @@ uint64_t environment_interpolate(environment_t *env)
         struct mascot* mascot = list_get(env->referenced_mascots, i);
         if (mascot) {
             if (mascot->subsurface) {
+                if (mascot->subsurface->interpolation_data.x == mascot->subsurface->interpolation_data.new_x && mascot->subsurface->interpolation_data.y == mascot->subsurface->interpolation_data.new_y) {
+                    continue;
+                }
+
                 if (mascot->subsurface->is_grabbed) continue;
                 float delta_x = mascot->subsurface->interpolation_data.new_x - mascot->subsurface->interpolation_data.prev_x;
                 float delta_y = mascot->subsurface->interpolation_data.new_y - mascot->subsurface->interpolation_data.prev_y;

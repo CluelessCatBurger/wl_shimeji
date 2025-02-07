@@ -42,9 +42,37 @@ struct list {
 struct list* list_init_(uint32_t capacity);
 uint32_t list_add_(struct list* list, void* entry);
 void list_remove_(struct list* list, uint32_t index);
-void* list_get_(struct list* list, uint32_t index);
 void list_free_(struct list* list);
-uint32_t list_count_(struct list* list);
-uint32_t list_find_(struct list* list, void* entry);
+
+static inline void* list_get_(struct list* list, uint32_t index)
+{
+    if (index >= list->entry_count) {
+        return NULL;
+    }
+    if (!list->entry_used[index]) {
+        return NULL;
+    }
+    return list->entries[index];
+}
+
+static inline uint32_t list_find_(struct list* list, void* entry)
+{
+    if (!entry) {
+        return UINT32_MAX;
+    }
+    for (uint32_t i = 0; i < list->entry_count; i++) {
+        if (list->entry_used[i]) {
+            if (list->entries[i] == entry) {
+                return i;
+            }
+        }
+    }
+    return UINT32_MAX;
+}
+
+static inline uint32_t list_count_(struct list* list)
+{
+    return list->occupied;
+}
 
 #endif

@@ -38,7 +38,6 @@ bool config_parse(const char* path)
     config.dismiss_animations = true;
     config.affordances = true;
     config.overlay_layer = LAYER_TYPE_OVERLAY;
-    config.framerate = -1;
     config.mascot_limit = 512;
     config.ie_throw_policy = 3;
     config.pointer_left_value = -1;
@@ -93,7 +92,7 @@ bool config_parse(const char* path)
             config_set_allow_dismiss_animations(strncmp(value, "true", 4) == 0);
         } else if (strcmp(key, "per_mascot_interactions") == 0) {
             config_set_per_mascot_interactions(strncmp(value, "true", 4) == 0);
-        } else if (strcmp(key, "framerate") == 0) {
+        } else if (strcmp(key, "interpolation_framerate") == 0) {
             config_set_framerate(atoi(value));
         } else if (strcmp(key, "overlay_layer") == 0) {
             config_set_overlay_layer(atoi(value));
@@ -150,7 +149,7 @@ void config_write(const char* path)
     fprintf(file, "ie_throw_policy=%d\n", config.ie_throw_policy);
     fprintf(file, "allow_dismiss_animations=%s\n", config.dismiss_animations ? "true" : "false");
     fprintf(file, "per_mascot_interactions=%s\n", config.affordances ? "true" : "false");
-    if (config.framerate != -1) fprintf(file, "framerate=%d\n", config.framerate);
+    if (config.framerate) fprintf(file, "interpolation_framerate=%d\n", config.framerate);
     fprintf(file, "overlay_layer=%d\n", config.overlay_layer);
     fprintf(file, "tablets_enabled=%s\n", config.enable_tablets ? "true" : "false");
     if (config.pointer_left_value != -1) fprintf(file, "pointer_left_value=%d\n", config.pointer_left_value);
