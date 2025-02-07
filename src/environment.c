@@ -2420,12 +2420,7 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
         wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
         if (surface->mascot) {
             environment_subsurface_set_position(surface, surface->mascot->X->value.i, yconv(surface->env, surface->mascot->Y->value.i));
-            surface->interpolation_data.prev_x = surface->mascot->X->value.i;
-            surface->interpolation_data.prev_y = yconv(surface->env, surface->mascot->Y->value.i);
-            surface->interpolation_data.x = surface->mascot->X->value.i;
-            surface->interpolation_data.y = yconv(surface->env, surface->mascot->Y->value.i);
-            surface->interpolation_data.new_x = surface->mascot->X->value.i;
-            surface->interpolation_data.new_y = yconv(surface->env, surface->mascot->Y->value.i);
+            environment_subsurface_reset_interpolation(surface);
         }
         wl_surface_commit(surface->surface);
     }
@@ -2517,12 +2512,7 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
         if (environment_subsurface_set_position(surface, dx, dy) == environment_move_invalid) {
             return environment_move_invalid;
         }
-        surface->interpolation_data.prev_x = dx;
-        surface->interpolation_data.prev_y = dy;
-        surface->interpolation_data.x = dx;
-        surface->interpolation_data.y = dy;
-        surface->interpolation_data.new_x = dx;
-        surface->interpolation_data.new_y = dy;
+        environment_subsurface_reset_interpolation(surface);
     }
 
 
@@ -3281,4 +3271,15 @@ void* environment_get_user_data(environment_t* env)
 {
     if (!env) return NULL;
     return env->external_data;
+}
+
+void environment_subsurface_reset_interpolation(environment_subsurface_t* subsurface)
+{
+    if (!subsurface) return;
+    subsurface->interpolation_data.new_x = subsurface->x;
+    subsurface->interpolation_data.new_y = subsurface->y;
+    subsurface->interpolation_data.prev_x = subsurface->x;
+    subsurface->interpolation_data.prev_y = subsurface->y;
+    subsurface->interpolation_data.x = subsurface->x;
+    subsurface->interpolation_data.y = subsurface->y;
 }

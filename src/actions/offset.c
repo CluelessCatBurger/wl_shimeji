@@ -58,6 +58,7 @@ enum mascot_tick_result offset_action_init(struct mascot *mascot, struct mascot_
 
     // Set new position
     environment_subsurface_set_position(mascot->subsurface, x + mascot->X->value.i, y - mascot->Y->value.i);
+    environment_subsurface_reset_interpolation(mascot->subsurface);
     mascot->X->value.i = x + mascot->X->value.i;
     mascot->Y->value.i = y - mascot->Y->value.i;
     return mascot_tick_next;

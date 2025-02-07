@@ -173,6 +173,8 @@ void environment_buffer_destroy(environment_buffer_t* buffer);
 void environment_set_user_data(environment_t* env, void* data);
 void* environment_get_user_data(environment_t* env);
 
+// Interpolation
 uint64_t environment_interpolate(environment_t* env);
+void environment_subsurface_reset_interpolation(environment_subsurface_t* subsurface); // Resets to current position
 
 #endif
