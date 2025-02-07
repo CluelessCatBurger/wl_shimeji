@@ -1633,7 +1633,7 @@ int main(int argc, const char** argv)
 
     // Finalize initialization by sending the ready message
     char readymsg[2] = {0x7f};
-    write(inhereted_fd, readymsg, 1);
+    ssize_t funused = write(inhereted_fd, readymsg, 1);
 
     packet_processors[0x1] = process_add_mascot_packet;
     packet_processors[0x3] = process_load_prototype_packet;
@@ -1765,5 +1765,6 @@ int main(int argc, const char** argv)
     close(inhereted_fd);
     close(epfd);
     unlink(socket_path);
+    UNUSED(funused);
     return 0;
 }

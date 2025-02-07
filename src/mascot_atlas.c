@@ -156,8 +156,8 @@ bool _recursive_walk(const char* dirname, uint32_t* file_count, char*** file_pat
                 paths_array = new_paths_array;
                 paths_array_size *= 2;
             }
-            char name[256] = {0};
-            size_t printed = snprintf(name, 256, "%s/%s", prefix, direntry->d_name);
+            char name[258] = {0};
+            size_t printed = snprintf(name, 258, "%s/%s", prefix, direntry->d_name);
             UNUSED(printed);
             paths_array[*file_count] = !(*prefix) ? strdup(name+1) : strdup(name);
             if (!paths_array[*file_count]) {
@@ -180,7 +180,7 @@ fail_walk:
         }
     }
     free(paths_array);
-    closedir(dir);
+    if (dir) closedir(dir);
     return false;
 }
 

@@ -47,7 +47,8 @@ static void configure(void* data, struct zwlr_layer_surface_v1* wlr_layer_surfac
     int memfd = memfd_create("layer_surface", 0);
     assert(memfd >= 0);
 
-    ftruncate(memfd, width*height*4);
+    int fres = ftruncate(memfd, width*height*4);
+    UNUSED(fres);
 
     struct wl_shm_pool* shm_pool = wl_shm_create_pool(shm_manager, memfd, height*width*4);
     _layer_surface->buffer = wl_shm_pool_create_buffer(shm_pool, 0, width, height, width*4, WL_SHM_FORMAT_ARGB8888);

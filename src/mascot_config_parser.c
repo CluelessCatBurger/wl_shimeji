@@ -2151,7 +2151,8 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     }
 
     fseek(manifest, 0, SEEK_SET);
-    fread(buffer, 1, size, manifest);
+    int readed = fread(buffer, 1, size, manifest);
+    UNUSED(readed);
 
     struct json_value_s* manifest_data = json_parse(buffer, size);
     if (!manifest_data) {
@@ -2189,7 +2190,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
                 WARN("Cannot load prototype from %s: Invalid JSON: Mascot config version is invalid");
                 return PROTOTYPE_LOAD_MANIFEST_INVALID;
             }
-            strncpy(version_str, ((struct json_string_s*)(element->value->payload))->string, 128);
+            strncpy(version_str, ((struct json_string_s*)(element->value->payload))->string, 127);
         } else if (!strcmp(element->name->string, "display_name")) {
             if (element->value->type != json_type_string) {
                 WARN("Cannot load prototype from %s: Invalid JSON: display_name expected to be a string", filename_buf);
@@ -2272,7 +2273,8 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     fseek(programs, 0, SEEK_SET);
 
     char* progbuf = (char*)calloc(1, size + 1);
-    fread(progbuf, 1, size, programs);
+    readed = fread(progbuf, 1, size, programs);
+    UNUSED(readed);
     struct json_value_s* programs_data = json_parse(progbuf, size);
 
     if (!programs_data) {
@@ -2311,7 +2313,8 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     fseek(actions, 0, SEEK_SET);
 
     char* actbuf = (char*)calloc(1, size + 1);
-    fread(actbuf, 1, size, actions);
+    readed = fread(actbuf, 1, size, actions);
+    UNUSED(readed);
     struct json_value_s* actions_data = json_parse(actbuf, size);
 
     if (!actions_data) {
@@ -2350,7 +2353,8 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     fseek(behaviors, 0, SEEK_SET);
 
     char* behbuf = (char*)calloc(1, size + 1);
-    fread(behbuf, 1, size, behaviors);
+    readed = fread(behbuf, 1, size, behaviors);
+    UNUSED(readed);
     // struct json_value_s* behaviors_data = json_parse(behbuf, size);
     struct json_parse_result_s result;
     struct json_value_s* behaviors_data = json_parse_ex(behbuf, size, 0, NULL, NULL, &result);
