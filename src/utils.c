@@ -33,13 +33,12 @@ static size_t rvvm_strlcpy(char* dst, const char* src, size_t size)
 size_t write_time(char* prefix) {
     time_t t = time(NULL);
     struct tm tm = *localtime(&t);
-    return snprintf(prefix, 64, "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(t % 1000));
+    return snprintf(prefix, 31, "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(t % 1000));
 }
 
 void log_print(const char* prefix, const char* fmt, va_list args)
 {
     char buffer[256] = {0};
-    write_time(buffer);
     size_t pos = rvvm_strlcpy(buffer, prefix, sizeof(buffer));
     size_t vsp_size = sizeof(buffer) - EVAL_MIN(pos + 6, sizeof(buffer));
     if (vsp_size > 1) {
@@ -54,10 +53,10 @@ PRINT_FORMAT void __clog(const char* color, const char* log_type, const char* fi
 {
     va_list args;
     va_start(args, fmt);
-    char prefix[64] = {0};
+    char prefix[128] = {0};
     char timebuf[32] = {0};
     write_time(timebuf);
-    snprintf(prefix, 64, "%s[%s][%s][%s:%d]: ", color, timebuf, log_type, file, line);
+    snprintf(prefix, 127, "%s[%s][%s][%s:%d]: ", color, timebuf, log_type, file, line);
     log_print(prefix, fmt, args);
     va_end(args);
 }
@@ -66,10 +65,10 @@ PRINT_FORMAT void __error(const char* file, int line, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    char prefix[64] = {0};
+    char prefix[128] = {0};
     char timebuf[32] = {0};
     write_time(timebuf);
-    snprintf(prefix, 64, "\033[33m[%s][ERROR][%s:%d]: ", timebuf, file, line);
+    snprintf(prefix, 127, "\033[33m[%s][ERROR][%s:%d]: ", timebuf, file, line);
     log_print(prefix, fmt, args);
     va_end(args);
     exit(1);
@@ -79,10 +78,10 @@ PRINT_FORMAT void __warn(const char* file, int line, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    char prefix[64] = {0};
+    char prefix[128] = {0};
     char timebuf[32] = {0};
     write_time(timebuf);
-    snprintf(prefix, 64, "\033[93m[%s][WARN][%s:%d]: ", timebuf, file, line);
+    snprintf(prefix, 127, "\033[93m[%s][WARN][%s:%d]: ", timebuf, file, line);
     log_print(prefix, fmt, args);
     va_end(args);
 }
@@ -91,10 +90,10 @@ PRINT_FORMAT void __info(const char* file, int line, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    char prefix[64] = {0};
+    char prefix[128] = {0};
     char timebuf[32] = {0};
     write_time(timebuf);
-    snprintf(prefix, 64, "\033[94m[%s][INFO][%s:%d]: ", timebuf, file, line);
+    snprintf(prefix, 127, "\033[94m[%s][INFO][%s:%d]: ", timebuf, file, line);
     log_print(prefix, fmt, args);
     va_end(args);
 }
@@ -104,10 +103,10 @@ PRINT_FORMAT void __debug(const char* file, int line, const char* fmt, ...)
 #ifdef VERBOSE
     va_list args;
     va_start(args, fmt);
-    char prefix[64] = {0};
+    char prefix[128] = {0};
     char timebuf[32] = {0};
     write_time(timebuf);
-    snprintf(prefix, 64, "\033[92m[%s][DEBUG][%s:%d]: ", timebuf, file, line);
+    snprintf(prefix, 127, "\033[92m[%s][DEBUG][%s:%d]: ", timebuf, file, line);
     log_print(prefix, fmt, args);
     va_end(args);
 #else
