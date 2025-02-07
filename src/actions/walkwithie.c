@@ -324,13 +324,13 @@ enum mascot_tick_result walkwithie_action_tick(struct mascot *mascot, struct mas
 
     if ((posx == target_x || target_x == -1 ) && (posy == target_y || target_y == -1)) {
         DEBUG("<Mascot:%s:%u> Reached target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, posx, posy, target_x, target_y);
-        environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
         return mascot_tick_reenter;
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
         DEBUG("<Mascot:%s:%u> Moving towards target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, posx, posy);
-        enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
         if (move_result == environment_move_clamped) {
             mascot->TargetX->value.i = -1;
             mascot->TargetY->value.i = -1;

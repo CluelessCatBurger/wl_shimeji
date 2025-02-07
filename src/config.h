@@ -49,7 +49,7 @@ struct config {
     bool affordances;
     int32_t overlay_layer;
 
-    uint32_t tick_delay;
+    int32_t framerate;
 
     uint32_t mascot_limit;
     int32_t ie_throw_policy;
@@ -91,7 +91,7 @@ bool config_set_mascot_limit(uint32_t value);
 bool config_set_ie_throw_policy(int32_t value);
 bool config_set_allow_dismiss_animations(bool value);
 bool config_set_per_mascot_interactions(bool value);
-bool config_set_tick_delay(uint32_t value);
+bool config_set_framerate(int32_t value);
 bool config_set_overlay_layer(int32_t value);
 bool config_set_tablets_enabled(bool value);
 bool config_set_pointer_left_button(int32_t value);
@@ -118,7 +118,7 @@ uint32_t config_get_mascot_limit();
 int32_t config_get_ie_throw_policy();
 bool config_get_allow_dismiss_animations();
 bool config_get_per_mascot_interactions();
-uint32_t config_get_tick_delay();
+int32_t config_get_framerate();
 int32_t config_get_overlay_layer();
 bool config_get_tablets_enabled();
 uint32_t config_get_pointer_left_button();

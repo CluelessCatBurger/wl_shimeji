@@ -707,7 +707,7 @@ bool mascot_drag_ended(struct mascot* mascot, bool throw)
     else mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
     environment_subsurface_set_offset(mascot->subsurface, 0, 0);
     environment_subsurface_release(mascot->subsurface);
-    environment_subsurface_move(mascot->subsurface, mascot->X->value.i, mascot->Y->value.i-120, true);
+    environment_subsurface_move(mascot->subsurface, mascot->X->value.i, mascot->Y->value.i-120, true, false);
     return true;
 }
 

@@ -104,6 +104,13 @@ struct {
     pthread_mutex_t mutex;
 } mascot_store = {0};
 
+struct env_data {
+    pthread_t interpolation_thread;
+    bool stop;
+};
+
+static void* env_interpolation_thread(void*);
+
 static void env_new(environment_t* environment)
 {
     pthread_mutex_lock(&environment_store.mutex);
@@ -127,10 +134,19 @@ static void env_new(environment_t* environment)
             environment_store.entries[i] = environment;
             environment_store.entry_states[i] = 1;
             environment_store.used_count++;
+
+            struct env_data* data = calloc(1, sizeof(struct env_data));
+            if (!data) {
+                ERROR("Failed to allocate memory for environment data");
+            }
             pthread_mutex_unlock(&environment_store.mutex);
+            environment_set_user_data(environment, data);
+            pthread_create(&data->interpolation_thread, NULL, env_interpolation_thread, environment);
             return;
         }
     }
+
+
     pthread_mutex_unlock(&environment_store.mutex);
 }
 
@@ -143,11 +159,38 @@ static void env_delete(environment_t* environment)
             environment_store.entry_states[i] = 0;
             environment_store.used_count--;
             pthread_mutex_unlock(&environment_store.mutex);
+
+            struct env_data* data = environment_get_user_data(environment);
+            if (data) {
+                data->stop = true;
+                pthread_join(data->interpolation_thread, NULL);
+                free(data);
+            }
+
             environment_unlink(environment);
             return;
         }
     }
+
     pthread_mutex_unlock(&environment_store.mutex);
+}
+
+void* env_interpolation_thread(void* data)
+{
+    TRACE("Starting environment interpolation thread");
+    environment_t* env = (environment_t*)data;
+    struct env_data* env_data = environment_get_user_data(env);
+    uint64_t sleep_time;
+    while (!env_data->stop) {
+        pthread_mutex_lock(&mascot_store.mutex);
+        sleep_time = environment_interpolate(env);
+        pthread_mutex_unlock(&mascot_store.mutex);
+        environment_commit(env);
+
+        if (!sleep_time) sleep_time = 40000;
+        usleep(sleep_time);
+    }
+    return NULL;
 }
 
 static void orphaned_mascot(struct mascot* mascot) {
@@ -811,7 +854,7 @@ bool process_config_packet(uint8_t* buff, uint16_t len, int fd)
                 large_param = config_get_per_mascot_interactions();
                 break;
             case CONFIG_PARAM_TICK_DELAY_ID:
-                large_param = config_get_tick_delay();
+                large_param = config_get_framerate();
                 break;
             default:
                 rbuff[1] = 0x81; // Status CONFIG_GET_UNKNOWN
@@ -861,7 +904,7 @@ bool process_config_packet(uint8_t* buff, uint16_t len, int fd)
                 break;
             case CONFIG_PARAM_TICK_DELAY_ID:
                 memcpy(&large_param, buff + 2, 4);
-                config_set_tick_delay(large_param);
+                config_set_framerate(large_param);
                 break;
             default:
                 rbuff[1] = 0x01; // Status CONFIG_SET_UNKNOWN
@@ -1181,7 +1224,7 @@ void* mascot_manager_thread(void* arg)
         }
         pthread_mutex_unlock(&mascot_store.mutex);
         pthread_mutex_unlock(&environment_store.mutex);
-        usleep(config_get_tick_delay());
+        usleep(40000);
         if (should_exit) {
             break;
         }
@@ -1320,17 +1363,17 @@ int main(int argc, const char** argv)
 
     if (!config_parse(config_file_path)) {
         INFO("Bad config! Creating new one.");
-        config_set_breeding(true);
-        config_set_dragging(true);
-        config_set_ie_interactions(true);
-        config_set_ie_throwing(false);
-        config_set_cursor_data(true);
-        config_set_mascot_limit(100);
-        config_set_ie_throw_policy(PLUGIN_IE_THROW_POLICY_LOOP);
-        config_set_allow_dismiss_animations(true);
-        config_set_per_mascot_interactions(true);
-        config_set_tick_delay(40000);
-        config_set_overlay_layer(LAYER_TYPE_OVERLAY);
+        // config_set_breeding(true);
+        // config_set_dragging(true);
+        // config_set_ie_interactions(true);
+        // config_set_ie_throwing(false);
+        // config_set_cursor_data(true);
+        // config_set_mascot_limit(100);
+        // config_set_ie_throw_policy(PLUGIN_IE_THROW_POLICY_LOOP);
+        // config_set_allow_dismiss_animations(true);
+        // config_set_per_mascot_interactions(true);
+        // config_set_tick_delay(40000);
+        // config_set_overlay_layer(LAYER_TYPE_OVERLAY);
         config_write(config_file_path);
     }
 

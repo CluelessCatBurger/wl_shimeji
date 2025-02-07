@@ -103,7 +103,7 @@ void environment_subsurface_reorder(environment_subsurface_t* surface, environme
 void environment_pointer_update_delta(environment_subsurface_t* subsurface, uint32_t tick);
 
 void environment_subsurface_attach(environment_subsurface_t* surface, const struct mascot_pose* pose);
-enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback);
+enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback, bool use_interpolation);
 enum environment_move_result environment_subsurface_set_position(environment_subsurface_t* surface, int32_t dx, int32_t dy);
 environment_t* environment_subsurface_get_environment(environment_subsurface_t* surface);
 bool environment_subsurface_move_to_pointer(environment_subsurface_t* surface);
@@ -169,5 +169,10 @@ environment_buffer_t* environment_buffer_factory_create_buffer(environment_buffe
 void environment_buffer_add_to_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height);
 void environment_buffer_subtract_from_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height);
 void environment_buffer_destroy(environment_buffer_t* buffer);
+
+void environment_set_user_data(environment_t* env, void* data);
+void* environment_get_user_data(environment_t* env);
+
+uint64_t environment_interpolate(environment_t* env);
 
 #endif

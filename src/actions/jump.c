@@ -276,7 +276,7 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
-        enum environment_move_result move_res = environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        enum environment_move_result move_res = environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
         if (move_res == environment_move_clamped) {
             return mascot_tick_reenter;
         }

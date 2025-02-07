@@ -274,7 +274,7 @@ enum mascot_tick_result scanjump_action_tick(struct mascot *mascot, struct masco
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
-        environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
     }
 
     return mascot_tick_ok;

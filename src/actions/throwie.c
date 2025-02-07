@@ -255,7 +255,7 @@ enum mascot_tick_result throwie_action_tick(struct mascot *mascot, struct mascot
         }
 
         if (x != new_x || y != new_y) {
-            environment_subsurface_move(mascot->subsurface, new_x, new_y, true);
+            environment_subsurface_move(mascot->subsurface, new_x, new_y, true, true);
         }
     }
     return mascot_tick_ok;

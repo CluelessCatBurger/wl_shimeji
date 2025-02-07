@@ -265,7 +265,7 @@ enum mascot_tick_result example_action_tick(struct mascot *mascot, struct mascot
         if (x != new_x || y != new_y) {
             // When we decided that we should move, we call that function, passing subsurface of mascot and new positions
             // Last argument is told environment subsystem that it should notify mascot about new position
-            environment_subsurface_move(mascot->subsurface, new_x, new_y, true);
+            environment_subsurface_move(mascot->subsurface, new_x, new_y, true, true);
         }
     }
     return mascot_tick_ok;

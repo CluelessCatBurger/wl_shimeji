@@ -136,6 +136,8 @@ struct environment {
     bool select_active;
     void (*select_callback)(environment_t* env, int32_t x, int32_t y, environment_subsurface_t* subsurface, void* data);
     void* select_data;
+
+    void* external_data;
 };
 
 struct wl_surface_data {
@@ -165,6 +167,12 @@ struct environment_subsurface {
     int32_t x, y;
     int32_t width, height;
     int32_t offset_x, offset_y;
+
+    struct {
+        float new_x, new_y;
+        float prev_x, prev_y;
+        float x, y;
+    } interpolation_data;
 };
 
 #define EVENT_FRAME_BUTTONS 0x01
@@ -2412,6 +2420,12 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
         wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
         if (surface->mascot) {
             environment_subsurface_set_position(surface, surface->mascot->X->value.i, yconv(surface->env, surface->mascot->Y->value.i));
+            surface->interpolation_data.prev_x = surface->mascot->X->value.i;
+            surface->interpolation_data.prev_y = yconv(surface->env, surface->mascot->Y->value.i);
+            surface->interpolation_data.x = surface->mascot->X->value.i;
+            surface->interpolation_data.y = yconv(surface->env, surface->mascot->Y->value.i);
+            surface->interpolation_data.new_x = surface->mascot->X->value.i;
+            surface->interpolation_data.new_y = yconv(surface->env, surface->mascot->Y->value.i);
         }
         wl_surface_commit(surface->surface);
     }
@@ -2438,7 +2452,7 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
     surface->env->pending_commit = true;
 }
 
-enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback)
+enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback, bool use_interpolation)
 {
     if (!surface->surface) return environment_move_invalid;
 
@@ -2498,9 +2512,24 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
         plugin_execute_ie_detach_mascot(surface->env->ie->parent_plugin, surface->env->ie, surface->mascot);
     }
 
-    if (environment_subsurface_set_position(surface, dx, dy) == environment_move_invalid) {
-        return environment_move_invalid;
+    if (!use_interpolation) {
+        if (environment_subsurface_set_position(surface, dx, dy) == environment_move_invalid) {
+            return environment_move_invalid;
+        }
+        surface->interpolation_data.prev_x = dx;
+        surface->interpolation_data.prev_y = dy;
+        surface->interpolation_data.x = dx;
+        surface->interpolation_data.y = dy;
+        surface->interpolation_data.new_x = dx;
+        surface->interpolation_data.new_y = dy;
     }
+
+
+    surface->interpolation_data.prev_x = surface->interpolation_data.x;
+    surface->interpolation_data.prev_y = surface->interpolation_data.y;
+
+    surface->interpolation_data.new_x = dx;
+    surface->interpolation_data.new_y = dy;
 
     if (surface->mascot && use_callback) {
         mascot_moved(surface->mascot, dx, yconv(surface->env, dy));
@@ -2890,6 +2919,8 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
 
     enum environment_move_result result = environment_move_ok;
 
+
+
     // if (active_pointer) {
     //     if (active_pointer->above_surface) {
     //         environment_subsurface_t* above_surface = environment_subsurface_from_surface(active_pointer->above_surface);
@@ -3193,4 +3224,55 @@ void environment_buffer_destroy(environment_buffer_t* buffer)
     if (buffer->region) wl_region_destroy(buffer->region);
     if (buffer->buffer) wl_buffer_destroy(buffer->buffer);
     free(buffer);
+}
+
+uint64_t environment_interpolate(environment_t *env)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t framerate = config_get_framerate();
+    if (framerate < 1) framerate = (env->output.refresh / 1000);
+
+    float progress_fraction = framerate / 25.0;
+    // Iterate through references mascots
+    for (uint32_t i = 0; i < list_size(env->referenced_mascots); i++) {
+        struct mascot* mascot = list_get(env->referenced_mascots, i);
+        if (mascot) {
+            if (mascot->subsurface) {
+                if (mascot->subsurface->is_grabbed) continue;
+                float delta_x = mascot->subsurface->interpolation_data.new_x - mascot->subsurface->interpolation_data.prev_x;
+                float delta_y = mascot->subsurface->interpolation_data.new_y - mascot->subsurface->interpolation_data.prev_y;
+                float chx = delta_x / progress_fraction;
+                float chy = delta_y / progress_fraction;
+                float new_x = mascot->subsurface->interpolation_data.x + chx;
+                float new_y = mascot->subsurface->interpolation_data.y + chy;
+
+                // If we reached the target position, stop moving on this axis
+                if (delta_x > 0 && new_x > mascot->subsurface->interpolation_data.new_x) new_x = mascot->subsurface->interpolation_data.new_x;
+                if (delta_x < 0 && new_x < mascot->subsurface->interpolation_data.new_x) new_x = mascot->subsurface->interpolation_data.new_x;
+                if (delta_y > 0 && new_y > mascot->subsurface->interpolation_data.new_y) new_y = mascot->subsurface->interpolation_data.new_y;
+                if (delta_y < 0 && new_y < mascot->subsurface->interpolation_data.new_y) new_y = mascot->subsurface->interpolation_data.new_y;
+
+
+                environment_subsurface_set_position(mascot->subsurface, round(new_x), round(new_y));
+                mascot->subsurface->interpolation_data.x = new_x;
+                mascot->subsurface->interpolation_data.y = new_y;
+            }
+        }
+    }
+    // Usecs to sleep
+    return 1000000 / (env->output.refresh / 1000.0);
+}
+
+void environment_set_user_data(environment_t* env, void* data)
+{
+    if (!env) return;
+    env->external_data = data;
+}
+
+void* environment_get_user_data(environment_t* env)
+{
+    if (!env) return NULL;
+    return env->external_data;
 }

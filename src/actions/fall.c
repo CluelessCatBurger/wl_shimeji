@@ -170,7 +170,7 @@ enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_ac
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
-        enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
         if (move_result == environment_move_clamped) {
             if (mascot->X->value.i == 0 && mascot->Y->value.i == 0) {
                 mascot->X->value.i = 1;

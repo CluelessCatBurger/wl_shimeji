@@ -38,7 +38,7 @@ bool config_parse(const char* path)
     config.dismiss_animations = true;
     config.affordances = true;
     config.overlay_layer = LAYER_TYPE_OVERLAY;
-    config.tick_delay = 40000;
+    config.framerate = -1;
     config.mascot_limit = 512;
     config.ie_throw_policy = 3;
     config.pointer_left_value = -1;
@@ -93,8 +93,8 @@ bool config_parse(const char* path)
             config_set_allow_dismiss_animations(strncmp(value, "true", 4) == 0);
         } else if (strcmp(key, "per_mascot_interactions") == 0) {
             config_set_per_mascot_interactions(strncmp(value, "true", 4) == 0);
-        } else if (strcmp(key, "tick_delay") == 0) {
-            config_set_tick_delay(atoi(value));
+        } else if (strcmp(key, "framerate") == 0) {
+            config_set_framerate(atoi(value));
         } else if (strcmp(key, "overlay_layer") == 0) {
             config_set_overlay_layer(atoi(value));
         } else if (strcmp(key, "tablets_enabled") == 0) {
@@ -150,7 +150,7 @@ void config_write(const char* path)
     fprintf(file, "ie_throw_policy=%d\n", config.ie_throw_policy);
     fprintf(file, "allow_dismiss_animations=%s\n", config.dismiss_animations ? "true" : "false");
     fprintf(file, "per_mascot_interactions=%s\n", config.affordances ? "true" : "false");
-    fprintf(file, "tick_delay=%u\n", config.tick_delay);
+    if (config.framerate != -1) fprintf(file, "framerate=%d\n", config.framerate);
     fprintf(file, "overlay_layer=%d\n", config.overlay_layer);
     fprintf(file, "tablets_enabled=%s\n", config.enable_tablets ? "true" : "false");
     if (config.pointer_left_value != -1) fprintf(file, "pointer_left_value=%d\n", config.pointer_left_value);
@@ -225,13 +225,9 @@ bool config_set_per_mascot_interactions(bool value)
     return true;
 }
 
-bool config_set_tick_delay(uint32_t value)
+bool config_set_framerate(int32_t value)
 {
-    if (!value) {
-        config.tick_delay = 40000;
-        return false;
-    }
-    config.tick_delay = value;
+    config.framerate = value;
     return true;
 }
 
@@ -286,12 +282,9 @@ bool config_get_per_mascot_interactions()
     return config.affordances;
 }
 
-uint32_t config_get_tick_delay()
+int32_t config_get_framerate()
 {
-    if (!config.tick_delay) {
-        return 40000;
-    }
-    return config.tick_delay;
+    return config.framerate;
 }
 
 int32_t config_get_overlay_layer()

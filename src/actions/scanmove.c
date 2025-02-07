@@ -298,13 +298,13 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
 
     if ((posx == target_x || target_x == -1 ) && (posy == target_y || target_y == -1)) {
         DEBUG("<Mascot:%s:%u> Reached target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, posx, posy, target_x, target_y);
-        environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
         return mascot_tick_reenter;
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
         DEBUG("<Mascot:%s:%u> Scanmoving towards target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, posx, posy);
-        environment_subsurface_move(mascot->subsurface, posx, posy, true);
+        environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
     }
     return mascot_tick_ok;
 }
