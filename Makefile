@@ -11,6 +11,7 @@ override PYTHON3 := $(shell which python3)
 PREFIX ?= /usr/local
 
 override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
+override CFLAGS  += $(shell pkg-config --cflags wayland-client)
 override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
