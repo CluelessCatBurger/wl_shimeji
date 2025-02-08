@@ -14,14 +14,10 @@ override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
 override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
-override WLR_PROTOCOLS_DIR = $(shell pkg-config wlr-protocols --variable=pkgdatadir)
 override WAYLAND_SCANNER = $(shell pkg-config --variable=wayland_scanner wayland-scanner)
 
 ifeq (,$(WAYLAND_PROTOCOLS_DIR))
 $(error Missing wayland-protocols!)
-endif
-ifeq (,$(WLR_PROTOCOLS_DIR))
-$(error Missing wlr-protocols!)
 endif
 ifeq (,$(WAYLAND_SCANNER))
 $(error Missing wayland-scanner!)
@@ -70,8 +66,8 @@ protocols-autogen:
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/staging/fractional-scale/fractional-scale-v1.xml $(WL_PROTO_DIR)/fractional-scale-v1.c
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml   $(WL_PROTO_DIR)/xdg-output.h
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml   $(WL_PROTO_DIR)/xdg-output.c
-	$(WAYLAND_SCANNER) client-header $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.h
-	$(WAYLAND_SCANNER) private-code  $(WLR_PROTOCOLS_DIR)/unstable/wlr-layer-shell-unstable-v1.xml             $(WL_PROTO_DIR)/wlr-layer-shell.c
+	$(WAYLAND_SCANNER) client-header wlr-protocols/wlr-layer-shell-unstable-v1.xml                             $(WL_PROTO_DIR)/wlr-layer-shell.h
+	$(WAYLAND_SCANNER) private-code  wlr-protocols/wlr-layer-shell-unstable-v1.xml                             $(WL_PROTO_DIR)/wlr-layer-shell.c
 
 # Rule to build wayland-protocol sources
 $(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
