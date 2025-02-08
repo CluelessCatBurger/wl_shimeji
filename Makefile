@@ -79,7 +79,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
 $(PLUGINS_TARGET): $(PLUGINS_OBJS)
-	$(CC) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
+	$(CC) $(shell pkg-config --cflags wayland-client) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
