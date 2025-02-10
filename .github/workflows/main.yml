@@ -1,0 +1,33 @@
+name: C/C++ CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: "0 0 * * *"
+
+env:
+  CFLAGS: -Werror
+
+jobs:
+  build-x86-64:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        -submodules: 'recursive'
+    - name: Install wayland deps
+      run: sudo DEBIAN_FRONTEND=noninteractive apt-get install wayland-protocols libwayland-dev 
+    - name: Build
+      run: make
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4.3.1
+      with:
+        retention-days: 5
+        name: wl_shimeji-x86_64
+        path: |
+          build/shimeji-overlayd
+          utils/shimejictl
