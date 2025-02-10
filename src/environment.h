@@ -21,6 +21,7 @@
 #define ENVIRONMENT_H
 
 #include "master_header.h"
+#include "physics.h"
 
 #define ENV_DISABLE_TABLETS 1
 #define ENV_DISABLE_FRACTIONAL_SCALE 2
@@ -74,6 +75,7 @@ enum environment_init_status {
 
 #include "mascot.h"
 #include "plugins.h"
+#include "mascot_config_parser.h"
 
 enum environment_init_status environment_init(int flags,
     void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*),
@@ -99,6 +101,7 @@ void environment_subsurface_drag(environment_subsurface_t* surface, environment_
 void environment_subsurface_release(environment_subsurface_t* surface);
 void environment_subsurface_unmap(environment_subsurface_t* surface);
 void environment_subsurface_reorder(environment_subsurface_t* surface, environment_subsurface_t* sibling, bool above);
+void environment_subsurface_scale_coordinates(environment_subsurface_t* surface, int32_t* x, int32_t* y);
 
 void environment_pointer_update_delta(environment_subsurface_t* subsurface, uint32_t tick);
 
@@ -116,6 +119,10 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
 // Environment info
 int32_t environment_screen_width(environment_t* env);
 int32_t environment_screen_height(environment_t* env);
+int32_t environment_workarea_left(environment_t* env);
+int32_t environment_workarea_right(environment_t* env);
+int32_t environment_workarea_top(environment_t* env);
+int32_t environment_workarea_bottom(environment_t* env);
 int32_t environment_workarea_width(environment_t* env);
 int32_t environment_workarea_height(environment_t* env);
 int32_t environment_cursor_x(struct mascot* mascot, environment_t* env);
@@ -158,7 +165,6 @@ void environment_set_mascot_by_coords_callback(struct mascot* (*callback)(enviro
 void environment_disable_tablet_workarounds(bool value);
 const char* environment_get_backend_name();
 
-
 // Buffers
 environment_buffer_factory_t* environment_buffer_factory_new();
 void environment_buffer_factory_destroy(environment_buffer_factory_t* factory);
@@ -168,6 +174,7 @@ environment_buffer_t* environment_buffer_factory_create_buffer(environment_buffe
 
 void environment_buffer_add_to_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height);
 void environment_buffer_subtract_from_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height);
+void environment_buffer_scale_input_region(environment_buffer_t* buffer, float scale_factor);
 void environment_buffer_destroy(environment_buffer_t* buffer);
 
 void environment_set_user_data(environment_t* env, void* data);
@@ -176,5 +183,43 @@ void* environment_get_user_data(environment_t* env);
 // Interpolation
 uint64_t environment_interpolate(environment_t* env);
 void environment_subsurface_reset_interpolation(environment_subsurface_t* subsurface); // Resets to current position
+
+// Mascots
+void environment_summon_mascot(
+    environment_t* environment, struct mascot_prototype* prototype,
+    int32_t x, int32_t y, void(*callback)(struct mascot*, void*), void* data
+);
+void environment_remove_mascot(environment_t* environment, struct mascot* mascot);
+void environment_set_prototype_store(environment_t* environment, mascot_prototype_store* store);
+uint32_t environment_tick(environment_t* environment, uint32_t tick);
+uint32_t environment_mascot_count(environment_t* environment);
+
+void environment_set_global_coordinates_searcher(
+    environment_t* (environment_by_global_coordinates)(int32_t x, int32_t y)
+);
+
+void environment_global_coordinates_delta(
+    environment_t* environment_a,
+    environment_t* environment_b,
+    int32_t* dx, int32_t* dy
+);
+
+void environment_to_global_coordinates(
+    environment_t* environment,
+    int32_t* x, int32_t* y
+);
+
+void environment_set_affordance_manager(environment_t* environment, struct mascot_affordance_manager* manager);
+
+struct bounding_box* environment_local_geometry(environment_t* environment);
+struct bounding_box* environment_global_geometry(environment_t* environment);
+struct mascot* mascot_by_coordinates(environment_t* environment, int32_t x, int32_t y);
+struct mascot* mascot_by_id(environment_t* environment, uint32_t id);
+
+// Unified outputs
+void environment_announce_neighbor(environment_t* environment, environment_t* neighbor);
+void environment_widthdraw_neighbor(environment_t* environment, environment_t* neighbor);
+bool environment_neighbor_border(environment_t* environment, int32_t x, int32_t y);
+// void environment_share_affordance(environment_t* environment, struct mascot* mascot);
 
 #endif

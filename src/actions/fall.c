@@ -177,7 +177,7 @@ enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_ac
             } else if (mascot->Y->value.i == -1 && mascot->X->value.i == (int32_t)environment_workarea_width(mascot->environment)) {
                 mascot->X->value.i = environment_workarea_width(mascot->environment) - 1;
             }
-            return mascot_tick_reenter;
+            return mascot_tick_ok;
         }
         mascot->action_duration = tick + 5;
     }

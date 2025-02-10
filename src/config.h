@@ -76,6 +76,11 @@ struct config {
     int32_t on_tool_button1_value;
     int32_t on_tool_button2_value;
     int32_t on_tool_button3_value;
+
+    // Multi-head support
+    int32_t allow_throwing_multihead;
+    int32_t allow_dragging_multihead;
+    int32_t unified_outputs;
 };
 
 // Uses global variable
@@ -108,6 +113,9 @@ bool config_set_on_tool_mouse(int32_t value);
 bool config_set_on_tool_button1(int32_t value);
 bool config_set_on_tool_button2(int32_t value);
 bool config_set_on_tool_button3(int32_t value);
+bool config_set_allow_throwing_multihead(bool value);
+bool config_set_allow_dragging_multihead(bool value);
+bool config_set_unified_outputs(bool value);
 
 bool config_get_breeding();
 bool config_get_dragging();
@@ -135,5 +143,8 @@ uint32_t config_get_on_tool_mouse();
 uint32_t config_get_on_tool_button1();
 uint32_t config_get_on_tool_button2();
 uint32_t config_get_on_tool_button3();
+bool config_get_allow_throwing_multihead();
+bool config_get_allow_dragging_multihead();
+bool config_get_unified_outputs();
 
 #endif

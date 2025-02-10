@@ -2417,6 +2417,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
 void mascot_attach_affordance_manager(struct mascot* mascot, struct mascot_affordance_manager* manager) {
     if (!mascot) ERROR("Cannot attach affordance manager to NULL mascot");
     mascot->affordance_manager = manager;
+    DEBUG("Attached affordance manager to mascot %s", mascot->prototype->name);
 }
 void mascot_detach_affordance_manager(struct mascot* mascot) {
     mascot_attach_affordance_manager(mascot, NULL);

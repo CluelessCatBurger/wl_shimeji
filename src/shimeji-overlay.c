@@ -40,7 +40,7 @@
 #include <string.h>
 #include "plugins.h"
 #include "config.h"
-#include "layer_surface.h"
+#include "physics.h"
 
 #define MASCOT_OVERLAYD_INSTANCE_EXISTS -1
 #define MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR -2
@@ -131,6 +131,14 @@ static void env_new(environment_t* environment)
 
     for (size_t i = 0; i < environment_store.entry_count; i++) {
         if (!environment_store.entry_states[i]) {
+
+            for (size_t j = 0; j < environment_store.entry_count; j++) {
+                if (environment_store.entries[j]) {
+                    environment_announce_neighbor(environment_store.entries[j], environment);
+                    environment_announce_neighbor(environment, environment_store.entries[j]);
+                }
+            }
+
             environment_store.entries[i] = environment;
             environment_store.entry_states[i] = 1;
             environment_store.used_count++;
@@ -141,12 +149,12 @@ static void env_new(environment_t* environment)
             }
             pthread_mutex_unlock(&environment_store.mutex);
             environment_set_user_data(environment, data);
+            environment_set_affordance_manager(environment, &affordance_manager);
+
             pthread_create(&data->interpolation_thread, NULL, env_interpolation_thread, environment);
             return;
         }
     }
-
-
     pthread_mutex_unlock(&environment_store.mutex);
 }
 
@@ -158,6 +166,14 @@ static void env_delete(environment_t* environment)
             environment_store.entries[i] = NULL;
             environment_store.entry_states[i] = 0;
             environment_store.used_count--;
+
+            for (size_t j = 0; j < environment_store.entry_count; j++) {
+                if (environment_store.entries[j]) {
+                    environment_widthdraw_neighbor(environment_store.entries[j], environment);
+                    environment_widthdraw_neighbor(environment, environment_store.entries[j]);
+                }
+            }
+
             pthread_mutex_unlock(&environment_store.mutex);
 
             struct env_data* data = environment_get_user_data(environment);
@@ -174,6 +190,24 @@ static void env_delete(environment_t* environment)
 
     pthread_mutex_unlock(&environment_store.mutex);
 }
+
+
+static environment_t* find_env_by_coords(int32_t x, int32_t y)
+{
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+           struct bounding_box* geometry = environment_global_geometry(environment_store.entries[i]);
+           if (is_inside(geometry, x, y)) {
+               pthread_mutex_unlock(&environment_store.mutex);
+               return environment_store.entries[i];
+           }
+        }
+    }
+    pthread_mutex_unlock(&environment_store.mutex);
+    return NULL;
+}
+
 
 void* env_interpolation_thread(void* data)
 {
@@ -300,15 +334,18 @@ static void mascot_dropped_oob(struct mascot* mascot, int32_t x, int32_t y)
         return;
     }
 
-    // Move mascot to new environment
-    mascot_environment_changed(mascot, env);
 
     // Find mascot coordinates in new environment rectangle
     int32_t new_x = ldropx - elx;
     int32_t new_y = ldropy - ely;
-
+    INFO("Move to new environment %s, new coordinates %d, %d", environment_name(env), new_x, new_y);
     mascot->X->value.i = new_x;
     mascot->Y->value.i = mascot_screen_y_to_mascot_y(mascot, new_y);
+    environment_subsurface_set_position(mascot->subsurface, new_x, new_y);
+    environment_subsurface_reset_interpolation(mascot->subsurface);
+
+    // Move mascot to new environment
+    mascot_environment_changed(mascot, env);
 
 }
 
@@ -482,47 +519,8 @@ void summon_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
         free(data);
         return;
     }
-    struct mascot* mascot = mascot_new(
-        prototype, NULL, 0, 0, x, y, 2.0, 0.05, 0.1, false, env
-    );
-    if (!mascot) {
-        uint8_t buff[2] = {3, 3}; // Command SPAWN_RESULT, result CANNOT_CREATE_MASCOT
-        send(spawn_data->fd, buff, 2, 0);
-        free(data);
-        return;
-    }
 
-    pthread_mutex_lock(&mascot_store.mutex);
-    if (mascot_store.used_count == mascot_store.entry_count) {
-        mascot_store.entry_count *= 2;
-        affordance_manager.slot_count *= 2;
-        mascot_store.entries = realloc(mascot_store.entries, mascot_store.entry_count * sizeof(struct mascot*));
-        mascot_store.entry_states = realloc(mascot_store.entry_states, mascot_store.entry_count * sizeof(uint8_t));
-        affordance_manager.slots = realloc(affordance_manager.slots, affordance_manager.slot_count * sizeof(struct mascot*));
-        affordance_manager.slot_state = realloc(affordance_manager.slot_state, affordance_manager.slot_count * sizeof(uint8_t));
-
-        for (size_t i = mascot_store.used_count; i < mascot_store.entry_count; i++) {
-            mascot_store.entries[i] = NULL;
-            mascot_store.entry_states[i] = 0;
-        }
-
-        for (size_t i = affordance_manager.occupied_slots_count; i < affordance_manager.slot_count; i++) {
-            affordance_manager.slots[i] = NULL;
-            affordance_manager.slot_state[i] = 0;
-        }
-    }
-
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (!mascot_store.entry_states[i]) {
-            mascot_store.entries[i] = mascot;
-            mascot_store.entry_states[i] = 1;
-            mascot_store.used_count++;
-            mascot_link(mascot);
-            mascot_attach_affordance_manager(mascot, &affordance_manager);
-            break;
-        }
-    }
-    pthread_mutex_unlock(&mascot_store.mutex);
+    environment_summon_mascot(env, prototype, x, y, NULL, NULL);
 
     uint8_t buff[2] = {3, 0}; // Command SPAWN_RESULT, result SUCCESS
     send(spawn_data->fd, buff, 2, 0);
@@ -555,32 +553,7 @@ void remove_mascot(environment_t* env, int32_t x, int32_t y, environment_subsurf
         send(fd, buff, 2, 0);
         return;
     }
-
-    pthread_mutex_lock(&mascot_store.mutex);
-
-    int res = ACTION_SET_ACTION_TRANSIENT;
-
-    if (mascot->prototype->dismiss_action && config_get_allow_dismiss_animations()) {
-        struct mascot_action_reference dismiss = {
-            .action = (struct mascot_action*)mascot->prototype->dismiss_action,
-        };
-        res = mascot_set_action(mascot, &dismiss, false, 0);
-    }
-
-    if (res != ACTION_SET_RESULT_OK) {
-        mascot_announce_affordance(mascot, NULL);
-        mascot_attach_affordance_manager(mascot, NULL);
-        mascot_unlink(mascot);
-        for (size_t i = 0; i < mascot_store.entry_count; i++) {
-            if (mascot_store.entries[i] == mascot) {
-                mascot_store.entry_states[i] = 0;
-                mascot_store.used_count--;
-                break;
-            }
-        }
-    }
-
-    pthread_mutex_unlock(&mascot_store.mutex);
+    environment_remove_mascot(mascot->environment, mascot);
 
     char buff[2] = {4, 0}; // Command REMOVE_RESULT, result SUCCESS
     send(fd, buff, 2, 0);
@@ -1143,101 +1116,25 @@ struct socket_description {
 
 void* mascot_manager_thread(void* arg)
 {
-    pthread_mutex_lock(&mascot_store.mutex);
     pthread_mutex_lock(&environment_store.mutex);
     UNUSED(arg);
     for (uint32_t tick = 0; ; tick++) {
-        struct mascot_tick_return result = {};
         for (size_t i = 0; i < environment_store.entry_count; i++) {
             // if (tick % 5 != 0) break;
             if (environment_store.entry_states[i]) {
                 struct environment* environment = environment_store.entries[i];
                 environment_pre_tick(environment, tick);
-            }
-        }
-        for (size_t i = 0; i < mascot_store.entry_count; i++) {
-            if (mascot_store.entry_states[i] == 0) continue;
-            struct mascot* mascot = mascot_store.entries[i];
-            enum mascot_tick_result tick_status = mascot_tick(mascot, tick, &result);
-            if (tick_status == mascot_tick_dispose) {
-                mascot_announce_affordance(mascot, NULL);
-                mascot_attach_affordance_manager(mascot, NULL);
-                mascot_unlink(mascot);
-                mascot_store.entry_states[i] = 0;
-                mascot_store.used_count--;
-            } else if (tick_status == mascot_tick_error) {
-                mascot_announce_affordance(mascot, NULL);
-                mascot_attach_affordance_manager(mascot, NULL);
-                mascot_unlink(mascot);
-                mascot_store.entry_states[i] = 0;
-                mascot_store.used_count--;
-            }
-            if (result.events_count) {
-                for (size_t j = 0; j < result.events_count; j++) {
-                    enum mascot_tick_result event_type = result.events[j].event_type;
-                    if (event_type == mascot_tick_clone) {
-                        struct mascot* clone = result.events[j].event.mascot;
-                        if (mascot_store.entry_count == mascot_store.used_count) {
-                            size_t new_size = mascot_store.entry_count * 2;
-                            struct mascot** new_entries = realloc(mascot_store.entries, new_size * sizeof(struct mascot*));
-                            uint8_t* new_states = realloc(mascot_store.entry_states, new_size * sizeof(uint8_t));
-                            if (!new_entries) {
-
-                                mascot_store.entry_states[i] = 0;
-                                mascot_store.used_count--;
-                                continue;
-                            }
-                            if (!new_states) {
-                                free(new_entries);
-                                mascot_store.entry_states[i] = 0;
-                                mascot_store.used_count--;
-                                continue;
-                            }
-                            memset(new_entries + mascot_store.entry_count, 0, (new_size - mascot_store.entry_count) * sizeof(struct mascot*));
-                            mascot_store.entries = new_entries;
-                            mascot_store.entry_count = new_size;
-                            memset(new_states + mascot_store.entry_count, 0, (new_size - mascot_store.entry_count) * sizeof(uint8_t));
-                            mascot_store.entry_states = new_states;
-                        }
-                        for (size_t k = 0; k < mascot_store.entry_count; k++) {
-                            if (mascot_store.entry_states[k] == 0) {
-                                mascot_store.entries[k] = clone;
-                                mascot_store.entry_states[k] = 1;
-                                mascot_store.used_count++;
-                                mascot_attach_affordance_manager(clone, &affordance_manager);
-                                mascot_link(clone);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if (tick_status == mascot_tick_reenter) {
-                i--;
-            }
-        }
-        for (size_t i = 0; i < environment_store.entry_count; i++) {
-            if (environment_store.entry_states[i]) {
-                struct environment* environment = environment_store.entries[i];
+                environment_tick(environment, tick);
                 environment_commit(environment);
             }
         }
-        pthread_mutex_unlock(&mascot_store.mutex);
         pthread_mutex_unlock(&environment_store.mutex);
         usleep(40000);
         if (should_exit) {
             break;
         }
     }
-    pthread_mutex_lock(&mascot_store.mutex);
     pthread_mutex_lock(&environment_store.mutex);
-
-    for (int i = 0; i < 256; i++) {
-        if (plugins[i]) {
-            plugin_deinit(plugins[i]);
-            plugin_close(plugins[i]);
-        }
-    }
     exit(0);
 };
 
@@ -1438,6 +1335,7 @@ int main(int argc, const char** argv)
     affordance_manager.slot_state = calloc(MASCOT_OVERLAYD_INSTANCE_DEFAULT_MASCOT_COUNT, sizeof(uint8_t));
 
     // Initialize environment
+    environment_set_global_coordinates_searcher(find_env_by_coords);
     enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete, orphaned_mascot, mascot_dropped_oob);
     if (env_init != ENV_INIT_OK) {
         char buf[1025+sizeof(size_t)];
@@ -1449,7 +1347,6 @@ int main(int argc, const char** argv)
     }
 
     environment_set_broadcast_input_enabled_listener(broadcast_input_enabled_listener);
-    environment_set_mascot_by_coords_callback(lookup_mascot_by_coords);
 
     size_t plugin_count = 0;
 
@@ -1647,7 +1544,7 @@ int main(int argc, const char** argv)
 
     // Main loop
     while (true) {
-        if (!mascot_store.used_count && !fds_count) {
+        if (!mascot_total_count && !fds_count) {
             break;
         }
 

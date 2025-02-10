@@ -64,21 +64,24 @@ struct mascot* mascot_get_target_by_affordance(struct mascot* mascot, const char
         return NULL;
     }
     struct mascot* candidate = NULL;
+    float score = 0.0;
     for (uint32_t i = 0; i < mascot->affordance_manager->slot_count; i++) {
         if (mascot->affordance_manager->slot_state[i] && mascot->affordance_manager->slots[i]) {
             if (!mascot->affordance_manager->slots[i]->current_affordance) continue;
             if (strcmp(mascot->affordance_manager->slots[i]->current_affordance, affordance) == 0
                 && strlen(mascot->affordance_manager->slots[i]->current_affordance) == strlen(affordance)
             ) {
-                struct mascot* candidate = mascot->affordance_manager->slots[i];
-                if (mascot->environment != candidate->environment) continue;
-                if (drand48() > 0.5) {
-                    pthread_mutex_unlock(&mascot->affordance_manager->mutex);
-                    return candidate;
+                struct mascot* candidate_ = mascot->affordance_manager->slots[i];
+                if (mascot->environment != candidate_->environment && !config_get_unified_outputs()) continue;
+                float new_score = drand48();
+                if (new_score > score) {
+                    candidate = candidate_;
+                    score = new_score;
                 }
             }
         }
     }
+    INFO("<Mascot:%s:%u> Target by affordance %s: %s:%u, score %f", mascot->prototype->name, mascot->id, affordance, candidate ? candidate->prototype->name : "(nil)", candidate ? candidate->id : 0, score);
     pthread_mutex_unlock(&mascot->affordance_manager->mutex);
     return candidate;
 }
@@ -89,6 +92,7 @@ void mascot_announce_affordance(struct mascot* mascot, const char* affordance)
     if (!mascot->affordance_manager) return;
     pthread_mutex_lock(&mascot->affordance_manager->mutex);
     mascot->current_affordance = affordance;
+    DEBUG("<Mascot:%s:%u> Announcing affordance: %s", mascot->prototype->name, mascot->id, affordance ? affordance : "(nil)");
     if (affordance) {
         if (mascot->affordance_manager->occupied_slots_count == mascot->affordance_manager->slot_count) {
             pthread_mutex_unlock(&mascot->affordance_manager->mutex);
@@ -99,6 +103,7 @@ void mascot_announce_affordance(struct mascot* mascot, const char* affordance)
                 mascot->affordance_manager->slots[i] = mascot;
                 mascot->affordance_manager->slot_state[i] = true;
                 mascot->affordance_manager->occupied_slots_count++;
+                INFO("<Mascot:%s:%u> Affordance %s announced, slot %u", mascot->prototype->name, mascot->id, affordance, i);
                 break;
             }
         }
@@ -108,6 +113,7 @@ void mascot_announce_affordance(struct mascot* mascot, const char* affordance)
                 mascot->affordance_manager->slots[i] = NULL;
                 mascot->affordance_manager->slot_state[i] = false;
                 mascot->affordance_manager->occupied_slots_count--;
+                INFO("<Mascot:%s:%u> Affordance %s unannounced, slot %u", mascot->prototype->name, mascot->id, affordance, i);
                 break;
             }
         }
@@ -705,8 +711,8 @@ bool mascot_drag_ended(struct mascot* mascot, bool throw)
     mascot->dragged = false;
     if (throw) mascot_set_behavior(mascot, mascot_thrown_behavior(mascot));
     else mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
-    environment_subsurface_set_offset(mascot->subsurface, 0, 0);
     environment_subsurface_release(mascot->subsurface);
+    environment_subsurface_set_offset(mascot->subsurface, 0, 0);
     environment_subsurface_move(mascot->subsurface, mascot->X->value.i, mascot->Y->value.i-120, true, false);
     return true;
 }
@@ -1166,8 +1172,8 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
 enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
 {
     if (
-        mascot->X->value.i < 0 || mascot->X->value.i > (int32_t)environment_workarea_width(mascot->environment) ||
-        mascot->Y->value.i < 0 || mascot->Y->value.i > (int32_t)environment_workarea_height(mascot->environment)
+        mascot->X->value.i < (int32_t)environment_workarea_left(mascot->environment) || mascot->X->value.i > (int32_t)environment_workarea_right(mascot->environment) ||
+        mascot->Y->value.i < (int32_t)environment_workarea_top(mascot->environment) || mascot->Y->value.i > (int32_t)environment_workarea_bottom(mascot->environment)
     ) {
         INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), clamping!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
         mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
@@ -1283,18 +1289,51 @@ enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const st
     return mascot_check_condition(mascot, condition);
 }
 
+int32_t yconvat(environment_t* env, int32_t screen_y)
+{
+    if (screen_y == -1) return -1;
+    TRACE("Screen height %d, Screen y: %d, Mascot y: %d", environment_workarea_height(env), screen_y, environment_workarea_height(env) - screen_y);
+    return environment_workarea_height(env) - screen_y;
+}
+
+
 int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y)
 {
     if (screen_y == -1) return -1;
-    return environment_workarea_height(mascot->environment) - screen_y;
+    return yconvat(mascot->environment, screen_y);
 }
 
 bool mascot_is_on_workspace_border(struct mascot* mascot)
 {
     return (
-        mascot->X->value.i == 0 ||
-        mascot->X->value.i == (int32_t)environment_workarea_width(mascot->environment) ||
-        mascot->Y->value.i == 0 ||
-        mascot->Y->value.i == mascot_screen_y_to_mascot_y(mascot, environment_workarea_height(mascot->environment))
+        mascot->X->value.i == (int32_t)environment_workarea_left(mascot->environment) ||
+        mascot->X->value.i == (int32_t)environment_workarea_right(mascot->environment) ||
+        mascot->Y->value.i == mascot_screen_y_to_mascot_y(mascot, environment_workarea_top(mascot->environment)) ||
+        mascot->Y->value.i == mascot_screen_y_to_mascot_y(mascot, environment_workarea_bottom(mascot->environment))
     );
+}
+
+void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, int32_t dy, int32_t flags, environment_t* at_env)
+{
+    if (!mascot) return;
+    if (!at_env) at_env = mascot->environment;
+
+    INFO("Applying diff %d, %d to mascot %s:%u", dx, dy, mascot->prototype->name, mascot->id);
+    INFO("Current position: %d, %d", mascot->X->value.i, mascot->Y->value.i);
+
+    int new_x = mascot->X->value.i;
+    int new_y = mascot->Y->value.i;
+    if (flags & DIFF_HORIZONTAL_MOVE) {
+        new_x = mascot->X->value.i + dx;
+        if (mascot->TargetX->value.i != -1) mascot->TargetX->value.i += dx;
+
+    }
+    if (flags & DIFF_VERTICAL_MOVE) {
+        new_y = yconvat(mascot->environment, mascot->Y->value.i) + dy;
+        if (mascot->TargetY->value.i != -1) mascot->TargetY->value.i += dy;
+    }
+
+    INFO("New position: %d, %d", new_x, yconvat(at_env, new_y));
+    mascot_moved(mascot, new_x, yconvat(at_env, new_y));
+
 }

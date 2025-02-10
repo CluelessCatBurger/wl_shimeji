@@ -57,6 +57,8 @@ enum mascot_tick_result offset_action_init(struct mascot *mascot, struct mascot_
         return mascot_tick_error;
     }
 
+    WARN("<Mascot:%s:%u> Applying offset: %d, %d", mascot->prototype->name, mascot->id, x + mascot->X->value.i, mascot_screen_y_to_mascot_y(mascot, y - mascot->Y->value.i));
+
     // Set new position
     environment_subsurface_set_position(mascot->subsurface, x + mascot->X->value.i, mascot_screen_y_to_mascot_y(mascot, y - mascot->Y->value.i));
     environment_subsurface_reset_interpolation(mascot->subsurface);

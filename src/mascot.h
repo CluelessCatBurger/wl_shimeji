@@ -31,6 +31,7 @@ struct mascot_behavior;
 struct mascot_prototype;
 struct mascot_tick_return;
 struct mascot_pose;
+struct mascot_affordance_manager;
 
 #include "environment.h"
 #include "mascot_atlas.h"
@@ -557,6 +558,11 @@ enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot);
 enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot_action_reference* actionref, void (*clean_func)(struct mascot*));
 int32_t mascot_screen_y_to_mascot_y(struct mascot* mascot, int32_t screen_y);
 bool mascot_is_on_workspace_border(struct mascot* mascot);
+
+#define DIFF_HORIZONTAL_MOVE 1
+#define DIFF_VERTICAL_MOVE 2
+// If we are using unified mode (all outputs are treated as one), we need to adjust all positions of mascot
+void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, int32_t dy, int32_t flags, environment_t* env);
 
 // Set action, not recommended to use directly
 enum action_set_result mascot_set_action(struct mascot* mascot, struct mascot_action_reference* actionref, bool push_stack, uint32_t tick);

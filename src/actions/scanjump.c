@@ -18,6 +18,7 @@
 */
 
 #include "scanjump.h"
+#include "environment.h"
 #include <stdint.h>
 
 enum mascot_tick_result scanjump_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
@@ -106,7 +107,7 @@ struct mascot_action_next scanjump_action_next(struct mascot* mascot, struct mas
     int32_t my_velocity = sqrt(mascot->VelocityX->value.f * mascot->VelocityX->value.f + mascot->VelocityY->value.f * mascot->VelocityY->value.f)*2;
 
     // Destination is reached if distance is less than or equal mascots velocity*2
-    if (distance <= fmax(target_velocity, my_velocity)) {
+    if (distance <= fmax(target_velocity, my_velocity) && mascot->environment == mascot->target_mascot->environment) {
         struct mascot* target = mascot->target_mascot;
         scanjump_action_clean(mascot);
         bool interaction_result = mascot_interact(mascot, target, actionref->action->affordance, actionref->action->behavior, actionref->action->target_behavior);
@@ -209,10 +210,19 @@ enum mascot_tick_result scanjump_action_tick(struct mascot *mascot, struct masco
         return oob_check;
     }
 
-    int32_t posx = mascot->X->value.i;
-    int32_t posy = mascot->Y->value.i;
+    int32_t env_diff_x, env_diff_y;
+    environment_global_coordinates_delta(mascot->target_mascot->environment, mascot->environment, &env_diff_x, &env_diff_y);
+
     int32_t target_x = mascot->target_mascot->X->value.i;
     int32_t target_y = mascot->target_mascot->Y->value.i;
+
+    target_x += env_diff_x;
+    target_y = mascot_screen_y_to_mascot_y(mascot->target_mascot, target_y);
+    target_y += env_diff_y;
+    target_y = mascot_screen_y_to_mascot_y(mascot, target_y);
+
+    int32_t posx = mascot->X->value.i;
+    int32_t posy = mascot->Y->value.i;
     float velocity_x = mascot->VelocityX->value.f;
     float velocity_y = mascot->VelocityY->value.f;
     float velocity = mascot->VelocityParam->value.f;
@@ -223,8 +233,8 @@ enum mascot_tick_result scanjump_action_tick(struct mascot *mascot, struct masco
     float distance_x = target_x - posx;
 
     // Check if posy has reached the screen height and make the object slide
-    if (posy >= (int32_t)environment_workarea_height(mascot->environment)) {
-        posy = environment_workarea_height(mascot->environment); // Cap the y-coordinate
+    if (posy >= (int32_t)environment_workarea_bottom(mascot->environment)) {
+        posy = environment_workarea_bottom(mascot->environment); // Cap the y-coordinate
         velocity_y = 0; // Stop vertical movement to slide horizontally
     } else {
         // Calculate the vertical distance to the peak based on the current position

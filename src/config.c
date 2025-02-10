@@ -55,6 +55,10 @@ bool config_parse(const char* path)
     config.on_tool_button1_value = -1;
     config.on_tool_button2_value = -1;
     config.on_tool_button3_value = -1;
+    config.allow_dragging_multihead = -1;
+    config.allow_throwing_multihead = -1;
+    config.unified_outputs = -1;
+
 
     FILE* file = fopen(path, "r");
     if (!file) {
@@ -126,6 +130,12 @@ bool config_parse(const char* path)
             config_set_on_tool_button2(atoi(value));
         } else if (strcmp(key, "on_tool_button3_value") == 0) {
             config_set_on_tool_button3(atoi(value));
+        } else if (strcmp(key, "allow_throwing_multihead") == 0) {
+            config_set_allow_throwing_multihead(strncmp(value, "true", 4) == 0);
+        } else if (strcmp(key, "allow_dragging_multihead") == 0) {
+            config_set_allow_dragging_multihead(strncmp(value, "true", 4) == 0);
+        } else if (strcmp(key, "unified_outputs") == 0) {
+            config_set_unified_outputs(strncmp(value, "true", 4) == 0);
         }
     }
 
@@ -166,6 +176,9 @@ void config_write(const char* path)
     if (config.on_tool_button1_value != -1) fprintf(file, "on_tool_button1_value=%d\n", config.on_tool_button1_value);
     if (config.on_tool_button2_value != -1) fprintf(file, "on_tool_button2_value=%d\n", config.on_tool_button2_value);
     if (config.on_tool_button3_value != -1) fprintf(file, "on_tool_button3_value=%d\n", config.on_tool_button3_value);
+    if (config.allow_throwing_multihead != -1) fprintf(file, "allow_throwing_multihead=%s\n", config.allow_throwing_multihead ? "true" : "false");
+    if (config.allow_dragging_multihead != -1) fprintf(file, "allow_dragging_multihead=%s\n", config.allow_dragging_multihead ? "true" : "false");
+    if (config.unified_outputs != -1) fprintf(file, "unified_outputs=%s\n", config.unified_outputs ? "true" : "false");
 
     fclose(file);
 }
@@ -528,4 +541,40 @@ bool config_set_on_tool_button3(int32_t value)
     }
     config.on_tool_button3_value = value;
     return true;
+}
+
+bool config_set_allow_throwing_multihead(bool value)
+{
+    config.allow_throwing_multihead = value;
+    return true;
+}
+
+bool config_set_allow_dragging_multihead(bool value)
+{
+    config.allow_dragging_multihead = value;
+    return true;
+}
+
+bool config_get_allow_throwing_multihead()
+{
+    if (config.allow_throwing_multihead == -1) return false;
+    return config.allow_throwing_multihead;
+}
+
+bool config_get_allow_dragging_multihead()
+{
+    if (config.allow_dragging_multihead == -1) return true;
+    return config.allow_dragging_multihead;
+}
+
+bool config_set_unified_outputs(bool value)
+{
+    config.unified_outputs = value;
+    return true;
+}
+
+bool config_get_unified_outputs()
+{
+    if (config.unified_outputs == -1) return false;
+    return config.unified_outputs;
 }

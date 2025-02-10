@@ -19,6 +19,8 @@
 
 #include "scanmove.h"
 #include "actionbase.h"
+#include "environment.h"
+#include "mascot.h"
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -124,7 +126,7 @@ struct mascot_action_next scanmove_action_next(struct mascot* mascot, struct mas
     int32_t my_velocity = sqrt(mascot->VelocityX->value.f * mascot->VelocityX->value.f + mascot->VelocityY->value.f * mascot->VelocityY->value.f)*2;
 
     // Destination is reached if distance is less than or equal mascots velocity*2
-    if (distance <= fmax(target_velocity, my_velocity)) {
+    if (distance <= fmax(target_velocity, my_velocity) && mascot->environment == mascot->target_mascot->environment) {
         struct mascot* target = mascot->target_mascot;
         scanmove_action_clean(mascot);
         bool interaction_result = mascot_interact(mascot, target, actionref->action->affordance, actionref->action->behavior, actionref->action->target_behavior);
@@ -232,8 +234,17 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
         return oob_check;
     }
 
+    int32_t env_diff_x, env_diff_y;
+    environment_global_coordinates_delta(mascot->target_mascot->environment, mascot->environment, &env_diff_x, &env_diff_y);
+
     int32_t target_x = mascot->target_mascot->X->value.i;
     int32_t target_y = mascot->target_mascot->Y->value.i;
+
+    target_x += env_diff_x;
+    target_y = mascot_screen_y_to_mascot_y(mascot->target_mascot, target_y);
+    target_y += env_diff_y;
+    target_y = mascot_screen_y_to_mascot_y(mascot, target_y);
+
     int32_t posx = mascot->X->value.i;
     int32_t posy = mascot->Y->value.i;
 
@@ -245,11 +256,11 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
     if (target_x != INT32_MAX && target_x != -1) {
         if (posx < target_x) looking_right = true;
         else if (posx > target_x) looking_right = false;
-        if (target_x < 0) {
-            target_x = 0;
+        if (target_x < (int)environment_workarea_left(mascot->environment)) {
+            target_x = (int)environment_workarea_left(mascot->environment);
         }
-        else if (target_x > (int32_t)environment_workarea_width(mascot->environment)) {
-            target_x = (int32_t)environment_workarea_width(mascot->environment);
+        else if (target_x > (int32_t)environment_workarea_right(mascot->environment)) {
+            target_x = (int32_t)environment_workarea_right(mascot->environment);
         }
 
         if (looking_right) {
@@ -269,11 +280,11 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
     if (target_y != INT32_MAX && target_y != -1) {
         bool down = posy > target_y;
 
-        if (target_y < 0) {
-            mascot->TargetY->value.i = target_y = 0;
+        if (target_y < (int32_t)environment_workarea_bottom(mascot->environment)) {
+            mascot->TargetY->value.i = target_y = (int32_t)environment_workarea_bottom(mascot->environment);
         }
-        else if (target_y > (int32_t)environment_workarea_height(mascot->environment)) {
-            mascot->TargetY->value.i = target_y = (int32_t)environment_workarea_height(mascot->environment);
+        else if (target_y > (int32_t)environment_workarea_top(mascot->environment)) {
+            mascot->TargetY->value.i = target_y = (int32_t)environment_workarea_top(mascot->environment);
         }
 
         if (down) {

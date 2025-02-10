@@ -18,6 +18,7 @@
 */
 
 #include "jump.h"
+#include "environment.h"
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -209,26 +210,26 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
 
     bool looking_right = posx < target_x;
 
-    if (target_x < 0) {
-        mascot->TargetX->value.i = target_x = 0;
-    } else if (target_x > (int)environment_workarea_width(mascot->environment)) {
-        mascot->TargetX->value.i = target_x = environment_workarea_width(mascot->environment);
+    if (target_x < (int)environment_workarea_left(mascot->environment)) {
+        mascot->TargetX->value.i = target_x = environment_workarea_left(mascot->environment);
+    } else if (target_x > (int)environment_workarea_right(mascot->environment)) {
+        mascot->TargetX->value.i = target_x = environment_workarea_right(mascot->environment);
     }
 
     if (target_y == -1) {
         mascot->TargetY->value.i = target_y = posy;
-    } else if (target_y < 0) {
-        mascot->TargetY->value.i = target_y = 0;
-    } else if (target_y > (int)environment_workarea_height(mascot->environment)) {
-        mascot->TargetY->value.i = target_y = environment_workarea_height(mascot->environment);
+    } else if (target_y < (int)environment_workarea_bottom(mascot->environment)) {
+        mascot->TargetY->value.i = target_y = environment_workarea_bottom(mascot->environment);
+    } else if (target_y > (int)environment_workarea_top(mascot->environment)) {
+        mascot->TargetY->value.i = target_y = environment_workarea_top(mascot->environment);
     }
 
     // Calculate distances
     float distance_x = target_x - posx;
 
     // Check if posy has reached the screen height and make the object slide
-    if (posy >= (int32_t)environment_workarea_height(mascot->environment)) {
-        posy = environment_workarea_height(mascot->environment); // Cap the y-coordinate
+    if (posy >= (int32_t)environment_workarea_bottom(mascot->environment)) {
+        posy = environment_workarea_bottom(mascot->environment); // Cap the y-coordinate
         velocity_y = 0; // Stop vertical movement to slide horizontally
     } else {
         // Calculate the vertical distance to the peak based on the current position
