@@ -14,7 +14,7 @@ override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
 override CFLAGS  += $(shell pkg-config --cflags wayland-client)
 override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor --libs) -lm
 
-override WAYLAND_PROTOCOLS_DIR := $(shell pkg-config wayland-protocols --variable=pkgdatadir)
+override WAYLAND_PROTOCOLS_DIR ?= $(shell pkg-config wayland-protocols --variable=pkgdatadir)
 override WAYLAND_SCANNER = $(shell pkg-config --variable=wayland_scanner wayland-scanner)
 
 ifeq (,$(WAYLAND_PROTOCOLS_DIR))
