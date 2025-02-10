@@ -11,6 +11,7 @@ on:
 
 env:
   CFLAGS: -Werror
+  WAYLAND_PROTOCOLS_DIR: wayland-protocols
 
 jobs:
   build-x86-64:
@@ -18,9 +19,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        -submodules: 'recursive'
-    - name: Install wayland deps
-      run: sudo DEBIAN_FRONTEND=noninteractive apt-get install wayland-protocols libwayland-dev 
+        submodules: 'recursive'
+    - name: Install libwayland-dev
+      run: |
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install libwayland-dev 
+    - name: Clone wayland-protocols from gitlab
+      run: |
+        git clone https://gitlab.freedesktop.org/wayland/wayland-protocols --branch 1.40 
     - name: Build
       run: make
     - name: Upload artifacts
