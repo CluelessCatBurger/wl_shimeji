@@ -17,8 +17,6 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
   - Arch: `pacman -S wayland`
 - wayland-protocols:
   - Arch: `pacman -S wayland-protocols`
-- wlr-protocols:
-  - Arch: `pacman -S wlr-protocols`
 
 ## Runtime requirements
 Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, and provide wl_subcompositor interface.
@@ -323,3 +321,5 @@ Original Shimeji includes a feature called "Using JavaScript in places where you
 one of the reasons why 7 mascots can eat up 880MiB of RAM. I will not test it, but i decided that i will not include javascript in my project. Even if it means
 that i will be required to implement compiler of javascript and my own virtual machine for it.
 So now we have our own virtual machine instead of javascript. It was great experience.
+
+<!-- !kryeg14 SchizoUUH ✊ !bwaa -->
