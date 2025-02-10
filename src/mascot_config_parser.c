@@ -1636,9 +1636,9 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
 action_generator_fail:
 
     if (name_set) {
-        WARN("Failed to load action named %s: %d", action_obj->name, result.status);
+        DEBUG("Failed to load action named %s: %d", action_obj->name, result.status);
     } else {
-        WARN("Failed to load action");
+        DEBUG("Failed to load action");
     }
 
     if (action_obj->variables) {

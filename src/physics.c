@@ -115,19 +115,19 @@ int32_t is_outside(struct bounding_box *box, int32_t x, int32_t y)
 
 int32_t project_coords_to_border(struct bounding_box *box, int32_t x, int32_t y, int32_t border_type, int32_t *out_x, int32_t *out_y)
 {
-    if (border_type == BORDER_TYPE_LEFT) {
+    if (border_type & BORDER_TYPE_LEFT) {
         *out_x = box->x;
         *out_y = y;
-    } else if (border_type == BORDER_TYPE_RIGHT) {
+    } else if (border_type & BORDER_TYPE_RIGHT) {
         *out_x = box->x + box->width;
         *out_y = y;
-    } else if (border_type == BORDER_TYPE_CEILING) {
+    } else if (border_type & BORDER_TYPE_CEILING) {
         *out_x = x;
         *out_y = box->y;
-    } else if (border_type == BORDER_TYPE_FLOOR) {
+    } else if (border_type & BORDER_TYPE_FLOOR) {
         *out_x = x;
         *out_y = box->y + box->height;
-    } else if (border_type == BORDER_TYPE_ANY) {
+    } else if (border_type == (int32_t)BORDER_TYPE_ANY) {
         if (x < box->x) {
             *out_x = box->x;
         } else if (x > box->x + box->width) {

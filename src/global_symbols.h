@@ -27,6 +27,7 @@
 #include "environment.h"
 #include "mascot.h"
 #include "expressions.h"
+#include "physics.h"
 #include "plugins.h"
 
 bool mascot_noop(struct expression_vm_state* state);
@@ -435,7 +436,8 @@ bool mascot_environment_cursor_dy(struct expression_vm_state* state)
 bool mascot_environment_screen_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_width(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_width_aligned(state->ref_mascot->environment, alignment);
     state->sp++;
     return true;
 }
@@ -444,7 +446,9 @@ bool mascot_environment_screen_width(struct expression_vm_state* state)
 bool mascot_environment_screen_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment);
+
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_height_aligned(state->ref_mascot->environment, alignment);
     state->sp++;
     return true;
 }
@@ -453,8 +457,10 @@ bool mascot_environment_screen_height(struct expression_vm_state* state)
 bool mascot_environment_work_area_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_width(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_width_aligned(state->ref_mascot->environment, alignment);
     state->sp++;
+    INFO("Work area width: %d", state->stack[state->sp - 1]);
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ENVIRONMENT_WORK_AREA_WIDTH { "mascot.environment.workarea.width", mascot_environment_work_area_width }
@@ -462,7 +468,8 @@ bool mascot_environment_work_area_width(struct expression_vm_state* state)
 bool mascot_environment_work_area_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment)-128;
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_height_aligned(state->ref_mascot->environment, alignment) - 128;
     state->sp++;
     return true;
 }
@@ -471,7 +478,8 @@ bool mascot_environment_work_area_height(struct expression_vm_state* state)
 bool mascot_environment_work_area_left(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_left(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_LEFT, alignment);
     state->sp++;
     return true;
 }
@@ -481,7 +489,8 @@ bool mascot_environment_work_area_top(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     // state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment)-128;
-    state->stack[state->sp] = environment_workarea_top(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_CEILING, alignment);
     state->sp++;
     return true;
 }
@@ -490,7 +499,8 @@ bool mascot_environment_work_area_top(struct expression_vm_state* state)
 bool mascot_environment_work_area_right(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_right(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_RIGHT, alignment);
     state->sp++;
     return true;
 }
@@ -499,7 +509,8 @@ bool mascot_environment_work_area_right(struct expression_vm_state* state)
 bool mascot_environment_work_area_bottom(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_bottom(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_FLOOR, alignment);
     state->sp++;
     return true;
 }

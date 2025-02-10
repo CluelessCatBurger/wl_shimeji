@@ -1175,10 +1175,12 @@ enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
         mascot->X->value.i < (int32_t)environment_workarea_left(mascot->environment) || mascot->X->value.i > (int32_t)environment_workarea_right(mascot->environment) ||
         mascot->Y->value.i < (int32_t)environment_workarea_top(mascot->environment) || mascot->Y->value.i > (int32_t)environment_workarea_bottom(mascot->environment)
     ) {
-        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), clamping!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
+        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
         mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
         mascot->Y->value.i = environment_workarea_height(mascot->environment) - 256;
         mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+        environment_subsurface_set_position(mascot->subsurface, mascot->X->value.i, mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i));
+        environment_subsurface_reset_interpolation(mascot->subsurface);
 
         // if (mascot->X->value.i < 0) mascot->X->value.i = 0;
         // if (mascot->X->value.i > (int32_t)environment_workarea_width(mascot->environment)) mascot->X->value.i = environment_workarea_width(mascot->environment);
@@ -1292,7 +1294,6 @@ enum mascot_tick_result mascot_recheck_condition(struct mascot *mascot, const st
 int32_t yconvat(environment_t* env, int32_t screen_y)
 {
     if (screen_y == -1) return -1;
-    TRACE("Screen height %d, Screen y: %d, Mascot y: %d", environment_workarea_height(env), screen_y, environment_workarea_height(env) - screen_y);
     return environment_workarea_height(env) - screen_y;
 }
 
@@ -1318,9 +1319,6 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
     if (!mascot) return;
     if (!at_env) at_env = mascot->environment;
 
-    INFO("Applying diff %d, %d to mascot %s:%u", dx, dy, mascot->prototype->name, mascot->id);
-    INFO("Current position: %d, %d", mascot->X->value.i, mascot->Y->value.i);
-
     int new_x = mascot->X->value.i;
     int new_y = mascot->Y->value.i;
     if (flags & DIFF_HORIZONTAL_MOVE) {
@@ -1333,7 +1331,6 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
         if (mascot->TargetY->value.i != -1) mascot->TargetY->value.i += dy;
     }
 
-    INFO("New position: %d, %d", new_x, yconvat(at_env, new_y));
     mascot_moved(mascot, new_x, yconvat(at_env, new_y));
 
 }

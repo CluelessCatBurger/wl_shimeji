@@ -18,7 +18,6 @@
 */
 
 #define _GNU_SOURCE
-#include <bits/types/sigset_t.h>
 #include <sys/mman.h>
 #include "mascot_config_parser.h"
 #include "mascot.h"
@@ -41,6 +40,7 @@
 #include "plugins.h"
 #include "config.h"
 #include "physics.h"
+#include "list.h"
 
 #define MASCOT_OVERLAYD_INSTANCE_EXISTS -1
 #define MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR -2
@@ -228,23 +228,6 @@ void* env_interpolation_thread(void* data)
 }
 
 static void orphaned_mascot(struct mascot* mascot) {
-    INFO("Mascot %s:%u is orphaned", mascot->prototype->name, mascot->id);
-    pthread_mutex_lock(&mascot_store.mutex);
-    bool found = false;
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (mascot_store.entries[i] == mascot) {
-            mascot_store.entries[i] = NULL;
-            mascot_store.entry_states[i] = 0;
-            mascot_store.used_count--;
-            found = true;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&mascot_store.mutex);
-    if (!found) {
-        ERROR("Orphaned mascot not found in store");
-    }
-
     // Find new environment for mascot
     pthread_mutex_lock(&environment_store.mutex);
     environment_t* env = NULL;
@@ -258,94 +241,14 @@ static void orphaned_mascot(struct mascot* mascot) {
             }
         }
     }
-
     if (!env) {
         WARN("No environment found for orphaned mascot");
-        pthread_mutex_unlock(&environment_store.mutex);
         mascot_unlink(mascot);
         return;
     }
-
     mascot_environment_changed(mascot, env);
     pthread_mutex_unlock(&environment_store.mutex);
-
-    // Re-add mascot to store
-    pthread_mutex_lock(&mascot_store.mutex);
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (!mascot_store.entry_states[i]) {
-            mascot_store.entries[i] = mascot;
-            mascot_store.entry_states[i] = 1;
-            mascot_store.used_count++;
-            pthread_mutex_unlock(&mascot_store.mutex);
-            return;
-        }
-    }
     pthread_mutex_unlock(&mascot_store.mutex);
-
-}
-
-static void mascot_dropped_oob(struct mascot* mascot, int32_t x, int32_t y)
-{
-    if (!mascot) return;
-    int32_t lx, ly;
-    int32_t lw, lh;
-    if (!environment_logical_position(mascot->environment, &lx, &ly)) {
-        return;
-    }
-    if (!environment_logical_size(mascot->environment, &lw, &lh)) {
-        return;
-    }
-
-    // Find output and exact position where mascot is dropped
-    environment_t* env = NULL;
-
-    int32_t ldropx = lx + x;
-    int32_t ldropy = ly + y;
-
-    int32_t elx, ely;
-    int32_t elw, elh;
-
-    pthread_mutex_lock(&environment_store.mutex);
-    for (size_t i = 0; i < environment_store.entry_count; i++) {
-        if (environment_store.entry_states[i]) {
-            environment_t *target_env = environment_store.entries[i];
-
-            if (!environment_logical_position(target_env, &elx, &ely)) {
-                continue;
-            }
-            if (!environment_logical_size(target_env, &elw, &elh)) {
-                continue;
-            }
-
-            // Compositor have logical space, where 0,0 is top left corner.
-            // Each output have its own logical space, where 0,0 is top left corner of output.
-            // lx, ly is offset of output in compositor space. lw, lh is size of output in compositor space
-            // find if mascot within output rectangle
-            if (ldropx >= elx && ldropx < elx + elw && ldropy >= ely && ldropy < ely + elh) {
-                env = target_env;
-                break;
-            }
-        }
-    }
-    pthread_mutex_unlock(&environment_store.mutex);
-
-    if (!env) {
-        WARN("No environment found for mascot %s:%u", mascot->prototype->name, mascot->id);
-        return;
-    }
-
-
-    // Find mascot coordinates in new environment rectangle
-    int32_t new_x = ldropx - elx;
-    int32_t new_y = ldropy - ely;
-    INFO("Move to new environment %s, new coordinates %d, %d", environment_name(env), new_x, new_y);
-    mascot->X->value.i = new_x;
-    mascot->Y->value.i = mascot_screen_y_to_mascot_y(mascot, new_y);
-    environment_subsurface_set_position(mascot->subsurface, new_x, new_y);
-    environment_subsurface_reset_interpolation(mascot->subsurface);
-
-    // Move mascot to new environment
-    mascot_environment_changed(mascot, env);
 
 }
 
@@ -358,43 +261,6 @@ static void broadcast_input_enabled_listener(bool enabled)
         }
     }
     pthread_mutex_unlock(&environment_store.mutex);
-}
-
-static struct mascot* lookup_mascot_by_coords(environment_t* at_env, int32_t x, int32_t y)
-{
-    pthread_mutex_lock(&mascot_store.mutex);
-    struct mascot* mascot = NULL;
-    uint32_t score = 0;
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (mascot_store.entry_states[i]) {
-            struct mascot* m = mascot_store.entries[i];
-            environment_subsurface_t* subsurface = m->subsurface;
-            if (environment_subsurface_get_environment(subsurface) == at_env) {
-                const struct mascot_pose* pose = environment_subsurface_get_pose(subsurface);
-                if (!pose) continue;
-                // Check if coordinates are within mascot's pose
-                // Mascot's rectangle is defined by anchor point and size
-                // We also respect scaling factor of environment
-                int32_t surface_anchor_point_x = m->X->value.i;
-                int32_t surface_anchor_point_y = mascot_screen_y_to_mascot_y(m, m->Y->value.i);
-                int32_t surface_width = pose->sprite[m->LookingRight->value.i]->width / environment_screen_scale(at_env);
-                int32_t surface_height = pose->sprite[m->LookingRight->value.i]->height / environment_screen_scale(at_env);
-
-                surface_anchor_point_x += pose->anchor_x / environment_screen_scale(at_env);
-                surface_anchor_point_y += pose->anchor_y / environment_screen_scale(at_env);
-
-                if (x >= surface_anchor_point_x && x < surface_anchor_point_x + surface_width &&
-                    y >= surface_anchor_point_y && y < surface_anchor_point_y + surface_height) {
-                    if ((!m->dragged_tick || m->dragged_tick > score) && !m->dragged) {
-                        mascot = m;
-                        score = m->dragged_tick;
-                    }
-                }
-            }
-        }
-    }
-    pthread_mutex_unlock(&mascot_store.mutex);
-    return mascot;
 }
 
 // Sigaction handler for SIGSEGV and SIGINT
@@ -924,20 +790,19 @@ bool process_set_behavior_packet(uint8_t* buff, uint16_t len, int fd)
         send(fd, rbuff, 2, 0);
         return false;
     }
-
-    pthread_mutex_lock(&mascot_store.mutex);
     struct mascot* mascot = NULL;
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (mascot_store.entry_states[i]) {
-            if (mascot_store.entries[i]->id == id) {
-                mascot = mascot_store.entries[i];
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            mascot = environment_mascot_by_id(environment_store.entries[i], id);
+            if (mascot && mascot->id == id) {
                 break;
             }
         }
     }
+    pthread_mutex_unlock(&environment_store.mutex);
 
     if (!mascot) {
-        pthread_mutex_unlock(&mascot_store.mutex);
         uint8_t rbuff[2] = {0xc2, 2}; // Command SET_BEHAVIOR_RESULT, result NO_MASCOT
         send(fd, rbuff, 2, 0);
         return false;
@@ -953,7 +818,6 @@ bool process_set_behavior_packet(uint8_t* buff, uint16_t len, int fd)
 
     mascot_set_behavior(mascot, behavior);
 
-    pthread_mutex_unlock(&mascot_store.mutex);
     uint8_t rbuff[2] = {0xc2, 0}; // Command SET_BEHAVIOR_RESULT, result SUCCESS
     send(fd, rbuff, 2, 0);
     return true;
@@ -967,21 +831,22 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint16_t len, int fd)
     uint16_t outlen = 2;
     outbuf[0] = 6;
     memcpy(&id, buff + 2, 4);
-    pthread_mutex_lock(&mascot_store.mutex);
     struct mascot* mascot = NULL;
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (!mascot_store.entry_states[i]) continue;
-        if (mascot_store.entries[i]->id == id) {
-            mascot = mascot_store.entries[i];
-            mascot_link(mascot);
-            break;
+    pthread_mutex_lock(&environment_store.mutex);
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            mascot = environment_mascot_by_id(environment_store.entries[i], id);
+            if (mascot && mascot->id == id) {
+                break;
+            }
         }
     }
+
     if (!mascot) {
          // Command GET_MASCOT_INFO_RESULT, result NO_MASCOT
         outbuf[1] = 1;
         send(fd, buff, 2, 0);
-        pthread_mutex_unlock(&mascot_store.mutex);
+        pthread_mutex_unlock(&environment_store.mutex);
         return true;
     }
     // Serialize mascot info and send it
@@ -1038,8 +903,7 @@ bool process_get_mascot_info_packet(uint8_t* buff, uint16_t len, int fd)
     }
     // Send the buffer
     send(fd, outbuf, outlen, 0);
-    mascot_unlink(mascot);
-    pthread_mutex_unlock(&mascot_store.mutex);
+    pthread_mutex_unlock(&environment_store.mutex);
     return true;
 }
 
@@ -1054,51 +918,51 @@ bool process_dismiss_packet(uint8_t* buff, uint16_t len, int fd)
     uint8_t act = buff[1];
     uint32_t id;
     memcpy(&id, buff + 2, 4);
-    pthread_mutex_lock(&mascot_store.mutex);
-    // Get mascot from store if exists, else return error
-    struct mascot* mascot = NULL;
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (mascot_store.entries[i]->id == id) {
-            mascot = mascot_store.entries[i];
-            break;
-        }
-    }
-    if (act != DISMISS_ALL) {
-        if (!mascot) {
-            pthread_mutex_unlock(&mascot_store.mutex);
-            char buff[2] = {7, 1};
-            send(fd, buff, 2, 0);
-            return false;
-        }
-    }
 
-    // Iterate over all mascots and dismiss them according to act
-    for (size_t i = 0; i < mascot_store.entry_count; i++) {
-        if (mascot_store.entry_states[i]) {
-            if (act == DISMISS_ONE) {
-                if (mascot_store.entries[i]->id == id) {
-                    remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
-                    break;
+
+
+    pthread_mutex_lock(&environment_store.mutex);
+    struct list *mascots = NULL;
+    for (size_t i = 0; i < environment_store.entry_count; i++) {
+        if (environment_store.entry_states[i]) {
+            mascots = environment_mascot_list(environment_store.entries[i], NULL);
+            // Get mascot from store if exists, else return error
+            struct mascot* mascot = NULL;
+            mascot = environment_mascot_by_id(environment_store.entries[i], id);
+            if (act != DISMISS_ALL) {
+                if (!mascot) {
+                    continue;
                 }
-            } else if (act == DISMISS_ALL) {
-                remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
-            } else if (act == DISMISS_ALL_OTHERS) {
-               if (mascot->id != mascot_store.entries[i]->id) {
-                   remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
-               }
-            } else if (act == DISMISS_ALL_OTHER_SAME_TYPE) {
-                if (mascot_store.entries[i]->id != id && mascot_store.entries[i]->prototype == mascot->prototype) {
-                    remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
-                }
-            } else if (act == DISMISS_ALL_OF_SAME_TYPE) {
-                if (mascot_store.entries[i]->prototype == mascot->prototype) {
-                    remove_mascot(NULL, 0, 0, mascot_store.entries[i]->subsurface, (void*)(uintptr_t)-1);
+            }
+
+            // Iterate over all mascots and dismiss them according to act
+            for (uint32_t i = 0; i < list_size(mascots); i++) {
+                struct mascot* mascot_ = list_get(mascots, i);
+                if (mascot_) {
+                    if (act == DISMISS_ONE) {
+                        if (mascot_->id == id) {
+                            remove_mascot(NULL, 0, 0, mascot_->subsurface, (void*)(uintptr_t)-1);
+                            break;
+                        }
+                    } else if (act == DISMISS_ALL) {
+                        remove_mascot(NULL, 0, 0, mascot_->subsurface, (void*)(uintptr_t)-1);
+                    } else if (act == DISMISS_ALL_OTHERS) {
+                       if (mascot->id != mascot_->id) {
+                           remove_mascot(NULL, 0, 0, mascot_->subsurface, (void*)(uintptr_t)-1);
+                       }
+                    } else if (act == DISMISS_ALL_OTHER_SAME_TYPE) {
+                        if (mascot_->id != id && mascot_->prototype == mascot->prototype) {
+                            remove_mascot(NULL, 0, 0, mascot_->subsurface, (void*)(uintptr_t)-1);
+                        }
+                    } else if (act == DISMISS_ALL_OF_SAME_TYPE) {
+                        if (mascot_->prototype == mascot->prototype) {
+                            remove_mascot(NULL, 0, 0, mascot_->subsurface, (void*)(uintptr_t)-1);
+                        }
+                    }
                 }
             }
         }
     }
-
-    pthread_mutex_unlock(&mascot_store.mutex);
     char outbuf[2] = {7, 0};
     send(fd, outbuf, 2, 0);
     return true;
@@ -1336,7 +1200,7 @@ int main(int argc, const char** argv)
 
     // Initialize environment
     environment_set_global_coordinates_searcher(find_env_by_coords);
-    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete, orphaned_mascot, mascot_dropped_oob);
+    enum environment_init_status env_init = environment_init(env_init_flags, env_new, env_delete, orphaned_mascot);
     if (env_init != ENV_INIT_OK) {
         char buf[1025+sizeof(size_t)];
         size_t strlen = snprintf(buf+1+sizeof(size_t), 1024, "Failed to initialize environment:\n%s", environment_get_error());
@@ -1414,6 +1278,7 @@ int main(int argc, const char** argv)
         struct dirent* ent;
         while ((ent = readdir(dir)) != NULL) {
             if (ent->d_type == DT_DIR) {
+                if (ent->d_name[0] == '.') continue;
                 char proto_path[256];
                 int slen = snprintf(proto_path, 255, "%s/%s", mascots_path_packages, ent->d_name);
                 if (slen < 0 || slen >= 255) {

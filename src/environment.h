@@ -79,7 +79,7 @@ enum environment_init_status {
 
 enum environment_init_status environment_init(int flags,
     void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*),
-    void(*orphaned_mascot)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
+    void(*orphaned_mascot)(struct mascot*)
 );
 
 int environment_dispatch();
@@ -125,6 +125,11 @@ int32_t environment_workarea_top(environment_t* env);
 int32_t environment_workarea_bottom(environment_t* env);
 int32_t environment_workarea_width(environment_t* env);
 int32_t environment_workarea_height(environment_t* env);
+
+int32_t environment_workarea_coordinate_aligned(environment_t* env, int32_t border_type, int32_t alignment_type);
+int32_t environment_workarea_width_aligned(environment_t* env, int32_t alignment_type);
+int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignment_type);
+
 int32_t environment_cursor_x(struct mascot* mascot, environment_t* env);
 int32_t environment_cursor_y(struct mascot* mascot, environment_t* env);
 int32_t environment_cursor_dx(struct mascot* mascot, environment_t* env);
@@ -213,8 +218,9 @@ void environment_set_affordance_manager(environment_t* environment, struct masco
 
 struct bounding_box* environment_local_geometry(environment_t* environment);
 struct bounding_box* environment_global_geometry(environment_t* environment);
-struct mascot* mascot_by_coordinates(environment_t* environment, int32_t x, int32_t y);
-struct mascot* mascot_by_id(environment_t* environment, uint32_t id);
+struct mascot* environment_mascot_by_coordinates(environment_t* environment, int32_t x, int32_t y);
+struct mascot* environment_mascot_by_id(environment_t* environment, uint32_t id);
+struct list* environment_mascot_list(environment_t* environment, pthread_mutex_t** list_mutex);
 
 // Unified outputs
 void environment_announce_neighbor(environment_t* environment, environment_t* neighbor);

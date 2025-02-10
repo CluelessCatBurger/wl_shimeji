@@ -155,6 +155,10 @@ struct environment {
 
     struct list* neighbors; // Neighbored environments in contact with this one
     int32_t border_mask; // Mask for border type checks for mascot
+    bool ceiling_aligned;
+    bool floor_aligned;
+    bool left_aligned;
+    bool right_aligned;
 };
 
 struct wl_surface_data {
@@ -919,7 +923,7 @@ static void on_output_done(void* data, struct wl_output* output)
     UNUSED(data);
     environment_t* env = (environment_t*)data;
     environment_recalculate_advertised_geometry(env);
-    for (int i = 0; i < list_size(env->neighbors); i++) {
+    for (uint32_t i = 0; i < list_size(env->neighbors); i++) {
         environment_t* neighbor = list_get(env->neighbors, i);
         environment_recalculate_advertised_geometry(neighbor);
     }
@@ -1129,7 +1133,7 @@ static void on_pointer_frame(void* data, struct wl_pointer* pointer)
         surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->above_surface);
         if (new_env && new_env != env && env_pointer->grabbed_subsurface) {
             struct mascot * mascot = environment_subsurface_get_mascot(env_pointer->grabbed_subsurface);
-            if (mascot) {
+            if (mascot && (config_get_allow_dragging_multihead() || config_get_unified_outputs())) {
                 int32_t diffx, diffy;
                 environment_global_coordinates_delta(env, new_env, &diffx, &diffy);
                 int32_t newx = env_pointer->x, newy = env_pointer->y;
@@ -1137,8 +1141,6 @@ static void on_pointer_frame(void* data, struct wl_pointer* pointer)
                 mascot_moved(mascot, newx, yconv(new_env, newy));
                 mascot_apply_environment_position_diff(mascot, diffx, diffy, DIFF_HORIZONTAL_MOVE | DIFF_VERTICAL_MOVE, new_env);
                 mascot_environment_changed(mascot, new_env);
-                environment_subsurface_set_position(env_pointer->grabbed_subsurface, newx, newy);
-                environment_subsurface_reset_interpolation(env_pointer->grabbed_subsurface);
                 env_pointer->frame.mask &= ~EVENT_FRAME_MOTIONS;
             }
             env = new_env;
@@ -1967,7 +1969,7 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
                     why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
                     WARN("WORKAROUND: zwp_tablet_v2 proximity_in events are received by parent in KDE, not by subsurface. Applying stupid workaround.");
                 }
-                struct mascot* mascot = mascot_by_coordinates(env, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
+                struct mascot* mascot = environment_mascot_by_coordinates(env, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
                 if (mascot) {
                     env_pointer->frame.surface_changed = mascot->subsurface->surface;
                 }
@@ -2081,7 +2083,7 @@ static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output)
     UNUSED(xdg_output);
     environment_t* env = data;
     environment_recalculate_advertised_geometry(env);
-    for (int i = 0; i < list_size(env->neighbors); i++) {
+    for (uint32_t i = 0; i < list_size(env->neighbors); i++) {
         environment_t* neighbor = list_get(env->neighbors, i);
         environment_recalculate_advertised_geometry(neighbor);
     }
@@ -2233,7 +2235,7 @@ static const struct wl_registry_listener registry_listener = {
 
 enum environment_init_status environment_init(int flags,
     void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*),
-    void(*orph_listener)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
+    void(*orph_listener)(struct mascot*)
 )
 {
 
@@ -2551,17 +2553,13 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
             }
 
             mascot_moved(surface->mascot, proposed_x, proposed_y);
-            INFO("Mascot moved to new environment %d, new position: (%d, %d)", new_env->id, proposed_x, proposed_y);
             mascot_apply_environment_position_diff(surface->mascot, diff_x, diff_y, move_flags, new_env);
             mascot_environment_changed(surface->mascot, new_env);
-            environment_subsurface_set_position(surface, proposed_x, yconv(new_env, proposed_y));
             return environment_move_ok;
         }
     }
 
     if (COLLIDED(collision) && !environment_neighbor_border(surface->env, proposed_x, proposed_y)) {
-        INFO("Collided! Old position: (%d, %d), New position: (%d, %d)", dx, dy, proposed_x, yconv(surface->env, proposed_y));
-        INFO("Notice! Mask %d applied! %d", surface->env->border_mask, APPLY_MASK(collision, surface->env->border_mask));
         dx = proposed_x;
         dy = yconv(surface->env, proposed_y);
         result = environment_move_clamped;
@@ -2872,11 +2870,13 @@ int environment_get_display_fd() {
 
 struct mascot* environment_subsurface_get_mascot(environment_subsurface_t* surface)
 {
+    if (!surface) return NULL;
     return surface->mascot;
 }
 
 const struct mascot_pose* environment_subsurface_get_pose(environment_subsurface_t* surface)
 {
+    if (!surface) return NULL;
     return surface->pose;
 }
 
@@ -3068,12 +3068,12 @@ int32_t environment_screen_height(environment_t* env)
 
 int32_t environment_workarea_width(environment_t* env)
 {
-    return env->advertised_geometry.width ? env->advertised_geometry.width: env->width;
+    return env->advertised_geometry.width ? env->advertised_geometry.width : (int32_t)env->width;
 }
 
 int32_t environment_workarea_height(environment_t* env)
 {
-    return env->advertised_geometry.height ? env->advertised_geometry.height : env->height;
+    return env->advertised_geometry.height ? env->advertised_geometry.height : (int32_t)env->height;
 
 }
 
@@ -3136,8 +3136,6 @@ enum environment_border_type environment_get_border_type(environment_t *env, int
 
     int32_t border_type = BORDER_TYPE(check_collision_at(&env->workarea_geometry, x, y, 0));
     int32_t masked_border = APPLY_MASK(border_type, env->border_mask);
-
-    INFO("Border type: %d, masked border: %d. (%d, %d)", border_type, masked_border, x, y);
 
     if (masked_border & BORDER_TYPE_CEILING) return environment_border_type_ceiling;
     if (BORDER_IS_WALL(masked_border)) return environment_border_type_wall;
@@ -3585,7 +3583,7 @@ void environment_global_coordinates_delta(
     *dy = dy_;
 }
 
-struct mascot* mascot_by_coordinates(environment_t* environment, int32_t x, int32_t y)
+struct mascot* environment_mascot_by_coordinates(environment_t* environment, int32_t x, int32_t y)
 {
     if (!environment) return NULL;
     if (!environment->is_ready) return NULL;
@@ -3612,6 +3610,36 @@ struct mascot* mascot_by_coordinates(environment_t* environment, int32_t x, int3
     }
     pthread_mutex_unlock(&environment->mascot_manager.mutex);
     return mascot;
+}
+
+struct mascot* environment_mascot_by_id(environment_t* environment, uint32_t id)
+{
+    if (!environment) return NULL;
+    if (!environment->is_ready) return NULL;
+    if (!environment->mascot_manager.referenced_mascots) return NULL;
+
+    struct list* mascots = environment->mascot_manager.referenced_mascots;
+    struct mascot* mascot = NULL;
+    pthread_mutex_lock(&environment->mascot_manager.mutex);
+    for (size_t i = 0; i < list_size(mascots); i++) {
+        struct mascot* mascot_ = list_get(mascots, i);
+        if (!mascot_) continue;
+        if (mascot_->id == id) {
+            mascot = mascot_;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&environment->mascot_manager.mutex);
+    return mascot;
+}
+
+struct list* environment_mascot_list(environment_t* environment, pthread_mutex_t** list_mutex)
+{
+    if (!environment) return NULL;
+    if (!environment->is_ready) return NULL;
+
+    if (list_mutex) *list_mutex = &environment->mascot_manager.mutex;
+    return environment->mascot_manager.referenced_mascots;
 }
 
 struct bounding_box* environment_global_geometry(environment_t* environment)
@@ -3647,6 +3675,7 @@ void environment_recalculate_advertised_geometry(environment_t* env)
     int32_t max_width = env->workarea_geometry.width, max_height = env->workarea_geometry.height;
 
     int32_t new_border_mask = 0;
+    bool ceiling_aligned = false, floor_aligned = false, left_aligned = false, right_aligned = false;
 
     // Iterate through the neighbors to find the maximum dimensions and offsets
     for (size_t i = 0; i < list_size(env->neighbors); i++) {
@@ -3662,6 +3691,12 @@ void environment_recalculate_advertised_geometry(environment_t* env)
                 max_width = neighbor->global_geometry.width + env->global_geometry.width;
             }
             new_border_mask |= BORDER_TYPE_LEFT;
+            if (neighbor->global_geometry.y == env->global_geometry.y) {
+                ceiling_aligned = true;
+            }
+            if (neighbor->global_geometry.y + neighbor->global_geometry.height == env->global_geometry.y + env->global_geometry.height) {
+                floor_aligned = true;
+            }
             continue;
         }
 
@@ -3673,6 +3708,12 @@ void environment_recalculate_advertised_geometry(environment_t* env)
                 max_width = neighbor->global_geometry.width + env->global_geometry.width;
             }
             new_border_mask |= BORDER_TYPE_RIGHT;
+            if (neighbor->global_geometry.y == env->global_geometry.y) {
+                ceiling_aligned = true;
+            }
+            if (neighbor->global_geometry.y + neighbor->global_geometry.height == env->global_geometry.y + env->global_geometry.height) {
+                floor_aligned = true;
+            }
             continue;
         }
 
@@ -3684,6 +3725,12 @@ void environment_recalculate_advertised_geometry(environment_t* env)
                 max_height = neighbor->global_geometry.height + env->global_geometry.height;
             }
             new_border_mask |= BORDER_TYPE_CEILING;
+            if (neighbor->global_geometry.x == env->global_geometry.x) {
+                left_aligned = true;
+            }
+            if (neighbor->global_geometry.x + neighbor->global_geometry.width == env->global_geometry.x + env->global_geometry.width) {
+                right_aligned = true;
+            }
             continue;
         }
 
@@ -3695,6 +3742,12 @@ void environment_recalculate_advertised_geometry(environment_t* env)
                 max_height = neighbor->global_geometry.height + env->global_geometry.height;
             }
             new_border_mask |= BORDER_TYPE_FLOOR;
+            if (neighbor->global_geometry.x == env->global_geometry.x) {
+                left_aligned = true;
+            }
+            if (neighbor->global_geometry.x + neighbor->global_geometry.width == env->global_geometry.x + env->global_geometry.width) {
+                right_aligned = true;
+            }
             continue;
         }
     }
@@ -3704,12 +3757,18 @@ void environment_recalculate_advertised_geometry(environment_t* env)
     env->advertised_geometry.y = env->workarea_geometry.y - max_top_offset;
     env->advertised_geometry.width = max_width;
     env->advertised_geometry.height = max_height;
+    env->ceiling_aligned = ceiling_aligned;
+    env->floor_aligned = floor_aligned;
+    env->left_aligned = left_aligned;
+    env->right_aligned = right_aligned;
 
     // Mask the borders that are touched by neighbors
     env->border_mask = new_border_mask;
+    INFO("------------[Environment %d recalculate advertised geometry]---------------", env->id);
     INFO("New border mask is %d", env->border_mask);
     INFO("Advertised geometry is %d, %d, %d, %d", env->advertised_geometry.x, env->advertised_geometry.y, env->advertised_geometry.width, env->advertised_geometry.height);
-
+    INFO("Geometry alignment: %s%s%s%s", ceiling_aligned ? "ceiling " : "", floor_aligned ? "floor " : "", left_aligned ? "left " : "", right_aligned ? "right" : "");
+    INFO("--------------------------------------------------------------------------");
 }
 
 void environment_announce_neighbor(environment_t* environment, environment_t* neighbor)
@@ -3756,9 +3815,7 @@ bool environment_neighbor_border(environment_t* environment, int32_t x, int32_t 
     for (size_t i = 0; i < list_size(environment->neighbors); i++) {
         environment_t* neighbor = list_get(environment->neighbors, i);
         if (!neighbor) continue;
-        TRACE("We on %d,%d, neighbor box is %d,%d,%d,%d", global_x, global_y, neighbor->global_geometry.x, neighbor->global_geometry.y, neighbor->global_geometry.width, neighbor->global_geometry.height);
         int32_t collision_at = BORDER_TYPE(check_collision_at(&neighbor->global_geometry, global_x, global_y, 0));
-        TRACE("Collision at %d", collision_at);
         if (collision_at) return true;
     }
     return false;
@@ -3773,4 +3830,71 @@ void environment_set_affordance_manager(environment_t* environment, struct masco
         if (!mascot) continue;
         mascot_attach_affordance_manager(mascot, manager);
     }
+}
+
+int32_t environment_workarea_coordinate_aligned(environment_t* env, int32_t border_type, int32_t alignment_type)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t retval = 0;
+    if (border_type & BORDER_TYPE_LEFT) {
+        retval = env->workarea_geometry.x;
+        if (alignment_type & BORDER_TYPE_FLOOR && env->ceiling_aligned) {
+            retval = env->advertised_geometry.x;
+        } else if (alignment_type & BORDER_TYPE_CEILING && env->floor_aligned) {
+            retval = env->advertised_geometry.x;
+        }
+    } else if (border_type & BORDER_TYPE_RIGHT) {
+        retval = env->workarea_geometry.x + env->workarea_geometry.width;
+        if (alignment_type & BORDER_TYPE_FLOOR && env->ceiling_aligned) {
+            retval = env->advertised_geometry.x + env->advertised_geometry.width;
+        } else if (alignment_type & BORDER_TYPE_CEILING && env->floor_aligned) {
+            retval = env->advertised_geometry.x + env->advertised_geometry.width;
+        }
+    } else if (border_type & BORDER_TYPE_CEILING) {
+        retval = env->advertised_geometry.y;
+        if (alignment_type & BORDER_TYPE_LEFT && env->left_aligned) {
+            retval = env->advertised_geometry.y;
+        } else if (alignment_type & BORDER_TYPE_RIGHT && env->right_aligned) {
+            retval = env->advertised_geometry.y;
+        }
+    } else if (border_type & BORDER_TYPE_FLOOR) {
+        retval = env->advertised_geometry.y + env->advertised_geometry.height;
+        if (alignment_type & BORDER_TYPE_LEFT && env->left_aligned) {
+            retval = env->advertised_geometry.y + env->advertised_geometry.height;
+        } else if (alignment_type & BORDER_TYPE_RIGHT && env->right_aligned) {
+            retval = env->advertised_geometry.y + env->advertised_geometry.height;
+        }
+    }
+
+    return retval;
+}
+
+int32_t environment_workarea_width_aligned(environment_t* env, int32_t alignment_type)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t retval = env->workarea_geometry.width;
+    if (alignment_type & BORDER_TYPE_CEILING && env->ceiling_aligned) {
+        retval = env->advertised_geometry.width;
+    } else if (alignment_type & BORDER_TYPE_FLOOR && env->floor_aligned) {
+        retval = env->advertised_geometry.width;
+    }
+    return retval;
+}
+
+int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignment_type)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t retval = env->workarea_geometry.height;
+    if (alignment_type & BORDER_TYPE_LEFT && env->left_aligned) {
+        retval = env->advertised_geometry.height;
+    } else if (alignment_type & BORDER_TYPE_RIGHT && env->right_aligned) {
+        retval = env->advertised_geometry.height;
+    }
+    return retval;
 }
