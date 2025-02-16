@@ -374,6 +374,7 @@ struct mascot_behavior {
 
 // Mascot prototype
 struct mascot_prototype {
+    uint32_t id; // Prototype ID
     const char* name; // Internal name
     const char* display_name; // Display name
     const char* path; // Path to the prototype

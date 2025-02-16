@@ -2472,10 +2472,10 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 
     wl_surface_attach(surface->surface, sprite->buffer->buffer, 0, 0);
     wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-    if (!surface->drag_pointer) {
-        environment_buffer_scale_input_region(sprite->buffer, surface->env->scale);
-        wl_surface_set_input_region(surface->surface, sprite->buffer->region);
-    }
+    // if (!surface->drag_pointer) {
+    //     environment_buffer_scale_input_region(sprite->buffer, surface->env->scale);
+    //     wl_surface_set_input_region(surface->surface, sprite->buffer->region);
+    // }
 
     if (!surface->pose) {
         wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
@@ -2511,7 +2511,7 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback, bool use_interpolation)
 {
     if (!surface->surface) return environment_move_invalid;
-    if (!config_get_framerate()) use_interpolation = false;
+    if (!config_get_interpolation_framerate()) use_interpolation = false;
 
     enum environment_move_result result = environment_move_ok;
 
@@ -2851,7 +2851,7 @@ void environment_select_position(environment_t* env, void (*callback)(environmen
     env->select_callback = callback;
     env->select_active = callback != NULL;
     env->select_data = data;
-    environment_pointer_apply_cursor(active_pointer, mascot_hotspot_cursor_crosshair);
+    if (env->select_active) environment_pointer_apply_cursor(active_pointer, mascot_hotspot_cursor_crosshair);
 }
 
 void environment_set_input_state(environment_t* env, bool active)
@@ -3380,7 +3380,7 @@ uint64_t environment_interpolate(environment_t *env)
     if (!env) return 0;
     if (!env->is_ready) return 0;
 
-    float framerate = config_get_framerate();
+    float framerate = config_get_interpolation_framerate();
     if (framerate < 0) framerate = (env->output.refresh / 1000.0);
     if (framerate < 1.0) return 0;
 
@@ -3545,7 +3545,10 @@ void environment_summon_mascot(
     if (!environment) return;
     if (!prototype) return;
     struct mascot* mascot = mascot_new(prototype, NULL, 0, 0, x, y, 2.0, 0.05, 0.1, false, environment);
-    if (!mascot) return;
+    if (!mascot){
+        if (callback) callback(mascot, data);
+        return;
+    }
 
     struct list *mascots = environment->mascot_manager.referenced_mascots;
     pthread_mutex_lock(&environment->mascot_manager.mutex);
@@ -3593,16 +3596,21 @@ struct mascot* environment_mascot_by_coordinates(environment_t* environment, int
     struct mascot* mascot = NULL;
     uint32_t mascot_score = 0;
     pthread_mutex_lock(&environment->mascot_manager.mutex);
-    for (size_t i = 0; i < list_size(mascots); i++) {
+    INFO("Size, count %d %d", list_size(mascots), list_count(mascots));
+    for (size_t i = 0, c = 0; i < list_size(mascots) && c < list_count(mascots); i++) {
         struct mascot* mascot_ = list_get(mascots, i);
+        INFO("Checking mascot: %p index %d", mascot_, i);
         if (!mascot_) continue;
+        INFO("Checking mascot: score %d", mascot_score);
+        c++;
         if (mascot_->dragged) continue;
         if (mascot_->subsurface) {
-            if (x >= mascot->subsurface->x && x <= mascot->subsurface->x + mascot->subsurface->width) {
-                if (y >= mascot->subsurface->y && y <= mascot->subsurface->y + mascot->subsurface->height) {
-                    if (!mascot->dragged_tick || mascot->dragged_tick > mascot_score) {
+            if (x >= mascot_->subsurface->x && x <= mascot_->subsurface->x + mascot_->subsurface->width) {
+                if (y >= mascot_->subsurface->y && y <= mascot_->subsurface->y + mascot_->subsurface->height) {
+                    INFO("Mascot found by coordinates: %p %d", mascot_, mascot_score);
+                    if (!mascot_->dragged_tick || mascot_->dragged_tick > mascot_score) {
                         mascot = mascot_;
-                        mascot_score = mascot->dragged_tick;
+                        mascot_score = mascot_->dragged_tick;
                     }
                 }
             }

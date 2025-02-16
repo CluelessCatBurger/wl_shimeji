@@ -29,6 +29,7 @@ struct list* list_init_(uint32_t capacity)
     list->entry_count = capacity;
     list->entries = calloc(1, sizeof(void*) * capacity);
     list->entry_used = calloc(1, capacity);
+    list->occupied = 0;
     return list;
 }
 

@@ -32,6 +32,8 @@
 
 #include "wayland_includes.h"
 
+static uint32_t prototype_id_counter = 0;
+
 struct mascot_prototype_store_ {
     struct mascot_prototype** prototypes;
     uint32_t size;
@@ -161,6 +163,21 @@ struct mascot_prototype* mascot_prototype_store_get(mascot_prototype_store* stor
     }
 
     DEBUG("Prototype %s not found", name);
+
+    return NULL;
+}
+
+struct mascot_prototype* mascot_prototype_store_get_by_id(mascot_prototype_store* store, uint32_t id)
+{
+    if (!store || id == UINT32_MAX) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < store->size; i++) {
+        if (store->prototypes[i] && store->prototypes[i]->id == id) {
+            return store->prototypes[i];
+        }
+    }
 
     return NULL;
 }
@@ -2410,6 +2427,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
 
     prototype->local_variables_count = 128;
     prototype->path = strdup(path);
+    prototype->id = prototype_id_counter++;
 
     return PROTOTYPE_LOAD_SUCCESS;
 }

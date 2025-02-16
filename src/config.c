@@ -27,6 +27,72 @@
 
 struct config config = {0};
 
+config_param_setter config_setter_table_[CONFIG_PARAM_COUNT] =
+{
+    config_set_breeding,
+    config_set_dragging,
+    config_set_ie_interactions,
+    config_set_ie_throwing,
+    config_set_cursor_data,
+    config_set_mascot_limit,
+    config_set_ie_throw_policy,
+    config_set_allow_dismiss_animations,
+    config_set_per_mascot_interactions,
+    config_set_interpolation_framerate,
+    config_set_overlay_layer,
+    config_set_tablets_enabled,
+    config_set_pointer_left_button,
+    config_set_pointer_right_button,
+    config_set_pointer_middle_button,
+    config_set_on_tool_pen,
+    config_set_on_tool_eraser,
+    config_set_on_tool_brush,
+    config_set_on_tool_pencil,
+    config_set_on_tool_airbrush,
+    config_set_on_tool_finger,
+    config_set_on_tool_lens,
+    config_set_on_tool_mouse,
+    config_set_on_tool_button1,
+    config_set_on_tool_button2,
+    config_set_on_tool_button3,
+    config_set_allow_throwing_multihead,
+    config_set_allow_dragging_multihead,
+    config_set_unified_outputs
+};
+
+config_param_getter config_getter_table_[CONFIG_PARAM_COUNT] =
+{
+    config_get_breeding,
+    config_get_dragging,
+    config_get_ie_interactions,
+    config_get_ie_throwing,
+    config_get_cursor_data,
+    config_get_mascot_limit,
+    config_get_ie_throw_policy,
+    config_get_allow_dismiss_animations,
+    config_get_per_mascot_interactions,
+    config_get_interpolation_framerate,
+    config_get_overlay_layer,
+    config_get_tablets_enabled,
+    config_get_pointer_left_button,
+    config_get_pointer_right_button,
+    config_get_pointer_middle_button,
+    config_get_on_tool_pen,
+    config_get_on_tool_eraser,
+    config_get_on_tool_brush,
+    config_get_on_tool_pencil,
+    config_get_on_tool_airbrush,
+    config_get_on_tool_finger,
+    config_get_on_tool_lens,
+    config_get_on_tool_mouse,
+    config_get_on_tool_button1,
+    config_get_on_tool_button2,
+    config_get_on_tool_button3,
+    config_get_allow_throwing_multihead,
+    config_get_allow_dragging_multihead,
+    config_get_unified_outputs
+};
+
 bool config_parse(const char* path)
 {
 
@@ -97,7 +163,7 @@ bool config_parse(const char* path)
         } else if (strcmp(key, "per_mascot_interactions") == 0) {
             config_set_per_mascot_interactions(strncmp(value, "true", 4) == 0);
         } else if (strcmp(key, "interpolation_framerate") == 0) {
-            config_set_framerate(atoi(value));
+            config_set_interpolation_framerate(atoi(value));
         } else if (strcmp(key, "overlay_layer") == 0) {
             config_set_overlay_layer(atoi(value));
         } else if (strcmp(key, "tablets_enabled") == 0) {
@@ -183,37 +249,37 @@ void config_write(const char* path)
     fclose(file);
 }
 
-bool config_set_breeding(bool value)
+bool config_set_breeding(int32_t value)
 {
     config.breeding = value;
     return true;
 }
 
-bool config_set_dragging(bool value)
+bool config_set_dragging(int32_t value)
 {
     config.dragging = value;
     return true;
 }
 
-bool config_set_ie_interactions(bool value)
+bool config_set_ie_interactions(int32_t value)
 {
     config.ie_interactions = value;
     return true;
 }
 
-bool config_set_ie_throwing(bool value)
+bool config_set_ie_throwing(int32_t value)
 {
     config.ie_throwing = value;
     return true;
 }
 
-bool config_set_cursor_data(bool value)
+bool config_set_cursor_data(int32_t value)
 {
     config.cursor_data = value;
     return true;
 }
 
-bool config_set_mascot_limit(uint32_t value)
+bool config_set_mascot_limit(int32_t value)
 {
     config.mascot_limit = value;
     return true;
@@ -225,19 +291,19 @@ bool config_set_ie_throw_policy(int32_t value)
     return true;
 }
 
-bool config_set_allow_dismiss_animations(bool value)
+bool config_set_allow_dismiss_animations(int32_t value)
 {
     config.dismiss_animations = value;
     return true;
 }
 
-bool config_set_per_mascot_interactions(bool value)
+bool config_set_per_mascot_interactions(int32_t value)
 {
     config.affordances = value;
     return true;
 }
 
-bool config_set_framerate(int32_t value)
+bool config_set_interpolation_framerate(int32_t value)
 {
     config.framerate = value;
     return true;
@@ -249,32 +315,32 @@ bool config_set_overlay_layer(int32_t value)
     return true;
 }
 
-bool config_get_breeding()
+int32_t config_get_breeding()
 {
     return config.breeding;
 }
 
-bool config_get_dragging()
+int32_t config_get_dragging()
 {
     return config.dragging;
 }
 
-bool config_get_ie_interactions()
+int32_t config_get_ie_interactions()
 {
     return config.ie_interactions;
 }
 
-bool config_get_ie_throwing()
+int32_t config_get_ie_throwing()
 {
     return config.ie_throwing;
 }
 
-bool config_get_cursor_data()
+int32_t config_get_cursor_data()
 {
     return config.cursor_data;
 }
 
-uint32_t config_get_mascot_limit()
+int32_t config_get_mascot_limit()
 {
     return config.mascot_limit;
 }
@@ -284,17 +350,17 @@ int32_t config_get_ie_throw_policy()
     return config.ie_throw_policy;
 }
 
-bool config_get_allow_dismiss_animations()
+int32_t config_get_allow_dismiss_animations()
 {
     return config.dismiss_animations;
 }
 
-bool config_get_per_mascot_interactions()
+int32_t config_get_per_mascot_interactions()
 {
     return config.affordances;
 }
 
-int32_t config_get_framerate()
+int32_t config_get_interpolation_framerate()
 {
     return config.framerate;
 }
@@ -307,97 +373,97 @@ int32_t config_get_overlay_layer()
     return config.overlay_layer;
 }
 
-bool config_get_tablets_enabled()
+int32_t config_get_tablets_enabled()
 {
     return config.enable_tablets;
 }
 
-uint32_t config_get_pointer_left_button()
+int32_t config_get_pointer_left_button()
 {
     if (config.pointer_left_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.pointer_left_value;
 }
 
-uint32_t config_get_pointer_right_button()
+int32_t config_get_pointer_right_button()
 {
     if (config.pointer_right_value == -1) return POINTER_SECONDARY_BUTTON;
     return config.pointer_right_value;
 }
 
-uint32_t config_get_pointer_middle_button()
+int32_t config_get_pointer_middle_button()
 {
     if (config.pointer_middle_value == -1) return POINTER_THIRD_BUTTON;
     return config.pointer_middle_value;
 }
 
-uint32_t config_get_on_tool_pen()
+int32_t config_get_on_tool_pen()
 {
     if (config.on_tool_pen_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_pen_value;
 }
 
-uint32_t config_get_on_tool_eraser()
+int32_t config_get_on_tool_eraser()
 {
     if (config.on_tool_eraser_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_eraser_value;
 }
 
-uint32_t config_get_on_tool_brush()
+int32_t config_get_on_tool_brush()
 {
     if (config.on_tool_brush_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_brush_value;
 }
 
-uint32_t config_get_on_tool_pencil()
+int32_t config_get_on_tool_pencil()
 {
     if (config.on_tool_pencil_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_pencil_value;
 }
 
-uint32_t config_get_on_tool_airbrush()
+int32_t config_get_on_tool_airbrush()
 {
     if (config.on_tool_airbrush_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_airbrush_value;
 }
 
-uint32_t config_get_on_tool_finger()
+int32_t config_get_on_tool_finger()
 {
     if (config.on_tool_finger_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_finger_value;
 }
 
-uint32_t config_get_on_tool_lens()
+int32_t config_get_on_tool_lens()
 {
     if (config.on_tool_lens_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_lens_value;
 }
 
-uint32_t config_get_on_tool_mouse()
+int32_t config_get_on_tool_mouse()
 {
     if (config.on_tool_mouse_value == -1) return POINTER_PRIMARY_BUTTON;
     return config.on_tool_mouse_value;
 }
 
-uint32_t config_get_on_tool_button1()
+int32_t config_get_on_tool_button1()
 {
     if (config.on_tool_button1_value == -1) return POINTER_SECONDARY_BUTTON;
     return config.on_tool_button1_value;
 }
 
-uint32_t config_get_on_tool_button2()
+int32_t config_get_on_tool_button2()
 {
     if (config.on_tool_button2_value == -1) return POINTER_SECONDARY_BUTTON;
     return config.on_tool_button2_value;
 }
 
-uint32_t config_get_on_tool_button3()
+int32_t config_get_on_tool_button3()
 {
     if (config.on_tool_button3_value == -1) return POINTER_SECONDARY_BUTTON;
     return config.on_tool_button3_value;
 }
 
 
-bool config_set_tablets_enabled(bool value)
+bool config_set_tablets_enabled(int32_t value)
 {
     config.enable_tablets = value;
     return true;
@@ -543,38 +609,48 @@ bool config_set_on_tool_button3(int32_t value)
     return true;
 }
 
-bool config_set_allow_throwing_multihead(bool value)
+bool config_set_allow_throwing_multihead(int32_t value)
 {
     config.allow_throwing_multihead = value;
     return true;
 }
 
-bool config_set_allow_dragging_multihead(bool value)
+bool config_set_allow_dragging_multihead(int32_t value)
 {
     config.allow_dragging_multihead = value;
     return true;
 }
 
-bool config_get_allow_throwing_multihead()
+int32_t config_get_allow_throwing_multihead()
 {
     if (config.allow_throwing_multihead == -1) return false;
     return config.allow_throwing_multihead;
 }
 
-bool config_get_allow_dragging_multihead()
+int32_t config_get_allow_dragging_multihead()
 {
     if (config.allow_dragging_multihead == -1) return true;
     return config.allow_dragging_multihead;
 }
 
-bool config_set_unified_outputs(bool value)
+bool config_set_unified_outputs(int32_t value)
 {
     config.unified_outputs = value;
     return true;
 }
 
-bool config_get_unified_outputs()
+int32_t config_get_unified_outputs()
 {
     if (config.unified_outputs == -1) return false;
     return config.unified_outputs;
+}
+
+bool config_setter_table(uint32_t key_id, int32_t value)
+{
+    return config_setter_table_[key_id](value);
+}
+
+int32_t config_getter_table(uint32_t key_id)
+{
+    return config_getter_table_[key_id]();
 }

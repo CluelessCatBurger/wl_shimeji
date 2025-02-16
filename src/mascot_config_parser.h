@@ -55,8 +55,9 @@ mascot_prototype_store* mascot_prototype_store_new();
 bool mascot_prototype_store_add(mascot_prototype_store*, const struct mascot_prototype*);
 bool mascot_prototype_store_remove(mascot_prototype_store*, const struct mascot_prototype*);
 struct mascot_prototype* mascot_prototype_store_get(mascot_prototype_store*, const char* name);
-int mascot_prototype_store_count(mascot_prototype_store*);
+struct mascot_prototype* mascot_prototype_store_get_by_id(mascot_prototype_store*, uint32_t id);
 struct mascot_prototype* mascot_prototype_store_get_index(mascot_prototype_store*, int index);
+int mascot_prototype_store_count(mascot_prototype_store*);
 void mascot_prototype_store_free(mascot_prototype_store*);
 
 #endif

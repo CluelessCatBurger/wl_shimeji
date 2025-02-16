@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from posix import waitpid
 import sys
@@ -10,6 +12,7 @@ import struct
 import time
 import tempfile
 import shutil
+import enum
 
 from compiler import *
 from qoi.src.qoi import encode_img
@@ -21,7 +24,336 @@ from PIL import Image
 
 import zipfile
 
-# Shimeji VM compiler -----------
+class Environment:
+    id = -1
+    x = 0
+    y = 0
+    width = 0
+    height = 0
+    count = 0
+
+class Prototype:
+    id = -1
+    name = ""
+    display_name = ""
+    path = ""
+    actions: list[str] = []
+    behaviors: list[str] = []
+    refcounter = 0
+
+class Variable:
+    class Type(enum.IntEnum):
+        INTEGER = 0
+        FLOAT = 1
+
+    type = Type.INTEGER
+    evaluated = False
+    has_prototype = False
+    prototype_id = -1
+
+class Mascot:
+    id = -1
+    environment: Environment = None
+    prototype: Prototype = None
+    action_index = 0
+    action_duration = 0
+    action_tick = 0
+    current_action_name = ""
+    current_behavior_name = ""
+    current_affordance_name = ""
+    current_state = 0
+    action_stack: list[tuple[str,int]] = []
+    behavior_stack: list[tuple[str,int]] = []
+    variable: list[Variable] = []
+
+
+class Request:
+    class Type(enum.IntEnum):
+        NONE = 0
+        DESCRIBE = 1
+        LIST_MASCOTS = 2
+        MASCOT_INFO = 3
+        SUMMON = 4
+        DISMISS = 5
+        BEHAVIOR = 6
+        RELOAD = 7
+        SELECT = 8
+
+    type = Type.NONE
+    data = {}
+    connector: Connection = None
+
+eventsmap: dict[int,Request] = {}
+envs: dict[int,Environment] = {}
+prototypes: dict[int,Prototype] = {}
+mascots: dict[int,Mascot] = {}
+
+class Packet:
+    id = -1
+    version = -1
+    payload_size = -1
+    event_id = -1
+
+    buffer = b""
+
+    def readbyte(self) -> tuple[bool,int]:
+        if len(self.buffer) < 1:
+            return False, 0
+        byte = self.buffer[0]
+        self.buffer = self.buffer[1:]
+        return True, byte
+
+    def readint32(self) -> tuple[bool,int]:
+        if len(self.buffer) < 4:
+            return False, 0
+        integer = struct.unpack("@i", self.buffer[:4])[0]
+        self.buffer = self.buffer[4:]
+        return True, integer
+
+    def readuint32(self) -> tuple[bool,int]:
+        if len(self.buffer) < 4:
+            return False, 0
+        integer = struct.unpack("@I", self.buffer[:4])[0]
+        self.buffer = self.buffer[4:]
+        return True, integer
+
+    def readint64(self) -> tuple[bool,int]:
+        if len(self.buffer) < 8:
+            return False, 0
+        integer = struct.unpack("@q", self.buffer[:8])[0]
+        self.buffer = self.buffer[8:]
+        return True, integer
+
+    def readuint64(self) -> tuple[bool,int]:
+        if len(self.buffer) < 8:
+            return False, 0
+        integer = struct.unpack("@Q", self.buffer[:8])[0]
+        self.buffer = self.buffer[8:]
+        return True, integer
+
+    def readfloat(self) -> tuple[bool,float]:
+        if len(self.buffer) < 4:
+            return False, 0
+        fl = struct.unpack("@f", self.buffer[:4])[0]
+        self.buffer = self.buffer[4:]
+        return True, fl
+
+    def readshort(self) -> tuple[bool,int]:
+        if len(self.buffer) < 2:
+            return False, 0
+        integer = struct.unpack("@h", self.buffer[:2])[0]
+        self.buffer = self.buffer[2:]
+        return True, integer
+
+    def readushort(self) -> tuple[bool,int]:
+        if len(self.buffer) < 2:
+            return False, 0
+        integer = struct.unpack("@H", self.buffer[:2])[0]
+        self.buffer = self.buffer[2:]
+        return True, integer
+
+    def readstring(self) -> tuple[bool,str]:
+        if len(self.buffer) < 1:
+            return False, ""
+        length = self.buffer[0]
+        if len(self.buffer) < length+1:
+            return False, ""
+        string = self.buffer[1:length+1].decode("utf-8")
+        self.buffer = self.buffer[length+1:]
+        return True, string
+
+    def readbytes(self, length: int) -> tuple[bool,bytes]:
+        if len(self.buffer) < length:
+            return False, b""
+        data = self.buffer[:length]
+        self.buffer = self.buffer[length:]
+        return True, data
+
+    def writebyte(self, byte: int):
+        self.buffer += bytes([byte])
+
+    def writeint32(self, integer: int):
+        self.buffer += struct.pack("@i", integer)
+
+    def writeuint32(self, integer: int):
+        self.buffer += struct.pack("@I", integer)
+
+    def writeint64(self, integer: int):
+        self.buffer += struct.pack("@q", integer)
+
+    def writeuint64(self, integer: int):
+        self.buffer += struct.pack("@Q", integer)
+
+    def writefloat(self, fl: float):
+        self.buffer += struct.pack("@f", fl)
+
+    def writeshort(self, integer: int):
+        self.buffer += struct.pack("@h", integer)
+
+    def writeushort(self, integer: int):
+        self.buffer += struct.pack("@H", integer)
+
+    def writestring(self, string: str):
+        self.buffer += len(string).to_bytes(1, "big")+string.encode("utf-8")
+
+    def writebytes(self, data: bytes):
+        self.buffer += data
+
+    def readheader(self):
+        if len(self.buffer) < 8:
+            return False
+
+        # byte byte short int
+        self.id = self.buffer[0]
+        self.version = self.buffer[1]
+        self.payload_id = struct.unpack("@H", self.buffer[2:4])[0]
+        self.event_id = struct.unpack("@I", self.buffer[4:8])[0]
+        self.buffer = self.buffer[8:]
+        return True
+
+    def writeheader(self):
+        self.buffer = bytes([self.id, self.version])+struct.pack("@HI", self.payload_id, self.event_id)+self.buffer
+
+class Connection:
+    prototype_pending = []
+    closed = False
+    sock: socket.socket = None
+    initialized = False
+
+    def handle_initializatio_status(self, packet: Packet) -> tuple[bool, dict]:
+        readed, status = packet.readbyte()
+        if not readed:
+            return False, {}
+
+        if status == 0:
+            return True, {"status": True, "reason": "Initialization successful"}
+        readed, reason = packet.readstring()
+        if not readed:
+            return False, {}
+        return True, {"status": False, "reason": reason}
+
+    def handle_environment(self, packet: Packet) -> tuple[bool, dict]:
+        readed, id = packet.readuint32()
+        if not readed:
+            return False, {}
+        readed, action = packet.readbyte()
+        if not readed:
+            return False, {}
+        readed, x = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, y = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, width = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, height = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, count = packet.readint32()
+        if not readed:
+            return False, {}
+
+        env = Environment()
+        env.id = id
+        env.x = x
+        env.y = y
+        env.width = width
+        env.height = height
+        env.count = count
+
+        if action == 0:
+            envs[id] = env
+        elif action == 1:
+            envs.pop(id)
+
+        return True, {"env": env}
+
+    def handle_selection_result(self, packet: Packet) -> tuple[bool, dict]:
+        readed, event_id = packet.readuint32()
+        if not readed:
+            return False, {}
+        readed, mascot_id = packet.readuint32()
+        if not readed:
+            return False, {}
+        readed, env_id = packet.readuint32()
+        if not readed:
+            return False, {}
+        readed, surface_x = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, surface_y = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, global_x = packet.readint32()
+        if not readed:
+            return False, {}
+        readed, global_y = packet.readint32()
+        if not readed:
+            return False, {}
+
+        if event_id not in eventsmap:
+            return False, {}
+
+        eventsmap[event_id].process(mascot_id, env_id, surface_x, surface_y, global_x, global_y)
+
+        return True, {}
+
+    def handle_mascot_ids(self, packet: Packet) -> tuple[bool, dict]:
+        readed, event_id = packet.readuint32()
+
+
+    def send_summon(self, prototype_name, env_id, x, y):
+        packet = Packet()
+        packet.id = 0x0F
+        packet.version = 1
+
+        packet.writestring(prototype_name)
+        packet.writeuint32(env_id)
+        packet.writeint32(x)
+        packet.writeint32(y)
+
+        self.payload_size = len(packet.buffer)+8
+
+        self.send(packet)
+
+    def send_dismiss(self, mascot_id):
+        packet = Packet()
+        packet.id = 0x10
+        packet.version = 1
+        packet.payload_size = 12
+
+        packet.writeuint32(mascot_id)
+        self.send(packet)
+
+    def send_behavior(self, mascot_id, behavior_name):
+        packet = Packet()
+        packet.id = 0x11
+        packet.version = 1
+
+        packet.writeuint32(mascot_id)
+        packet.writestring(behavior_name)
+
+        self.payload_size = len(packet.buffer)+8
+
+        self.send(packet)
+
+    def send_selection(self, env_id):
+        packet = Packet()
+        packet.id = 0x2C
+        packet.version = 1
+        packet.event_id = 3
+
+        packet.writeuint32(env_id)
+
+        self.payload_size = len(packet.buffer)+8
+
+        self.send(packet)
+
+    def send(self, packet: Packet):
+        packet.writeheader()
+        self.sock.sendmsg([packet.buffer])
 
 class ShimejiCtl:
     def __init__(self):
