@@ -242,6 +242,10 @@ enum mascot_tick_result scanmove_action_tick(struct mascot *mascot, struct masco
 
     bool looking_right = mascot->LookingRight->value.i;
 
+    // Expose also target's position in TargetX and TargetY (1.0.21.3)
+    mascot->TargetX->value.i = target_x;
+    mascot->TargetY->value.i = target_y;
+
     if (target_x != INT32_MAX && target_x != -1) {
         if (posx < target_x) looking_right = true;
         else if (posx > target_x) looking_right = false;

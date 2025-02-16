@@ -217,6 +217,10 @@ enum mascot_tick_result scanjump_action_tick(struct mascot *mascot, struct masco
     float velocity_y = mascot->VelocityY->value.f;
     float velocity = mascot->VelocityParam->value.f;
 
+    // Expose also target's position in TargetX and TargetY (1.0.21.3)
+    mascot->TargetX->value.i = target_x;
+    mascot->TargetY->value.i = target_y;
+
     bool looking_right = posx < target_x;
 
     // Calculate distances
