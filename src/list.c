@@ -73,5 +73,6 @@ void list_remove_(struct list* list, uint32_t index)
         return;
     }
     list->entry_used[index] = 0;
+    list->entries[index] = NULL;
     list->occupied--;
 }

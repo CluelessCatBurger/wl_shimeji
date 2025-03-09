@@ -37,6 +37,7 @@
 #include "list.h"
 #include <wayland-cursor.h>
 #include "physics.h"
+#include "protocol/server.h"
 
 // Workarounds section (SMH my head hyprland)
 bool we_on_hyprland = false;
@@ -94,6 +95,19 @@ int32_t active_grabbers_count = 0;
 #define BUTTON_TYPE_MIDDLE 1
 #define BUTTON_TYPE_RIGHT 2
 #define BUTTON_TYPE_PEN 3
+
+struct environment_callbacks {
+    const struct wl_pointer_listener* pointer_listener;
+    const struct wl_surface_listener* surface_listener;
+    const struct wl_callback_listener* callback_listener;
+    const struct wl_keyboard_listener* keyboard_listener;
+    const struct wl_touch_listener* touch_listener;
+    const struct zwp_tablet_pad_v2_listener* tablet_pad_listener;
+    const struct zwp_tablet_tool_v2_listener* tablet_tool_listener;
+    const struct zwp_tablet_v2_listener* tablet_listener;
+
+    void* data;
+};
 
 struct output_info {
     struct wl_output* output;
@@ -159,6 +173,22 @@ struct environment {
     bool floor_aligned;
     bool left_aligned;
     bool right_aligned;
+};
+
+struct environment_shm_pool {
+    struct wl_shm_pool* pool;
+};
+
+struct environment_popup {
+    struct wl_surface* surface;
+    struct xdg_popup* popup;
+    struct xdg_surface* xdg_surface;
+    struct xdg_positioner* position;
+    uint32_t xdg_serial;
+    uint32_t input_serial;
+
+    struct mascot* mascot;
+    environment_t* environment;
 };
 
 struct wl_surface_data {
@@ -927,6 +957,7 @@ static void on_output_done(void* data, struct wl_output* output)
         environment_t* neighbor = list_get(env->neighbors, i);
         environment_recalculate_advertised_geometry(neighbor);
     }
+    protocol_server_environment_changed(env);
     env->xdg_output_done = true;
 }
 
@@ -1457,6 +1488,9 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
             bool hotspot_press_result = mascot_hotspot_hold(mascot, scaled_x, scaled_y, pressed_button, false);
             if (!hotspot_press_result && pressed_button == mascot_hotspot_button_left) {
                 mascot_drag_started(mascot, env_pointer);
+            }
+            if (!hotspot_press_result && pressed_button == mascot_hotspot_button_right) {
+                protocol_server_announce_new_click(mascot, env_pointer->x, env_pointer->y);
             }
         } else {
             environment_on_pointer_button(data, pointer, serial, time, button, state);
@@ -2087,6 +2121,7 @@ static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output)
         environment_t* neighbor = list_get(env->neighbors, i);
         environment_recalculate_advertised_geometry(neighbor);
     }
+    protocol_server_environment_changed(env);
     env->xdg_output_done = true;
 }
 
@@ -2346,6 +2381,8 @@ void environment_unlink(environment_t *env)
 
     pthread_mutex_destroy(&env->mascot_manager.mutex);
 
+    protocol_server_environment_widthdraw(env);
+
     if (env->xdg_output) {
         zxdg_output_v1_destroy(env->xdg_output);
     }
@@ -2361,6 +2398,7 @@ void environment_unlink(environment_t *env)
         wl_output_destroy(env->output.output);
     }
     free(env);
+    wl_display_flush(display);
 }
 
 void environment_new_env_listener(void(*listener)(environment_t*))
@@ -2852,6 +2890,7 @@ void environment_select_position(environment_t* env, void (*callback)(environmen
     env->select_active = callback != NULL;
     env->select_data = data;
     if (env->select_active) environment_pointer_apply_cursor(active_pointer, mascot_hotspot_cursor_crosshair);
+    environment_set_input_state(env, env->select_active);
 }
 
 void environment_set_input_state(environment_t* env, bool active)
@@ -3485,6 +3524,7 @@ uint32_t environment_tick(environment_t* environment, uint32_t tick)
                         list_add(mascots, clone);
                         mascot_attach_affordance_manager(clone, environment->mascot_manager.affordances);
                         mascot_link(clone);
+                        protocol_server_environment_emit_mascot(environment, clone);
                     }
                 }
             }
@@ -3556,6 +3596,8 @@ void environment_summon_mascot(
     mascot_attach_affordance_manager(mascot, environment->mascot_manager.affordances);
     mascot_link(mascot);
     pthread_mutex_unlock(&environment->mascot_manager.mutex);
+
+    protocol_server_environment_emit_mascot(environment, mascot);
 
     if (callback) callback(mascot, data);
 }
@@ -3644,7 +3686,6 @@ struct mascot* environment_mascot_by_id(environment_t* environment, uint32_t id)
 struct list* environment_mascot_list(environment_t* environment, pthread_mutex_t** list_mutex)
 {
     if (!environment) return NULL;
-    if (!environment->is_ready) return NULL;
 
     if (list_mutex) *list_mutex = &environment->mascot_manager.mutex;
     return environment->mascot_manager.referenced_mascots;
@@ -3905,4 +3946,96 @@ int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignmen
         retval = env->advertised_geometry.height;
     }
     return retval;
+}
+
+bool environment_ask_close(environment_t *environment)
+{
+    if (!environment) return false;
+    if (!environment->is_ready) return false;
+
+    environment_wants_to_close_callback(environment);
+    return true;
+}
+
+environment_shm_pool_t* environment_import_shm_pool(int32_t fd, uint32_t size)
+{
+    if (fd < 0 || size == 0) return NULL;
+
+    void* shared_pool = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (!shared_pool) {
+        WARN("Cannot import shared memory pool requested by client");
+        return NULL;
+    }
+    munmap(shared_pool, size);
+
+    environment_shm_pool_t* pool = calloc(1, sizeof(environment_shm_pool_t));
+    if (!pool) return NULL;
+
+    pool->pool = wl_shm_create_pool(shm_manager, fd, size);
+    close(fd);
+
+    return pool;
+}
+
+environment_buffer_t* environment_shm_pool_create_buffer(
+    environment_shm_pool_t* pool,
+    uint32_t offset,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride,
+    uint32_t format
+)
+{
+    if (!pool) return NULL;
+
+    environment_buffer_t* buffer = calloc(1, sizeof(environment_buffer_t));
+    if (!buffer) return NULL;
+
+    buffer->buffer = wl_shm_pool_create_buffer(pool->pool, offset, width, height, stride, format);
+    buffer->width = width;
+    buffer->height = height;
+    buffer->stride = stride;
+
+    return buffer;
+}
+
+void environment_shm_pool_destroy(environment_shm_pool_t* pool)
+{
+    if (!pool) return;
+
+    wl_shm_pool_destroy(pool->pool);
+    free(pool);
+}
+
+environment_popup_t* environment_popup_create(environment_t* environment, struct mascot* mascot, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    if (!environment || !mascot) return NULL;
+
+    environment_popup_t* popup = calloc(1, sizeof(environment_popup_t));
+    if (!popup) return NULL;
+
+    popup->environment = environment;
+    popup->mascot = mascot;
+
+    popup->surface = wl_compositor_create_surface(compositor);
+    popup->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, popup->surface);
+    popup->position = xdg_wm_base_create_positioner(xdg_wm_base);
+
+    xdg_positioner_set_anchor_rect(popup->position, x, y, x, y);
+    xdg_positioner_set_size(popup->position, width, height);
+
+    popup->popup = xdg_surface_get_popup(popup->xdg_surface, NULL, popup->position);
+    zwlr_layer_surface_v1_get_popup(environment->root_surface->layer_surface, popup->popup);
+
+    struct environment_callbacks* callbacks = calloc(1, sizeof(struct environment_callbacks));
+    wl_surface_attach_callbacks(popup->surface, callbacks);
+
+    return popup;
+}
+
+void environment_popup_commit(environment_popup_t* popup)
+{
+    if (!popup) return;
+
+    wl_surface_commit(popup->surface);
 }

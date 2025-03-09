@@ -34,6 +34,8 @@
 #include "actions/actions.h"
 #include "actions/actionbase.h"
 
+#include "protocol/server.h"
+
 uint32_t mascot_total_count = 0;
 uint32_t new_mascot_id = 0;
 
@@ -725,6 +727,7 @@ bool mascot_environment_changed(struct mascot* mascot, environment_t* env)
     if (!env) ERROR("MascotEnvironmentChanged: mascot is NULL");
     INFO("<Mascot:%s:%u> Environment changed", mascot->prototype->name, mascot->id);
     mascot->environment = env;
+    protocol_server_mascot_migrated(mascot, env);
     return environment_migrate_subsurface(mascot->subsurface, env);
 }
 
@@ -788,6 +791,7 @@ void mascot_link(struct mascot* mascot)
     mascot->refcounter++;
     pthread_mutex_unlock(&mascot->tick_lock);
 }
+
 void mascot_unlink(struct mascot* mascot)
 {
     if (!mascot) return;
@@ -799,6 +803,9 @@ void mascot_unlink(struct mascot* mascot)
         pthread_mutex_unlock(&mascot->tick_lock);
         return;
     };
+
+    protocol_server_mascot_destroyed(mascot);
+
     if (mascot->prototype)
     {
         mascot_prototype_unlink((struct mascot_prototype*)mascot->prototype);

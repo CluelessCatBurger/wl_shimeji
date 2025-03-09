@@ -14,6 +14,9 @@
 #define WL_SHIMEJI_MASCOT_MIN_VER "0.0.1"
 #define WL_SHIMEJI_MASCOT_CUR_VER "0.0.1"
 
+#define WL_SHIMEJI_PROTOCOL_VERSION "0.0.1"
+#define WL_SHIMEJI_PROTOCOL_MIN_VER "0.0.1"
+
 #if defined(GNU_EXTS) && defined(__has_attribute)
 #define GNU_ATTRIBUTE(attr) __has_attribute(attr)
 #else

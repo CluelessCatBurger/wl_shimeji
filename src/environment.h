@@ -32,7 +32,19 @@ typedef struct environment environment_t;
 typedef struct environment_subsurface environment_subsurface_t;
 typedef struct environment_pointer environment_pointer_t; // Any pointers, including tablets
 typedef struct environment_buffer_factory environment_buffer_factory_t;
+typedef struct environment_shm_pool environment_shm_pool_t;
 typedef struct environment_buffer environment_buffer_t;
+typedef struct environment_popup environment_popup_t;
+
+struct environment_popup_listener {
+    void (*mapped)(void* data, environment_popup_t* popup);
+    void (*unmapped)(void* data, environment_popup_t* popup);
+    void (*dismissed)(void* data, environment_popup_t* popup);
+    void (*enter)(void* data, environment_popup_t* popup, uint32_t serial, uint32_t x, uint32_t y);
+    void (*leave)(void* data, environment_popup_t* popup);
+    void (*motion)(void* data, environment_popup_t* popup, uint32_t x, uint32_t y);
+    void (*clicked)(void* data, environment_popup_t* popup, uint32_t serial, uint32_t x, uint32_t y);
+};
 
 enum environment_border_type {
     environment_border_type_none,
@@ -51,18 +63,6 @@ enum environment_move_result {
     environment_move_invalid
 };
 
-struct environment_callbacks {
-    const struct wl_pointer_listener* pointer_listener;
-    const struct wl_surface_listener* surface_listener;
-    const struct wl_callback_listener* callback_listener;
-    const struct wl_keyboard_listener* keyboard_listener;
-    const struct wl_touch_listener* touch_listener;
-    const struct zwp_tablet_pad_v2_listener* tablet_pad_listener;
-    const struct zwp_tablet_tool_v2_listener* tablet_tool_listener;
-    const struct zwp_tablet_v2_listener* tablet_listener;
-
-    void* data;
-};
 
 enum environment_init_status {
     ENV_INIT_OK,
@@ -226,6 +226,24 @@ struct list* environment_mascot_list(environment_t* environment, pthread_mutex_t
 void environment_announce_neighbor(environment_t* environment, environment_t* neighbor);
 void environment_widthdraw_neighbor(environment_t* environment, environment_t* neighbor);
 bool environment_neighbor_border(environment_t* environment, int32_t x, int32_t y);
-// void environment_share_affordance(environment_t* environment, struct mascot* mascot);
+
+bool environment_ask_close(environment_t* environment);
+
+environment_shm_pool_t* environment_import_shm_pool(int32_t fd, uint32_t size);
+environment_buffer_t* environment_shm_pool_create_buffer(
+    environment_shm_pool_t* pool,
+    uint32_t offset,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride,
+    uint32_t format
+);
+void environment_shm_pool_destroy(environment_shm_pool_t* pool);
+
+environment_popup_t* environment_popup_create(environment_t* environment, struct mascot* mascot, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+void environment_popup_attach(environment_popup_t* popup, environment_buffer_t* buffer);
+void environment_popup_commit(environment_popup_t* popup);
+void environment_popup_dismiss(environment_popup_t* popup);
+void environment_popup_add_listener(environment_popup_t* popup, struct environment_popup_listener listener, void* data);
 
 #endif

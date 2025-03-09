@@ -27,6 +27,10 @@ typedef struct mascot_prototype_store_ mascot_prototype_store;
 
 enum mascot_prototype_load_result {
     PROTOTYPE_LOAD_SUCCESS,
+    PROTOTYPE_LOAD_NOT_FOUND,
+    PROTOTYPE_LOAD_NOT_DIRECTORY,
+    PROTOTYPE_LOAD_PERMISSION_DENIED,
+    PROTOTYPE_LOAD_UNKNOWN_ERROR,
     PROTOTYPE_LOAD_MANIFEST_NOT_FOUND,
     PROTOTYPE_LOAD_MANIFEST_INVALID,
     PROTOTYPE_LOAD_ACTIONS_NOT_FOUND,
@@ -49,7 +53,7 @@ enum mascot_prototype_load_result {
 struct mascot_prototype* mascot_prototype_new();
 void mascot_prototype_link(const struct mascot_prototype*);
 void mascot_prototype_unlink(const struct mascot_prototype*);
-enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype*, const char* path);
+enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype*, const char* prototypes_root, const char* path);
 
 mascot_prototype_store* mascot_prototype_store_new();
 bool mascot_prototype_store_add(mascot_prototype_store*, const struct mascot_prototype*);
@@ -59,5 +63,9 @@ struct mascot_prototype* mascot_prototype_store_get_by_id(mascot_prototype_store
 struct mascot_prototype* mascot_prototype_store_get_index(mascot_prototype_store*, int index);
 int mascot_prototype_store_count(mascot_prototype_store*);
 void mascot_prototype_store_free(mascot_prototype_store*);
+
+void mascot_prototype_store_set_location(mascot_prototype_store* store, const char* path);
+int32_t mascot_prototype_store_get_fd(mascot_prototype_store* store);
+uint32_t mascot_prototype_store_reload(mascot_prototype_store* store);
 
 #endif

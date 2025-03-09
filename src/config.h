@@ -58,50 +58,6 @@
 #define POINTER_SECONDARY_BUTTON 0x02
 #define POINTER_THIRD_BUTTON 0x04
 
-struct config {
-    bool breeding;
-    bool dragging;
-    bool ie_interactions;
-    bool ie_throwing;
-    bool cursor_data;
-    bool dismiss_animations;
-    bool affordances;
-    int32_t overlay_layer;
-
-    int32_t framerate;
-
-    uint32_t mascot_limit;
-    int32_t ie_throw_policy;
-
-    // Button mappings
-    int32_t pointer_left_value;
-    int32_t pointer_right_value;
-    int32_t pointer_middle_value;
-
-    // Tablets config
-    bool enable_tablets;
-
-    // Mappings for tool up/down events
-    int32_t on_tool_pen_value;
-    int32_t on_tool_eraser_value;
-    int32_t on_tool_brush_value;
-    int32_t on_tool_pencil_value;
-    int32_t on_tool_airbrush_value;
-    int32_t on_tool_finger_value;
-    int32_t on_tool_lens_value;
-    int32_t on_tool_mouse_value;
-
-    // Mappings for tool button events
-    int32_t on_tool_button1_value;
-    int32_t on_tool_button2_value;
-    int32_t on_tool_button3_value;
-
-    // Multi-head support
-    int32_t allow_throwing_multihead;
-    int32_t allow_dragging_multihead;
-    int32_t unified_outputs;
-};
-
 // Uses global variable
 bool config_parse(const char* path);
 void config_write(const char* path);
@@ -171,5 +127,9 @@ typedef int32_t (*config_param_getter)();
 
 bool config_setter_table(uint32_t key, int32_t value);
 int32_t config_getter_table(uint32_t key);
+
+const char* config_get_prototypes_location();
+const char* config_get_plugins_location();
+const char* config_get_socket_location();
 
 #endif

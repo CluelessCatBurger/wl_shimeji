@@ -17,6 +17,8 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
+#define _GNU_SOURCE
+
 #include "mascot_config_parser.h"
 #include "environment.h"
 #include "expressions.h"
@@ -24,11 +26,14 @@
 #include "mascot_atlas.h"
 #include "third_party/json.h/json.h"
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/limits.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <strings.h>
 #include "global_symbols.h"
+#include <sys/stat.h>
 
 #include "wayland_includes.h"
 
@@ -38,6 +43,9 @@ struct mascot_prototype_store_ {
     struct mascot_prototype** prototypes;
     uint32_t size;
     uint32_t count;
+
+    char* location;
+    int32_t fd;
 };
 
 struct mascot_prototype* mascot_prototype_new()
@@ -78,6 +86,7 @@ mascot_prototype_store* mascot_prototype_store_new()
 
     store->size = 16;
     store->prototypes = (struct mascot_prototype**)calloc(store->size,sizeof(struct mascot_prototype*));
+    store->fd = -1;
 
     return store;
 }
@@ -2121,11 +2130,14 @@ struct config_behavior_loader_result load_behaviors(struct mascot_prototype* pro
 
 }
 
-enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype * prototype, const char *path)
+enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype * prototype, const char* prototypes_root, const char *path_)
 {
     static int64_t minver = -1;
     static int64_t curver = -1;
     static bool version_constraints_processed = false;
+
+    char path[PATH_MAX];
+    snprintf(path, PATH_MAX-1, "%s/%s", prototypes_root, path_);
 
     if (!version_constraints_processed) {
         minver = version_to_i64(WL_SHIMEJI_MASCOT_MIN_VER);
@@ -2142,7 +2154,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
         version_constraints_processed = true;
     }
 
-    if (!prototype || !path) {
+    if (!prototype || !path_) {
         return PROTOTYPE_LOAD_NULL_POINTER;
     }
 
@@ -2150,14 +2162,33 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
         return PROTOTYPE_LOAD_ALREADY_LOADED;
     }
 
-    char filename_buf[128] = {0};
-    snprintf(filename_buf, 128, "%s/manifest.json", path);
+    struct stat loc;
+    if (stat(path, &loc) != 0) {
+        if (errno == ENOENT) {
+            WARN("Failed to load prototype from %s: directory not found", path);
+            return PROTOTYPE_LOAD_NOT_FOUND;
+        }
+        if (errno == EACCES) {
+            WARN("Failed to load prototype from %s: permission denied", path);
+            return PROTOTYPE_LOAD_PERMISSION_DENIED;
+        }
+        return PROTOTYPE_LOAD_UNKNOWN_ERROR;
+    }
+
+    if (!S_ISDIR(loc.st_mode)) {
+        WARN("Failed to load prototype from %s: not a directory", path);
+        return PROTOTYPE_LOAD_NOT_DIRECTORY;
+    }
+
+    char filename_buf[PATH_MAX+15] = {0};
+    snprintf(filename_buf, PATH_MAX+15, "%s/manifest.json", path);
     FILE* manifest = fopen(filename_buf, "r");
     if (!manifest) {
         if (errno == ENOENT) {
             WARN("Failed to load prototype from %s: manifest.json not found", path);
             return PROTOTYPE_LOAD_MANIFEST_NOT_FOUND;
         }
+        return PROTOTYPE_LOAD_MANIFEST_INVALID;
     }
     fseek(manifest, 0, SEEK_END);
     size_t size = ftell(manifest);
@@ -2184,11 +2215,11 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     struct json_object_s* manifest_root = (struct json_object_s*)manifest_data->payload;
 
     struct json_object_element_s* element = manifest_root->start;
-    char assets_path[128]    = {0};
-    char behaviors_path[128] = {0};
-    char actions_path[128]   = {0};
-    char programs_path[128]  = {0};
-    char version_str[128]     = {0};
+    char assets_path[PATH_MAX+2]    = {0};
+    char behaviors_path[PATH_MAX+2] = {0};
+    char actions_path[PATH_MAX+2]   = {0};
+    char programs_path[PATH_MAX+2]  = {0};
+    char version_str[PATH_MAX+2]     = {0};
     int64_t version = 0;
     while (element) {
         if (!strcmp(element->name->string, "name")) {
@@ -2219,25 +2250,25 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
                 WARN("Cannot load prototype from %s: Invalid JSON: programs expected to be a string", filename_buf);
                 return PROTOTYPE_LOAD_MANIFEST_INVALID;
             }
-            snprintf(programs_path, 128, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
+            snprintf(programs_path, PATH_MAX+2, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
         } else if (!strcmp(element->name->string, "assets")) {
             if (element->value->type != json_type_string) {
                 WARN("Cannot load prototype from %s: Invalid JSON: assets expected to be a string", filename_buf);
                 return PROTOTYPE_LOAD_MANIFEST_INVALID;
             }
-            snprintf(assets_path, 128, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
+            snprintf(assets_path, PATH_MAX+2, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
         } else if (!strcmp(element->name->string, "actions")) {
             if (element->value->type != json_type_string) {
                 WARN("Cannot load prototype from %s: Invalid JSON: actions expected to be a string", filename_buf);
                 return PROTOTYPE_LOAD_MANIFEST_INVALID;
             }
-            snprintf(actions_path, 128, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
+            snprintf(actions_path, PATH_MAX+2, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
         } else if (!strcmp(element->name->string, "behaviors")) {
             if (element->value->type != json_type_string) {
                 WARN("Cannot load prototype from %s: Invalid JSON: behaviors expected to be a string", filename_buf);
                 return PROTOTYPE_LOAD_MANIFEST_INVALID;
             }
-            snprintf(behaviors_path, 128, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
+            snprintf(behaviors_path, PATH_MAX+2, "%s/%s", path, ((struct json_string_s*)(element->value->payload))->string);
         }
         element = element->next;
     }
@@ -2427,6 +2458,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
 
     prototype->local_variables_count = 128;
     prototype->path = strdup(path);
+    prototype->path_fd = open(path, O_DIRECTORY | O_PATH | O_RDONLY);
     prototype->id = prototype_id_counter++;
 
     return PROTOTYPE_LOAD_SUCCESS;
@@ -2439,4 +2471,55 @@ void mascot_attach_affordance_manager(struct mascot* mascot, struct mascot_affor
 }
 void mascot_detach_affordance_manager(struct mascot* mascot) {
     mascot_attach_affordance_manager(mascot, NULL);
+}
+
+void mascot_prototype_store_set_location(mascot_prototype_store *store, const char *path)
+{
+    if (!store || !path) return;
+    if (store->location) free(store->location);
+    store->location = strdup(path);
+    if (store->fd != -1) close(store->fd);
+    store->fd = open(path, O_DIRECTORY | O_PATH | O_RDONLY);
+}
+
+uint32_t mascot_prototype_store_reload(mascot_prototype_store *store)
+{
+    if (!store) return 0;
+    if (!store->location) return 0;
+
+    // Clear existing prototypes
+    for (uint16_t i = 0, c = store->count; i < store->size && c; i++) {
+        struct mascot_prototype* prototype = store->prototypes[i];
+        if (prototype) {
+            c--;
+            mascot_prototype_store_remove(store, prototype);
+        }
+    }
+
+    DIR* dir = opendir(store->location);
+    if (!dir) return 0;
+
+    // Load new prototypes from directory
+    struct dirent* entry;
+    while ((entry = readdir(dir))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+
+        if (DT_DIR != entry->d_type) continue;
+
+        struct mascot_prototype* prototype = mascot_prototype_new();
+        if (mascot_prototype_load(prototype, store->location, entry->d_name) != PROTOTYPE_LOAD_SUCCESS) {
+            mascot_prototype_unlink(prototype);
+            continue;
+        }
+        mascot_prototype_store_add(store, prototype);
+    }
+
+    closedir(dir);
+    return store->count;
+}
+
+int32_t mascot_prototype_store_get_fd(mascot_prototype_store *store)
+{
+    if (!store) return -1;
+    return store->fd;
 }

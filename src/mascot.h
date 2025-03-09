@@ -370,14 +370,13 @@ struct mascot_behavior {
     bool is_condition;
 };
 
-
-
 // Mascot prototype
 struct mascot_prototype {
     uint32_t id; // Prototype ID
     const char* name; // Internal name
     const char* display_name; // Display name
     const char* path; // Path to the prototype
+    int32_t     path_fd; // Same as path, but via file descriptor
 
     const struct mascot_action** action_definitions; // All defined actions
     const struct mascot_behavior** behavior_definitions; // All defined behaviors
@@ -391,6 +390,8 @@ struct mascot_prototype {
     const struct mascot_behavior* fall_behavior; // Fall behavior
 
     const struct mascot_action* dismiss_action; // Dismiss action (Always have type of dispose)
+
+    const struct mascot_sprite* icon; // Icon sprite
 
     uint16_t actions_count, behavior_count,
     local_variables_count, expressions_count, root_behavior_list_count;
