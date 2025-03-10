@@ -24,5 +24,6 @@ int32_t io_swap(const char* src, const char* dst);
 int32_t io_swapat(int32_t src_fd, const char* src_path, int32_t dst_fd, const char* dst_path);
 int32_t io_unlink(const char* path, int32_t flags);
 int32_t io_unlinkat(int32_t fd, const char* path, int32_t flags);
+int32_t io_mkdtempat(int dirfd, char *template);
 
 #endif

@@ -118,7 +118,10 @@ protocol_selection_t* protocol_server_start_selection(struct list* environments,
 void protocol_selection_cancel(protocol_selection_t* selection);
 
 protocol_import_t* protocol_server_import(struct protocol_client* client, int32_t fd, uint32_t id, uint8_t flags);
-protocol_export_t* protocol_server_export(struct protocol_client* client, int32_t fd, uint32_t id, uint8_t flags);
+protocol_export_t* protocol_server_export(struct protocol_client* client, int32_t fd, uint32_t id, struct mascot_prototype* prototype);
+
+protocol_import_t* protocol_server_ephermal_import(int32_t id);
+protocol_export_t* protocol_server_ephermal_export(int32_t id);
 
 uint32_t protocol_click_event_id(protocol_click_event_t* event);
 uint32_t protocol_selection_id(protocol_selection_t* selection);

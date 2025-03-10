@@ -1,5 +1,8 @@
+#include <master_header.h>
 #include "server.h"
 #include "environment.h"
+#include "mascot.h"
+#include "mascot_config_parser.h"
 #include "messages.h"
 #include "protocol/connector.h"
 #include <errno.h>
@@ -61,6 +64,8 @@ struct protocol_export {
     uint32_t id;
     struct protocol_client* creator;
     int32_t target_descriptor;
+    pthread_t thread;
+    struct mascot_prototype* prototype;
 };
 
 void protocol_set_server_state(struct protocol_server_state* state)
@@ -98,6 +103,7 @@ void protocol_init()
     environment_requests[0x2E] = protocol_handler_environment_close;
     selection_requests[0x3D] = protocol_handler_selection_cancel;
     common_requests[0x22] = protocol_handler_import;
+    common_requests[0x27] = protocol_handler_export;
 }
 
 struct protocol_client* protocol_accept_connection(ipc_connector_t *connector)
@@ -586,15 +592,191 @@ void protocol_server_click_accept(struct protocol_client* client, uint32_t popup
     }
 }
 
-void* protocol_import_thread(void* arg);
+void* protocol_import_thread(void* arg) {
+    protocol_import_t* import = (protocol_import_t*)arg;
+    struct protocol_client* client = import->creator;
+
+    ipc_packet_t* started = protocol_builder_import_started(import);
+    ipc_connector_send(client->connector, started);
+
+    lseek(import->target_descriptor, 0, SEEK_SET);
+
+    // wlshm header is 512-byte header
+    uint8_t wlshm_header[512];
+    int32_t count = read(import->target_descriptor, wlshm_header, sizeof(wlshm_header));
+    if (count != 512) {
+        ipc_packet_t* error = protocol_builder_import_failed(import, 1);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+        return NULL;
+    }
+
+    if (wlshm_header[0] != 'W' || wlshm_header[1] != 'L' || wlshm_header[2] != 'P' || wlshm_header[3] != 'K') {
+        ipc_packet_t* error = protocol_builder_import_failed(import, 1);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+        return NULL;
+    }
+
+    char mascot_name[256] = {0};
+    char mascot_version[128] = {0};
+    char dirname[PATH_MAX] = {0};
+    char tmpdirname[] = ".unpackingMascotXXXXXX";
+    uint8_t namesize = wlshm_header[4];
+    memcpy(mascot_name, wlshm_header + 5, namesize);
+    memcpy(dirname, wlshm_header + 5, namesize);
+
+    uint8_t version_size = wlshm_header[5 + namesize];
+    memcpy(mascot_version, wlshm_header + 6 + namesize, version_size);
+
+    static uint8_t minmax_ver_precomputed = false;
+    static int64_t minimum_version = 0;
+    static int64_t current_version = 0;
+    int64_t mascot_prototype_version = 0;
+    if (!minmax_ver_precomputed) {
+        minmax_ver_precomputed = true;
+        minimum_version = version_to_i64(WL_SHIMEJI_MASCOT_MIN_VER);
+        current_version = version_to_i64(WL_SHIMEJI_MASCOT_CUR_VER);
+    }
+
+    mascot_prototype_version = version_to_i64(mascot_version);
+    if (mascot_prototype_version < 0) {
+        ipc_packet_t* error = protocol_builder_import_failed(import, 2);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+        return NULL;
+    }
+
+    if (mascot_prototype_version > current_version || mascot_prototype_version < minimum_version) {
+        ipc_packet_t* error = protocol_builder_import_failed(import, 5);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+
+        const char* notice_args[] = {
+            mascot_version,
+            WL_SHIMEJI_MASCOT_MIN_VER,
+            WL_SHIMEJI_MASCOT_CUR_VER
+        };
+
+        ipc_packet_t* warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "import.error.bad_version", notice_args, 3, true);
+        ipc_connector_send(client->connector, warning);
+        return NULL;
+    }
+
+    struct archive* archive = archive_read_new();
+    archive_read_support_format_tar(archive);
+    archive_read_support_filter_zstd(archive);
+
+    int32_t r = archive_read_open_fd(archive, import->target_descriptor, 10240);
+    if (r != ARCHIVE_OK) {
+        ipc_packet_t* error = protocol_builder_import_failed(import, 4);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+        archive_read_free(archive);
+        return NULL;
+    }
+
+    const struct mascot_prototype* old_prototype = mascot_prototype_store_get(server_state->prototypes, mascot_name);
+    mascot_prototype_link(old_prototype);
+    if (old_prototype) {
+        if (!(import->flags & 1)) { // Replace flag
+            mascot_prototype_unlink(old_prototype);
+            ipc_packet_t* error = protocol_builder_import_failed(import, 3);
+            ipc_connector_send(client->connector, error);
+            protocol_client_remove_object(client, import->id);
+            close(import->target_descriptor);
+            free(import);
+            return NULL;
+        }
+        snprintf(dirname, PATH_MAX, "%s", old_prototype->path);
+    } else {
+        struct stat st;
+        int16_t retries_count = 1;
+        while (!fstatat(mascot_prototype_store_get_fd(server_state->prototypes), dirname, &st, AT_SYMLINK_NOFOLLOW)) {
+            if (retries_count > 4096) {
+                mascot_prototype_unlink(old_prototype);
+                ipc_packet_t* error = protocol_builder_import_failed(import, 3);
+                ipc_connector_send(client->connector, error);
+                protocol_client_remove_object(client, import->id);
+                close(import->target_descriptor);
+                free(import);
+                return NULL;
+            }
+            snprintf(dirname, PATH_MAX, "%s (%d)", mascot_name, retries_count++);
+        }
+    }
+
+    if (io_mkdtempat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname) == -1) {
+        mascot_prototype_unlink(old_prototype);
+        ipc_packet_t* error = protocol_builder_import_failed(import, 0);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+        archive_read_free(archive);
+        return NULL;
+    }
+
+    int32_t newfd = openat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, O_DIRECTORY);
+    if (newfd == -1) {
+        mascot_prototype_unlink(old_prototype);
+        ipc_packet_t* error = protocol_builder_import_failed(import, 0);
+        ipc_connector_send(client->connector, error);
+        protocol_client_remove_object(client, import->id);
+        close(import->target_descriptor);
+        free(import);
+        archive_read_free(archive);
+        return NULL;
+    }
+
+    struct archive_entry* entry = NULL;
+
+    while (archive_read_next_header(archive, &entry) == ARCHIVE_OK) {
+        if ((archive_entry_pathname(entry)[strlen(archive_entry_pathname(entry))-1]) != '/') {
+            int32_t writefd = openat(newfd, archive_entry_pathname(entry), O_RDWR | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+            archive_read_data_into_fd(archive, writefd);
+            close(writefd);
+        } else {
+            mkdirat(newfd, archive_entry_pathname(entry), 0755);
+        }
+    }
+
+    if (old_prototype) {
+        io_swapat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, mascot_prototype_store_get_fd(server_state->prototypes), old_prototype->path);
+        io_unlinkat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, IO_RECURSIVE);
+        mascot_prototype_mark_as_unlinked(old_prototype);
+    } else {
+        io_renameat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, mascot_prototype_store_get_fd(server_state->prototypes), dirname, 0);
+    }
+
+    mascot_prototype_unlink(old_prototype);
+
+    close(newfd);
+    archive_read_free(archive);
+
+    ipc_packet_t* success = protocol_builder_import_finished(import, mascot_name);
+    ipc_connector_send(client->connector, success);
+    protocol_client_remove_object(client, import->id);
+    close(import->target_descriptor);
+    free(import);
+
+    return NULL;
+}
 
 protocol_import_t* protocol_server_import(struct protocol_client* client, int32_t fd, uint32_t id, uint8_t flags)
 {
-    TRACE("IMPORT -1");
 
     if (!client || !id || fd < 0) return NULL;
-
-    TRACE("IMPORT 0");
 
     protocol_import_t* import = calloc(1,sizeof(protocol_import_t));
     if (!import) ERROR("Failed to allocate memory for import");
@@ -609,7 +791,6 @@ protocol_import_t* protocol_server_import(struct protocol_client* client, int32_
         return NULL;
     }
 
-    TRACE("IMPORT 1");
 
     int32_t fd_flags = fcntl(fd, F_GETFL);
     if (fd_flags == -1) {
@@ -620,18 +801,13 @@ protocol_import_t* protocol_server_import(struct protocol_client* client, int32_
         return NULL;
     }
 
-    TRACE("IMPORT 2");
-
-    if (!((fd_flags & O_ACCMODE) == O_RDWR ) && !((fd_flags & O_ACCMODE) == O_RDONLY)) {
+    if (!((fd_flags & O_ACCMODE) == O_RDWR) && !((fd_flags & O_ACCMODE) == O_RDONLY)) {
         ipc_packet_t* error = protocol_builder_import_failed(import, 7);
         ipc_connector_send(client->connector, error);
         free(import);
         close(dupfd);
         return NULL;
     }
-
-
-    TRACE("IMPORT 3");
 
     struct stat loc;
     if (fstat(fd, &loc) == -1) {
@@ -666,132 +842,214 @@ protocol_import_t* protocol_server_import(struct protocol_client* client, int32_
     return import;
 }
 
-void* protocol_import_thread(void* arg) {
-    protocol_import_t* import = (protocol_import_t*)arg;
-    struct protocol_client* client = import->creator;
+static void _add_file_to_archive(struct archive *a, int atfd, const char *rel_path);
 
-    ipc_packet_t* started = protocol_builder_import_started(import);
-    ipc_connector_send(client->connector, started);
-
-    // wlshm header is 512-byte header
-    uint8_t wlshm_header[512];
-    int32_t count = read(import->target_descriptor, wlshm_header, sizeof(wlshm_header));
-    if (count != 512) {
-        ipc_packet_t* error = protocol_builder_import_failed(import, 1);
-        ipc_connector_send(client->connector, error);
-        protocol_client_remove_object(client, import->id);
-        close(import->target_descriptor);
-        free(import);
-        return NULL;
+static void _add_directory_to_archive(struct archive *a, int atfd, const char *rel_path) {
+    int dirfd = openat(atfd, rel_path, O_RDONLY);
+    if (dirfd < 0) {
+        perror("openat (directory)");
+        return;
     }
 
-    if (wlshm_header[0] != 'W' || wlshm_header[1] != 'L' || wlshm_header[2] != 'P' || wlshm_header[3] != 'K') {
-        ipc_packet_t* error = protocol_builder_import_failed(import, 1);
-        ipc_connector_send(client->connector, error);
-        protocol_client_remove_object(client, import->id);
-        close(import->target_descriptor);
-        free(import);
-        return NULL;
+    DIR *dir = fdopendir(dirfd);
+    if (!dir) {
+        perror("fdopendir");
+        close(dirfd);
+        return;
     }
 
-    char mascot_name[256] = {0};
-    char dirname[PATH_MAX] = {0};
-    char tmpdirname[] = ".unpackingMascotXXXXXX";
-    uint8_t namesize = wlshm_header[4];
-    mkstemp(tmpdirname);
-    memcpy(mascot_name, wlshm_header + 5, namesize);
-    memcpy(dirname, wlshm_header + 5, namesize);
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;  // Skip . and ..
 
-    struct archive* archive = archive_read_new();
-    archive_read_support_format_tar(archive);
-    archive_read_support_filter_zstd(archive);
+        char new_rel_path[PATH_MAX];
+        snprintf(new_rel_path, sizeof(new_rel_path), "%s/%s", rel_path, entry->d_name);
 
-    int32_t r = archive_read_open_fd(archive, import->target_descriptor, 10240);
-    if (r != ARCHIVE_OK) {
-        ipc_packet_t* error = protocol_builder_import_failed(import, 4);
-        ipc_connector_send(client->connector, error);
-        protocol_client_remove_object(client, import->id);
-        close(import->target_descriptor);
-        free(import);
-        archive_read_free(archive);
-        return NULL;
-    }
-
-    const struct mascot_prototype* old_prototype = mascot_prototype_store_get(server_state->prototypes, mascot_name);
-    if (old_prototype) {
-        if (!(import->flags & 1)) { // Replace flag
-            ipc_packet_t* error = protocol_builder_import_failed(import, 3);
-            ipc_connector_send(client->connector, error);
-            protocol_client_remove_object(client, import->id);
-            close(import->target_descriptor);
-            free(import);
-            return NULL;
-        }
-        snprintf(dirname, PATH_MAX, "%s", old_prototype->path);
-    } else {
         struct stat st;
-        int16_t retries_count = 1;
-        while (!fstatat(mascot_prototype_store_get_fd(server_state->prototypes), dirname, &st, AT_SYMLINK_NOFOLLOW)) {
-            if (retries_count > 4096) {
-                ipc_packet_t* error = protocol_builder_import_failed(import, 3);
-                ipc_connector_send(client->connector, error);
-                protocol_client_remove_object(client, import->id);
-                close(import->target_descriptor);
-                free(import);
-                return NULL;
-            }
-            snprintf(dirname, PATH_MAX, "%s (%d)", mascot_name, retries_count++);
+        if (fstatat(dirfd, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) < 0) {
+            perror("fstatat");
+            continue;
         }
-    }
 
-    if (mkdirat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, 0755) == -1) {
-        ipc_packet_t* error = protocol_builder_import_failed(import, 0);
-        ipc_connector_send(client->connector, error);
-        protocol_client_remove_object(client, import->id);
-        close(import->target_descriptor);
-        free(import);
-        archive_read_free(archive);
-        return NULL;
-    }
-
-    int32_t newfd = openat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, O_DIRECTORY);
-    if (newfd == -1) {
-        ipc_packet_t* error = protocol_builder_import_failed(import, 0);
-        ipc_connector_send(client->connector, error);
-        protocol_client_remove_object(client, import->id);
-        close(import->target_descriptor);
-        free(import);
-        archive_read_free(archive);
-        return NULL;
-    }
-
-    struct archive_entry* entry = NULL;
-
-    while (archive_read_next_header(archive, &entry) == ARCHIVE_OK) {
-        if ((archive_entry_pathname(entry)[strlen(archive_entry_pathname(entry))-1]) != '/') {
-            int32_t writefd = openat(newfd, archive_entry_pathname(entry), O_RDWR | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-            archive_read_data_into_fd(archive, writefd);
-            close(writefd);
+        if (S_ISDIR(st.st_mode)) {
+            _add_directory_to_archive(a, dirfd, new_rel_path);  // Recursively add subdirectories
         } else {
-            mkdirat(newfd, archive_entry_pathname(entry), 0755);
+            _add_file_to_archive(a, dirfd, new_rel_path);  // Add file
         }
     }
 
-    if (old_prototype) {
-        io_swapat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, mascot_prototype_store_get_fd(server_state->prototypes), old_prototype->path);
-        io_unlinkat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, IO_RECURSIVE);
-    } else {
-        io_renameat(mascot_prototype_store_get_fd(server_state->prototypes), tmpdirname, mascot_prototype_store_get_fd(server_state->prototypes), dirname, 0);
+    closedir(dir);
+}
+
+static void _add_file_to_archive(struct archive *a, int atfd, const char *rel_path) {
+    struct archive_entry *entry;
+    int fd = openat(atfd, rel_path, O_RDONLY);
+    if (fd < 0) {
+        perror("openat (file)");
+        return;
     }
 
-    close(newfd);
-    archive_read_free(archive);
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        perror("fstat");
+        close(fd);
+        return;
+    }
 
-    ipc_packet_t* success = protocol_builder_import_finished(import, mascot_name);
+    entry = archive_entry_new();
+    archive_entry_set_pathname(entry, rel_path);
+    archive_entry_set_size(entry, st.st_size);
+    archive_entry_set_filetype(entry, S_ISREG(st.st_mode) ? AE_IFREG : AE_IFLNK);
+    archive_entry_set_perm(entry, st.st_mode & 0777);
+
+    archive_write_header(a, entry);
+
+    if (S_ISREG(st.st_mode) && st.st_size > 0) {
+        char buffer[10240];
+        ssize_t bytes_read;
+        while ((bytes_read = read(fd, buffer, 10240)) > 0) {
+            archive_write_data(a, buffer, bytes_read);
+        }
+    }
+
+    archive_write_finish_entry(a);
+    archive_entry_free(entry);
+    close(fd);
+}
+
+void* protocol_export_thread(void* arg)
+{
+    protocol_export_t* export = arg;
+    struct protocol_client* client = export->creator;
+    struct mascot_prototype* prototype = export->prototype;
+
+    lseek(export->target_descriptor, 0, SEEK_SET);
+
+    char header[512] = {"WLPK"};
+    int32_t bytes_written = 4;
+    uint8_t namelen = strlen(prototype->name);
+    header[bytes_written++] = namelen;
+    memcpy(&header[bytes_written], prototype->name, namelen);
+    bytes_written += namelen;
+    char version_str[256] = {0};
+    int32_t major = (prototype->version >> 42) & 0x1FFFFF;
+    int32_t minor = (prototype->version >> 24) & 0x1FFFFF;
+    int32_t patch = prototype->version & 0x1FFFFF;
+    uint8_t verlen = snprintf(version_str, sizeof(version_str), "%d.%d.%d", major, minor, patch);
+    header[bytes_written++] = verlen;
+    memcpy(&header[bytes_written], version_str, verlen);
+    bytes_written += verlen;
+
+    write(export->target_descriptor, header, 512);
+
+    struct archive* writer = archive_write_new();
+
+    archive_write_set_format_pax_restricted(writer);
+    archive_write_add_filter_zstd(writer);
+
+    archive_write_open_fd(writer, export->target_descriptor);
+
+    _add_directory_to_archive(writer, mascot_prototype_store_get_fd(server_state->prototypes), prototype->path);
+
+    archive_write_close(writer);
+    archive_write_free(writer);
+
+    mascot_prototype_unlink(prototype);
+
+    ipc_packet_t* success = protocol_builder_export_finished(export);
     ipc_connector_send(client->connector, success);
-    protocol_client_remove_object(client, import->id);
-    close(import->target_descriptor);
-    free(import);
 
-    return NULL;
+    protocol_client_remove_object(client, export->id);
+    close(export->target_descriptor);
+    free(export);
+
+    return success;
+}
+
+protocol_export_t* protocol_server_export(struct protocol_client* client, int32_t fd, uint32_t id, struct mascot_prototype* prototype)
+{
+    if (!client || fd < 0 || !id || !prototype) return NULL;
+
+    protocol_export_t* export = calloc(1,sizeof(protocol_import_t));
+    if (!export) ERROR("Failed to allocate memory for export");
+
+    int32_t dupfd = dup(fd);
+    if (dupfd == -1) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "import.error.dup_failed", NULL, 0, true);
+        ipc_connector_send(client->connector, error);
+        ipc_packet_t* failed = protocol_builder_export_failed(export, 5);
+        ipc_connector_send(client->connector, failed);
+        free(export);
+        return NULL;
+    }
+
+    int32_t fd_flags = fcntl(fd, F_GETFL);
+    if (fd_flags == -1) {
+        ipc_packet_t* error = protocol_builder_export_failed(export, 0);
+        ipc_connector_send(client->connector, error);
+        free(export);
+        close(dupfd);
+        return NULL;
+    }
+
+    if (!((fd_flags & O_ACCMODE) == O_RDWR) && !((fd_flags & O_ACCMODE) == O_WRONLY)) {
+        ipc_packet_t* error = protocol_builder_export_failed(export, 2);
+        ipc_connector_send(client->connector, error);
+        free(export);
+        close(dupfd);
+        return NULL;
+    }
+
+    struct stat loc;
+    if (fstatat(mascot_prototype_store_get_fd(server_state->prototypes), prototype->path, &loc, 0) == -1) {
+        ipc_packet_t* error = protocol_builder_export_failed(export, 6);
+        ipc_connector_send(client->connector, error);
+        free(export);
+        close(dupfd);
+        return NULL;
+    }
+
+    export->target_descriptor = dupfd;
+    export->creator = client;
+    export->id = id;
+    export->prototype = prototype;
+
+    if (protocol_client_push_object(client, id, PROTOCOL_OBJECT_EXPORT, export)) {
+        free(export);
+        close(dupfd);
+        return NULL;
+    }
+
+    pthread_create(&export->thread, NULL, protocol_export_thread, (void*)export);
+    pthread_detach(export->thread);
+
+    return export;
+}
+
+protocol_import_t* protocol_server_ephermal_import(int32_t id)
+{
+    protocol_import_t* import = malloc(sizeof(protocol_import_t));
+    if (!import) {
+        return NULL;
+    }
+
+    import->id = id;
+    import->creator = NULL;
+    import->target_descriptor = -1;
+
+    return import;
+}
+protocol_export_t* protocol_server_ephermal_export(int32_t id)
+{
+    protocol_export_t* export = malloc(sizeof(protocol_export_t));
+    if (!export) {
+        return NULL;
+    }
+
+    export->id = id;
+    export->creator = NULL;
+    export->target_descriptor = -1;
+
+    return export;
 }

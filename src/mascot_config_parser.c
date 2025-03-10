@@ -34,6 +34,8 @@
 #include <strings.h>
 #include "global_symbols.h"
 #include <sys/stat.h>
+#include <io.h>
+#include "protocol/server.h"
 
 #include "wayland_includes.h"
 
@@ -54,6 +56,8 @@ struct mascot_prototype* mascot_prototype_new()
     if (!prototype) {
         return NULL;
     }
+    prototype->path_fd = -1;
+    prototype->icon_fd = -1;
     return prototype;
 }
 
@@ -71,10 +75,98 @@ void mascot_prototype_unlink(const struct mascot_prototype* prototype)
         return;
     }
     struct mascot_prototype* p = (struct mascot_prototype*)prototype;
-    p->reference_count--;
-    if (p->reference_count == 0) {
+
+    if (p->reference_count) p->reference_count--;
+    if (!p->reference_count) {
+        close(p->path_fd);
+        if (p->icon_fd != -1) close(p->icon_fd);
+
+        free((char*)p->name);
+        free((char*)p->display_name);
+        free((char*)p->path);
+
+        free((struct mascot_behavior_reference*)p->root_behavior_list);
+        uint16_t action_count = p->actions_count;
+        uint16_t behavior_count = p->behavior_count;
+        uint16_t expressions_count = p->expressions_count;
+
+        p->actions_count = 0;
+        p->behavior_count = 0;
+        p->expressions_count = 0;
+
+        for (uint16_t i = 0; i < behavior_count; i++) {
+            struct mascot_behavior* behavior = (struct mascot_behavior*)p->behavior_definitions[i];
+            p->behavior_definitions[i] = NULL;
+            free((char*)behavior->name);
+            free(behavior);
+        }
+
+        for (uint16_t i = 0; i < action_count; i++) {
+            struct mascot_action* action = (struct mascot_action*)p->action_definitions[i];
+            p->action_definitions[i] = NULL;
+            free((char*)action->name);
+            free((char*)action->target_behavior);
+            free((char*)action->born_behavior);
+            free((char*)action->affordance);
+            free((char*)action->transform_target);
+            free((char*)action->born_mascot);
+            free((char*)action->behavior);
+
+            for (uint16_t j = 0; j < 128; j++) {
+                free(action->variables[j]);
+            }
+            free(action->variables);
+
+            for (uint16_t j = 0; j < action->length; j++) {
+                struct mascot_action_content* content = &action->content[j];
+                if (content->kind == mascot_action_content_type_animation) {
+                    struct mascot_animation* animation = content->value.animation;
+                    for (uint16_t k = 0; k < animation->frame_count; k++) {
+                        struct mascot_pose* pose = animation->frames[k];
+                        free(pose);
+                    }
+                    free(animation->frames);
+
+                    for (uint16_t k = 0; k < animation->hotspots_count; k++) {
+                        struct mascot_hotspot* hotspot = animation->hotspots[k];
+                        free((char*)hotspot->behavior);
+                        free(hotspot);
+                    }
+                    free(animation->hotspots);
+                    free(animation);
+                } else if (content->kind == mascot_action_content_type_action_reference) {
+                    struct mascot_action_reference* reference = content->value.action_reference;
+                    for (uint16_t k = 0; k < 128; k++) {
+                        free(reference->overwritten_locals[k]);
+                    }
+                    free(reference->overwritten_locals);
+                    free(reference);
+                }
+            }
+            free(action);
+        }
+
+        for (uint16_t i = 0; i < expressions_count; i++) {
+            free((struct mascot_expression_definition*)p->expression_definitions[i]);
+        }
+        free(p->expression_definitions);
+        mascot_atlas_destroy((struct mascot_atlas*)p->atlas);
+
+        protocol_server_prototype_withdraw(p);
+
         free(p);
     }
+}
+
+void mascot_prototype_mark_as_unlinked(const struct mascot_prototype* prototype)
+{
+    if (!prototype) {
+        return;
+    }
+    struct mascot_prototype* p = (struct mascot_prototype*)prototype;
+    close(p->path_fd);
+    p->path_fd = -1;
+    p->unlinked = true;
 }
 
 mascot_prototype_store* mascot_prototype_store_new()
@@ -119,6 +211,7 @@ bool mascot_prototype_store_add(mascot_prototype_store* store, const struct masc
             store->count++;
             mascot_prototype_link(prototype);
             ((struct mascot_prototype*)prototype)->prototype_store = store;
+            DEBUG("[PROTOTYPES] Added new prototype of type <%s@\"%s\":%u> to the prototype store", prototype->name, prototype->path, prototype->id);
             return true;
         }
     }
@@ -2460,6 +2553,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     prototype->path = strdup(path);
     prototype->path_fd = open(path, O_DIRECTORY | O_PATH | O_RDONLY);
     prototype->id = prototype_id_counter++;
+    prototype->version = version;
 
     return PROTOTYPE_LOAD_SUCCESS;
 }
@@ -2496,25 +2590,83 @@ uint32_t mascot_prototype_store_reload(mascot_prototype_store *store)
         }
     }
 
-    DIR* dir = opendir(store->location);
-    if (!dir) return 0;
+    char ** directories = NULL;
+    int32_t count = 0;
 
-    // Load new prototypes from directory
-    struct dirent* entry;
-    while ((entry = readdir(dir))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+    int32_t result = io_find(store->location, "*", IO_FILE_TYPE_DIRECTORY, &directories, &count);
+    if (result != 0) {
+        WARN("Failed to locate prototypes in %s: %d", store->location, result);
+        return 0;
+    }
 
-        if (DT_DIR != entry->d_type) continue;
+    for (int32_t i = 0; i < count; i++) {
+        struct mascot_prototype *prototype = mascot_prototype_new();
+        if (!prototype) ERROR("Failed to load prototypes: OUT OF MEMORY");
+        enum mascot_prototype_load_result load_status =
+        mascot_prototype_load(prototype, store->location, directories[i]);
 
-        struct mascot_prototype* prototype = mascot_prototype_new();
-        if (mascot_prototype_load(prototype, store->location, entry->d_name) != PROTOTYPE_LOAD_SUCCESS) {
+        if (load_status != PROTOTYPE_LOAD_SUCCESS) {
+            switch (load_status) {
+                case PROTOTYPE_LOAD_NOT_FOUND:
+                    WARN("Failed to load prototype \"%s\": No such file or directory", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_NOT_DIRECTORY:
+                    WARN("Failed to load prototype \"%s\": File is not a directory", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_PERMISSION_DENIED:
+                    WARN("Failed to load prototype \"%s\": Permission denied", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_MANIFEST_NOT_FOUND:
+                    WARN("Failed to load prototype \"%s\": Directory is not prototype: manifest.json not found", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_MANIFEST_INVALID:
+                    WARN("Failed to load prototype \"%s\": manifest.json is invalid", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_ACTIONS_NOT_FOUND:
+                    WARN("Failed to load prototype \"%s\": Invalid prototype: action definitions not found", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_ACTIONS_INVALID:
+                    WARN("Failed to load prototype \"%s\": action definitions are invalid", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_BEHAVIORS_NOT_FOUND:
+                    WARN("Failed to load prototype \"%s\": Invalid prototype: behavior definitions not found", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_BEHAVIORS_INVALID:
+                    WARN("Failed to load prototype \"%s\": behavior definitions are invalid", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_PROGRAMS_NOT_FOUND:
+                    WARN("Failed to load prototype \"%s\": Invalid prototype: script definitions not found", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_PROGRAMS_INVALID:
+                    WARN("Failed to load prototype \"%s\": script definitions are invalid", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_ASSETS_FAILED:
+                    WARN("Failed to load prototype \"%s\": assets loading failed", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_ALREADY_LOADED:
+                    ERROR("[PANIC] Trying to load prototype \"%s\" to already initialized prototype struct. This is a bug, please report to the upstream", directories[i]);
+                case PROTOTYPE_LOAD_ENV_NOT_READY:
+                    ERROR("[PANIC] Trying to load prototype \"%s\" when environment is not ready. This is a bug, please report to the upstream", directories[i]);
+                case PROTOTYPE_LOAD_NULL_POINTER:
+                    ERROR("[PANIC] Trying to load prototype \"%s\" with a NULL pointer. This is a bug, please report to the upstream", directories[i]);
+                case PROTOTYPE_LOAD_VERSION_TOO_OLD:
+                    WARN("Failed to load prototype \"%s\": prototype's version is too old", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_VERSION_TOO_NEW:
+                    WARN("Failed to load prototype \"%s\": prototype's version is too new", directories[i]);
+                    break;
+                case PROTOTYPE_LOAD_OOM:
+                    ERROR("[PANIC] Out of memory during loading of prototype \"%s\"", directories[i]);
+                default:
+                    WARN("Unknown error during loading of prototype \"%s\"", directories[i]);
+                    break;
+            }
             mascot_prototype_unlink(prototype);
             continue;
         }
         mascot_prototype_store_add(store, prototype);
     }
 
-    closedir(dir);
     return store->count;
 }
 

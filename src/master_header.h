@@ -31,7 +31,7 @@
 
 #define UNUSED(x) (void)(x)
 
-PRINT_FORMAT void __error(const char*, int, const char*, ...);
+__attribute__((noreturn)) PRINT_FORMAT void __error(const char*, int, const char*, ...);
 PRINT_FORMAT void __warn(const char*, int, const char*, ...);
 PRINT_FORMAT void __info(const char*, int, const char*, ...);
 PRINT_FORMAT void __debug(const char*, int, const char*, ...);

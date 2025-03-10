@@ -865,3 +865,41 @@ bool protocol_handler_import(struct protocol_client* client, ipc_packet_t* packe
     protocol_server_import(client, fd, new_object_id, ipc_packet_get_flags(packet));
     return true;
 }
+
+bool protocol_handler_export(struct protocol_client* client, ipc_packet_t* packet)
+{
+
+    struct protocol_server_state* state = protocol_get_server_state();
+
+    int32_t fd;
+    uint32_t new_object_id;
+    uint32_t prototype_object_id;
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &new_object_id));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &prototype_object_id));
+
+    struct mascot_prototype* prototype = mascot_prototype_store_get_by_id(state->prototypes, prototype_object_id & 0x00FFFFFF);
+    if (!prototype) {
+        protocol_export_t* ephermal_export = protocol_server_ephermal_export(new_object_id);
+        ipc_packet_t* failed = protocol_builder_export_failed(ephermal_export, 6);
+        ipc_connector_send(client->connector, failed);
+        free(ephermal_export);
+        return true;
+    }
+
+    if (prototype->unlinked) {
+        protocol_export_t* ephermal_export = protocol_server_ephermal_export(new_object_id);
+        ipc_packet_t* failed = protocol_builder_export_failed(ephermal_export, 6);
+        ipc_connector_send(client->connector, failed);
+        free(ephermal_export);
+        return true;
+    }
+
+    mascot_prototype_link(prototype);
+
+    ipc_packet_consume_fd(packet, &fd);
+    protocol_export_t* export = protocol_server_export(client, fd, new_object_id, prototype);
+    if (!export) {
+        mascot_prototype_unlink(prototype);
+    }
+    return true;
+}

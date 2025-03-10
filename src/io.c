@@ -10,6 +10,7 @@
 #include <fnmatch.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 /***************** io_find Implementation *****************/
 
@@ -662,5 +663,35 @@ int32_t io_unlinkat(int32_t fd, const char* path, int32_t flags) {
             return (unlinkat(fd, path, AT_REMOVEDIR) == 0) ? 0 : IO_UNKNOWN_ERROR;
         else
             return (unlinkat(fd, path, 0) == 0) ? 0 : IO_UNKNOWN_ERROR;
+    }
+}
+
+/*
+ * int32_t io_mkdtempat(int dirfd, char *template);
+ *
+ * Creates a temporary directory with a unique name based on 'template'.
+ * The template must end with "XXXXXX" and will be replaced with random lowercase letters.
+ */
+int32_t io_mkdtempat(int dirfd, char *template) {
+    size_t len = strlen(template);
+    if (len < 6 || strcmp(template + len - 6, "XXXXXX") != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    for (;;) {
+        // Replace 'X's with random lowercase letters.
+        for (int i = 0; i < 6; i++) {
+            template[len - 6 + i] = 'a' + (rand() % 26);
+        }
+        if (mkdirat(dirfd, template, 0700) == 0) {
+            // Successfully created the directory.
+            return 0;
+        }
+        if (errno != EEXIST) {
+            // An error other than "directory already exists" occurred.
+            return -1;
+        }
+        // If the directory already exists, try again.
     }
 }

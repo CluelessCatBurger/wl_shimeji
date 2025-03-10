@@ -53,6 +53,7 @@ enum mascot_prototype_load_result {
 struct mascot_prototype* mascot_prototype_new();
 void mascot_prototype_link(const struct mascot_prototype*);
 void mascot_prototype_unlink(const struct mascot_prototype*);
+void mascot_prototype_mark_as_unlinked(const struct mascot_prototype*);
 enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype*, const char* prototypes_root, const char* path);
 
 mascot_prototype_store* mascot_prototype_store_new();
