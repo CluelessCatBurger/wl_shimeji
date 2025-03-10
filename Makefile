@@ -12,7 +12,7 @@ PREFIX ?= /usr/local
 
 override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
 override CFLAGS  += $(shell pkg-config --cflags wayland-client)
-override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor --libs) -lm
+override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor libarchive --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR ?= $(shell pkg-config wayland-protocols --variable=pkgdatadir)
 override WAYLAND_SCANNER = $(shell pkg-config --variable=wayland_scanner wayland-scanner)
@@ -38,6 +38,7 @@ override WL_HEADERS := \
 override SRC := \
 	$(wildcard $(SRCDIR)/*.c) \
 	$(wildcard $(SRCDIR)/actions/*.c) \
+	$(wildcard $(SRCDIR)/protocol/*.c) \
 	$(WL_HEADERS:.h=.c)
 
 override OBJS := $(SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
