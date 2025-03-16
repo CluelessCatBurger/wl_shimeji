@@ -2550,7 +2550,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     free(behbuf);
 
     prototype->local_variables_count = 128;
-    prototype->path = strdup(path);
+    prototype->path = strdup(path_);
     prototype->path_fd = open(path, O_DIRECTORY | O_PATH | O_RDONLY);
     prototype->id = prototype_id_counter++;
     prototype->version = version;
