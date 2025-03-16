@@ -23,13 +23,12 @@ bool protocol_handler_plugin_activate(struct protocol_client* client, ipc_packet
 bool protocol_handler_selection_cancel(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_share_shm_pool(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_shm_pool_create_buffer(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_shm_pool_destroy_buffer(struct protocol_client* client, ipc_packet_t* packet);
+bool protocol_handler_shm_pool_destroy(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_buffer_destroy(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_click_event_accept(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_click_event_ignore(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_popup_child_popup(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_popup_attach(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_popup_discard(struct protocol_client* client, ipc_packet_t* packet);
+bool protocol_handler_popup_dismiss(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_apply_behavior(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_set_config_key(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_get_config_key(struct protocol_client* client, ipc_packet_t* packet);
@@ -71,6 +70,15 @@ ipc_packet_t* protocol_builder_export_finished(protocol_export_t* export);
 ipc_packet_t* protocol_builder_click_event_expired(protocol_click_event_t* event);
 ipc_packet_t* protocol_builder_config_key(const char* key, const char* value);
 ipc_packet_t* protocol_builder_prototype_withdrawn(struct mascot_prototype* prototype);
-
+ipc_packet_t* protocol_builder_shm_pool_imported(protocol_shm_pool_t* pool);
+ipc_packet_t* protocol_builder_shm_pool_failed(protocol_shm_pool_t* pool);
+ipc_packet_t* protocol_builder_popup_mapped(protocol_popup_t* popup);
+ipc_packet_t* protocol_builder_popup_wheel(protocol_popup_t* popup, int32_t wheel_amount);
+ipc_packet_t* protocol_builder_popup_dismissed(protocol_popup_t* popup);
+ipc_packet_t* protocol_builder_popup_enter(protocol_popup_t* popup, int32_t x, int32_t y);
+ipc_packet_t* protocol_builder_popup_leave(protocol_popup_t* popup, int32_t x, int32_t y);
+ipc_packet_t* protocol_builder_popup_motion(protocol_popup_t* popup, int32_t x, int32_t y);
+ipc_packet_t* protocol_builder_popup_clicked(protocol_popup_t* popup, int32_t x, int32_t y, uint32_t button);
+ipc_packet_t* protocol_builder_config_key(const char* key, const char* value);
 
 #endif

@@ -42,6 +42,9 @@ typedef struct protocol_click_event protocol_click_event_t;
 typedef struct protocol_selection protocol_selection_t;
 typedef struct protocol_import protocol_import_t;
 typedef struct protocol_export protocol_export_t;
+typedef struct protocol_shm_pool protocol_shm_pool_t;
+typedef struct protocol_buffer protocol_buffer_t;
+typedef struct protocol_popup protocol_popup_t;
 
 struct protocol_server_state {
     struct list* clients;
@@ -112,7 +115,7 @@ void protocol_server_mascot_migrated(struct mascot* mascot, environment_t* new_e
 void protocol_server_mascot_destroyed(struct mascot* mascot);
 
 protocol_click_event_t* protocol_server_announce_new_click(struct mascot* mascot, uint32_t x, uint32_t y);
-void protocol_server_click_accept(struct protocol_client* client, uint32_t popup_width, uint32_t popup_height, uint32_t id);
+protocol_popup_t* protocol_server_click_accept(struct protocol_client* client, uint32_t popup_width, uint32_t popup_height, uint32_t id);
 
 protocol_selection_t* protocol_server_start_selection(struct list* environments, struct protocol_client* author, uint32_t id);
 void protocol_selection_cancel(protocol_selection_t* selection);
@@ -122,11 +125,34 @@ protocol_export_t* protocol_server_export(struct protocol_client* client, int32_
 
 protocol_import_t* protocol_server_ephermal_import(int32_t id);
 protocol_export_t* protocol_server_ephermal_export(int32_t id);
+protocol_shm_pool_t* protocol_server_ephermal_shm_pool(int32_t id);
+protocol_popup_t* protocol_server_ephermal_popup(int32_t id);
 
 uint32_t protocol_click_event_id(protocol_click_event_t* event);
 uint32_t protocol_selection_id(protocol_selection_t* selection);
 uint32_t protocol_import_id(protocol_import_t* import);
 uint32_t protocol_export_id(protocol_export_t* export);
+uint32_t protocol_shm_pool_id(protocol_shm_pool_t* pool);
+uint32_t protocol_buffer_id(protocol_buffer_t* buffer);
+uint32_t protocol_popup_id(protocol_popup_t* popup);
+
+protocol_shm_pool_t* protocol_shm_pool_new(struct protocol_client* client, uint32_t id, int32_t fd, uint32_t size);
+protocol_buffer_t* protocol_shm_pool_buffer_new(struct protocol_client* client, protocol_shm_pool_t* pool, uint32_t id, uint32_t width, uint32_t height, uint32_t stride, uint32_t format, uint32_t offset);
+void protocol_shm_pool_destroy(protocol_shm_pool_t* pool);
+void protocol_buffer_destroy(protocol_buffer_t* buffer);
+
+protocol_popup_t* protocol_popup_child_popup(struct protocol_client* client, protocol_popup_t* popup, int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t id);
+void protocol_popup_mapped(protocol_popup_t* popup);
+void protocol_popup_dismissed(protocol_popup_t* popup);
+void protocol_popup_enter(protocol_popup_t* popup, int32_t x, int32_t y);
+void protocol_popup_attach(protocol_popup_t* popup, protocol_buffer_t* buffer, int32_t x, int32_t y, uint32_t width, uint32_t height);
+void protocol_popup_leave(protocol_popup_t* popup);
+void protocol_popup_clicked(protocol_popup_t* popup, int32_t x, int32_t y, uint32_t button);
+void protocol_popup_motion(protocol_popup_t* popup, int32_t x, int32_t y);
+void protocol_popup_dismiss(struct protocol_client* client, protocol_popup_t* popup);
+void protocol_popup_frame(protocol_popup_t* popup);
+
+bool protocol_click_event_is_expired(protocol_click_event_t* event);
 
 int32_t protocol_client_push_object(struct protocol_client* client, uint32_t id, uint32_t type, void* object);
 void* protocol_client_find_object(struct protocol_client* client, uint32_t id);

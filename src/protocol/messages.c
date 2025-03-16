@@ -8,6 +8,7 @@
 #include "protocol/server.h"
 #include <master_header.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #define ENSURE_MARSHALLER(x) if (x) return false
 
@@ -272,7 +273,6 @@ ipc_packet_t* protocol_builder_mascot_info(struct mascot* mascot)
     ipc_packet_set_type(packet, 0x17);
     ipc_packet_set_object(packet, object_id);
 
-    ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, mascot->prototype->id));
     ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, prototype_object_id));
     ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, environment_object_id));
     ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, mascot->state));
@@ -481,6 +481,34 @@ ipc_packet_t* protocol_builder_prototype_withdrawn(struct mascot_prototype* prot
 
     return packet;
 }
+
+ipc_packet_t* protocol_builder_shm_pool_failed(protocol_shm_pool_t* pool) {
+    ipc_packet_t* packet = ipc_allocate_packet(0);
+
+    ipc_packet_set_type(packet, 0x41);
+    ipc_packet_set_object(packet, protocol_shm_pool_id(pool));
+
+    return packet;
+}
+
+ipc_packet_t* protocol_builder_shm_pool_imported(protocol_shm_pool_t* pool) {
+    ipc_packet_t* packet = ipc_allocate_packet(0);
+
+    ipc_packet_set_type(packet, 0x40);
+    ipc_packet_set_object(packet, protocol_shm_pool_id(pool));
+
+    return packet;
+}
+
+ipc_packet_t* protocol_builder_popup_dismissed(protocol_popup_t* popup) {
+    ipc_packet_t* packet = ipc_allocate_packet(0);
+
+    ipc_packet_set_type(packet, 0x42);
+    ipc_packet_set_object(packet, protocol_popup_id(popup));
+
+    return packet;
+}
+
 
 // -------------------------------------------------------------------
 
@@ -843,15 +871,217 @@ bool protocol_handler_selection_cancel(struct protocol_client* client, ipc_packe
     return true;
 }
 
-bool protocol_handler_share_shm_pool(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_shm_pool_create_buffer(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_shm_pool_destroy_buffer(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_buffer_destroy(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_click_event_accept(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_click_event_ignore(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_popup_child_popup(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_popup_attach(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_popup_discard(struct protocol_client* client, ipc_packet_t* packet);
+bool protocol_handler_share_shm_pool(struct protocol_client* client, ipc_packet_t* packet)
+{
+    int32_t shmpool_fd;
+    uint32_t new_object_id;
+    uint32_t size;
+
+    ENSURE_MARSHALLER(ipc_packet_consume_fd(packet, &shmpool_fd));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &new_object_id));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &size));
+
+    protocol_shm_pool_t* pool = protocol_shm_pool_new(client, new_object_id, shmpool_fd, size);
+    if (!pool) {
+        pool = protocol_server_ephermal_shm_pool(new_object_id);
+        ipc_packet_t* packet = protocol_builder_shm_pool_failed(pool);
+        ipc_connector_send(client->connector, packet);
+        free(pool);
+        return true;
+    }
+    ipc_packet_t* imported = protocol_builder_shm_pool_imported(pool);
+    ipc_connector_send(client->connector, imported);
+    return true;
+}
+
+bool protocol_handler_shm_pool_create_buffer(struct protocol_client* client, ipc_packet_t* packet)
+{
+    uint32_t protocol_shm_pool_id = ipc_packet_get_object(packet);
+    if (!protocol_shm_pool_id) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    protocol_shm_pool_t* pool = protocol_client_find_object(client, protocol_shm_pool_id);
+    if (!pool) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    uint32_t new_object_id;
+    uint32_t offset;
+    uint32_t width, height;
+    uint32_t stride;
+    uint32_t format;
+
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &new_object_id));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &offset));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &width));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &height));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &stride));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &format));
+
+    protocol_buffer_t* buffer = protocol_shm_pool_buffer_new(client, pool, new_object_id, width, height, stride, format, offset);
+    if (!buffer)
+        return false;
+    return true;
+}
+
+bool protocol_handler_shm_pool_destroy(struct protocol_client* client, ipc_packet_t* packet)
+{
+    uint32_t protocol_shm_pool_id = ipc_packet_get_object(packet);
+    if (!protocol_shm_pool_id) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+    protocol_shm_pool_t* pool = protocol_client_find_object(client, protocol_shm_pool_id);
+    if (!pool) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+    protocol_shm_pool_destroy(pool);
+    return true;
+}
+
+bool protocol_handler_buffer_destroy(struct protocol_client* client, ipc_packet_t* packet)
+{
+    uint32_t buffer_object_id = ipc_packet_get_object(packet);
+    if (!protocol_client_find_object(client, buffer_object_id)) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+    protocol_buffer_t* buffer = protocol_client_find_object(client, buffer_object_id);
+    if (!buffer) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+    protocol_buffer_destroy(buffer);
+    return true;
+}
+
+bool protocol_handler_click_event_accept(struct protocol_client* client, ipc_packet_t* packet)
+{
+
+    struct protocol_server_state* state = protocol_get_server_state();
+
+    uint32_t click_event_object_id = ipc_packet_get_object(packet);
+    uint32_t new_object_id;
+    uint32_t width, height;
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &new_object_id));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &width));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &height));
+
+    if (!new_object_id) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    bool failed = false;
+    if (!click_event_object_id) failed = true;
+    if (!state->last_click_event) failed = true;
+    else if (protocol_click_event_is_expired(state->last_click_event)) failed = true;
+
+    if (failed) {
+        protocol_popup_t* popup = protocol_server_ephermal_popup(new_object_id);
+        ipc_packet_t* dismissed = protocol_builder_popup_dismissed(popup);
+        ipc_connector_send(client->connector, dismissed);
+        free(popup);
+        return true;
+    }
+
+    protocol_popup_t* popup = protocol_server_click_accept(client, width, height, new_object_id);
+    if (!popup) return false;
+
+    return true;
+}
+
+bool protocol_handler_popup_child_popup(struct protocol_client* client, ipc_packet_t* packet)
+{
+    uint32_t parent_object_id = ipc_packet_get_object(packet);
+    uint32_t new_object_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t x;
+    uint32_t y;
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &new_object_id));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &width));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &height));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &x));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &y));
+
+    if (!parent_object_id || !new_object_id) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    protocol_popup_t* parent_popup = protocol_client_find_object(client, parent_object_id);
+    if (!parent_popup) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    protocol_popup_t* child_popup = protocol_popup_child_popup(client, parent_popup, x, y, width, height, new_object_id);
+    if (!child_popup) return false;
+
+    return true;
+}
+
+bool protocol_handler_popup_attach(struct protocol_client* client, ipc_packet_t* packet)
+{
+    uint32_t popup_id = ipc_packet_get_object(packet);
+    uint32_t buffer_object_id;
+    uint32_t x_damage;
+    uint32_t y_damage;
+    uint32_t width_damage;
+    uint32_t height_damage;
+
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &buffer_object_id));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &x_damage));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &y_damage));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &width_damage));
+    ENSURE_MARSHALLER(ipc_packet_read_uint32(packet, &height_damage));
+
+    protocol_popup_t* popup = protocol_client_find_object(client, popup_id);
+    if (!popup) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    protocol_buffer_t* buffer = protocol_client_find_object(client, buffer_object_id);
+    if (!buffer) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    // protocol_popup_attach(popup, buffer, x_damage, y_damage, width_damage, height_damage);
+    return true;
+}
+
+bool protocol_handler_popup_dismiss(struct protocol_client* client, ipc_packet_t* packet)
+{
+    uint32_t popup_id = ipc_packet_get_object(packet);
+    protocol_popup_t* popup = protocol_client_find_object(client, popup_id);
+    if (!popup) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "object_id.error.invalid", NULL, 0, false);
+        ipc_connector_send(client->connector, error);
+        return false;
+    }
+
+    // protocol_popup_dismiss(client, popup);
+    return true;
+}
+
 bool protocol_handler_set_config_key(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_get_config_key(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_list_config_keys(struct protocol_client* client, ipc_packet_t* packet);

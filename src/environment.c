@@ -3210,26 +3210,20 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
 
     // Unlink subsurface from the old environment
     struct mascot* mascot = environment_subsurface_get_mascot(surface);
-    mascot_announce_affordance(mascot, NULL);
     if (mascot) {
+        mascot_announce_affordance(mascot, NULL);
         uint32_t mascot_index = list_find(surface->env->mascot_manager.referenced_mascots, mascot);
         if (mascot_index != UINT32_MAX) {
             list_remove(surface->env->mascot_manager.referenced_mascots, mascot_index);
         }
     }
+
     mascot_attach_affordance_manager(mascot, NULL);
 
     // Next we change our vision of the environment
     surface->env = env;
 
     mascot_attach_affordance_manager(mascot, env->mascot_manager.affordances);
-
-
-    // Link subsurface to the new environment
-    // pthread_mutex_lock(&env->mascot_manager.mutex);
-    if (mascot) {
-        list_add(env->mascot_manager.referenced_mascots, mascot);
-    }
 
     // Get all user data from the surface
     struct wl_surface_data* userdata = wl_surface_get_user_data(surface->surface);
@@ -3259,6 +3253,12 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
     wl_surface_attach_callbacks(surface->surface, userdata->callbacks);
 
     free(userdata);
+
+    // Link subsurface to the new environment
+    // pthread_mutex_lock(&env->mascot_manager.mutex);
+    if (mascot) {
+        list_add(env->mascot_manager.referenced_mascots, mascot);
+    }
 
     // Map the surface again
     environment_subsurface_attach(surface, pose);
@@ -4021,7 +4021,7 @@ environment_popup_t* environment_popup_create(environment_t* environment, struct
     popup->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, popup->surface);
     popup->position = xdg_wm_base_create_positioner(xdg_wm_base);
 
-    xdg_positioner_set_anchor_rect(popup->position, x, y, x, y);
+    xdg_positioner_set_anchor_rect(popup->position, x, y, 1, 1);
     xdg_positioner_set_size(popup->position, width, height);
 
     popup->popup = xdg_surface_get_popup(popup->xdg_surface, NULL, popup->position);
