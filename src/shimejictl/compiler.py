@@ -6,6 +6,7 @@ from bytecode import Program, OP
 import os
 import pathlib
 import json
+import stat
 import shutil
 import struct
 from converter import *
@@ -117,7 +118,7 @@ class Compiler:
         return program
 
     @staticmethod
-    def compile_shimeji(root_dir: str | pathlib.Path, **kwargs) -> tuple[str, str, str]:
+    def compile_shimeji(root_dir: str | pathlib.Path | int, conf_dir_fd: int, **kwargs) -> tuple[str, str, str]:
 
         """
         root_dir: str | pathlib.Path
@@ -129,37 +130,26 @@ class Compiler:
             images: list[str] - list of image paths
         """
 
-        conf_path = pathlib.Path(kwargs.get("conf_path", pathlib.Path(root_dir) / "conf"))
+        error_msg = ""
+        try:
+            error_msg = "No actions.xml file found."
+            status = os.stat("actions.xml", dir_fd=conf_dir_fd)
+            if not status.st_mode & stat.S_IFREG:
+                raise FileNotFoundError("actions.xml is not a regular file.")
+            error_msg = "No behaviors.xml file found."
+            status = os.stat("behaviors.xml", dir_fd=conf_dir_fd)
+            if not status.st_mode & stat.S_IFREG:
+                raise FileNotFoundError("behaviors.xml is not a regular file.")
+        except:
+            raise FileNotFoundError(error_msg)
 
-        # Is root_dir exists?
-        if not pathlib.Path(root_dir).exists():
-            raise FileNotFoundError(f"Directory {root_dir} does not exist.")
+        actions_xml = os.open("actions.xml", os.O_RDONLY, dir_fd=conf_dir_fd)
+        behaviors_xml = os.open("behaviors.xml", os.O_RDONLY, dir_fd=conf_dir_fd)
 
-        if not pathlib.Path(root_dir).is_dir():
-            raise NotADirectoryError(f"{root_dir} is not a directory.")
-
-        if not conf_path.exists():
-            raise FileNotFoundError(f"Directory {root_dir} does not contain a 'conf' directory.")
-
-        if not conf_path.is_dir():
-            raise NotADirectoryError(f"{root_dir}/conf is not a directory.")
-
-        if not (conf_path / "actions.xml").exists():
-            raise FileNotFoundError(f"Directory {root_dir}/conf does not contain an 'actions.xml' file.")
-
-        if not (conf_path / "actions.xml").is_file():
-            raise FileNotFoundError(f"{root_dir}/conf/actions.xml is not a file.")
-
-        if not (conf_path / "behaviors.xml").exists():
-            raise FileNotFoundError(f"Directory {root_dir}/conf does not contain a 'behaviors.xml' file.")
-
-        if not (conf_path / "behaviors.xml").is_file():
-            raise FileNotFoundError(f"{root_dir}/conf/behaviors.xml is not a file.")
-
-        with open(conf_path / "actions.xml", "r") as f:
+        with os.fdopen(actions_xml, "r") as f:
             actions = f.read()
 
-        with open(conf_path / "behaviors.xml", "r") as f:
+        with os.fdopen(behaviors_xml, "r") as f:
             behaviors = f.read()
 
         programs_defintions, actions_defintions, (behaviors_defintions, root_behaviors) = shmconv(actions, behaviors)
