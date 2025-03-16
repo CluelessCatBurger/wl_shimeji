@@ -52,28 +52,27 @@ If object ID is NULL, the message is generic message
 | 0x26 | import.progress() | Import progress | Clientbound |
 | 0x27 | Export | Exports prototype by its id, creates new Object of type export | Clientbound |
 | 0x28 | export.failed() | Export failed, acts as destructor for object | Clientbound |
-| 0x2A | export.finished() | Export finished, acts as destructor for object | Clientbound |
-| 0x2B | Spawn | Summons mascot | Serverbound |
-| 0x2C | Dispose | Disposes mascot referred by its id | Serverbound |
-| 0x2E | environment->close() | Asks environment to close | Serverbound |
-| 0x2F | plugin->set_policy() | Sets policy for plugin | Serverbound |
-| 0x30 | plugin->restore_windows() | Moves windows to center of screen if possible | Serverbound |
+| 0x29 | export.finished() | Export finished, acts as destructor for object | Clientbound |
+| 0x2A | Spawn | Summons mascot | Serverbound |
+| 0x2B | Dispose | Disposes mascot referred by its id | Serverbound |
+| 0x2D | environment->close() | Asks environment to close | Serverbound |
+| 0x2E | plugin->set_policy() | Sets policy for plugin | Serverbound |
+| 0x2F | plugin->restore_windows() | Moves windows to center of screen if possible | Serverbound |
 | 0x3A | plugin->deactivate() | Deactivates plugin | Serverbound |
 | 0x3B | plugin->activate() | Activates plugin | Serverbound |
 | 0x3C | plugin.status() | Status of plugin changed | Clientbound |
 | 0x3D | selection->cancel() | Cancels selection | Serverbound |
-| 0x3E | Share shm pools | Shares shared memory pools, creates new Object of type shm_pool | Serverbound |
+| 0x3E | Share shm pool | Shares shared memory pool, creates new Object of type shm_pool | Serverbound |
 | 0x3F | shm_pool->create_buffer() | Creates buffer in shared memory pool, returns new Object of type buffer | Serverbound |
 | 0x40 | shm_pool.imported() | Server imported shared memory pool successfully | Clientbound |
 | 0x41 | shm_pool.failed() | Server failed to import shared memory pool | Clientbound |
 | 0x42 | shm_pool->destroy() | Destroys shared memory pool referenced by Object ID | Serverbound |
 | 0x43 | buffer->destroy() | Destroys buffer referenced by Object ID | Serverbound |
 | 0x44 | click_event->accept() | Opens popup menu at click position, creates new Object of type popup, acts as destructor for object | Serverbound |
-| 0x45 | click_event->ignore() | Destroys click event referenced by Object ID | Serverbound |
 | 0x46 | popup->child_popup() | Creates child popup menu at specified position, creates new Object of type popup | Serverbound |
 | 0x47 | popup->attach() | Attaches buffer to popup and immediately renders it | Serverbound |
 | 0x48 | popup.mapped() | Sent when popup is mapped | Clientbound |
-| 0x49 | popup.unmapped() | Sent when popup is unmapped | Clientbound |
+| 0x49 | popup.wheel() | Sent when mouse wheel is scrolled within popup | Clientbound |
 | 0x4A | popup.dismissed() | Sent when popup is dismissed, acts as destructor for object | Clientbound |
 | 0x4B | popup.enter() | Sent when mouse enters popup | Clientbound |
 | 0x4C | popup.leave() | Sent when mouse exits popup | Clientbound |
@@ -88,7 +87,7 @@ If object ID is NULL, the message is generic message
 | 0x55 | click_event.expired() | Sent when click event expires, for example if new click event is created or some client is accepted click event| Clientbound |
 | 0x56 | Stop | Ask overlay to stop | Serverbound |
 | 0x57 | prototype->withdraw() | Sent when prototype is withdrawn, acts as destructor for object | Serverbound |
-
+| 0x58 | popup.frame() | See frame callbacks in wayland | Clientbound |
 
 # Client Hello - 0x00
 
@@ -265,7 +264,7 @@ Version of the mascot.
 
 | Field | Type | Description | Notes |
 |-------|------|-------------|-------|
-| Version | uint32 | Version of the mascot | |
+| Version | uint64 | Version of the mascot | |
 
 # Commit prototypes - 0x13
 
@@ -301,7 +300,6 @@ Server sents information about mascot. Mascot that receives that information is 
 |-------|------|-------------|-------|
 | Prototype ID | uint32 | Object ID of the prototype | |
 | Environment ID | uint32 | Object ID of the environment | |
-| Referenced Window ID | uint32 | Object ID of the window that mascot is attached to | Attached means here "mascot is on border of window or holds it" |
 | Current state | uint32 | Current state of mascot | |
 | Current action name | string | Name of current action | |
 | Current action index | uint32 | Index of current action | |
@@ -365,7 +363,7 @@ Reload prototype referenced by name or reload all prototypes if name was empty. 
 
 | Field | Type | Description | Note |
 |-------|------|-------------|-------|
-| Name | string | Name of the prototype to be reloaded | Empty string means reload all prototypes |
+| Path | string | Path of the prototype to be reloaded | Empty string means reload all prototypes. Path is an relative path to the prototypes storage root |
 
 # Import prototype - 0x22
 
@@ -391,8 +389,10 @@ Explaination will be sent in Notice Warning with Alert = 1 right after that mess
 Error:
   - 0: Unknown error
   - 1: Invalid file format
+  - 2: Invalid mascot version
   - 3: Referenced mascot name already exists and REPLACE is not set, Alert in Notice is set to 0 in that case
   - 4: File is not a valid tar file
+  - 5: Mascot version is not supported
   - 6: File is not file
   - 7: File is not opened in right mode (Expected read or readwrite)
 
@@ -415,7 +415,7 @@ Informs client about progress of import operation. Take into account that this m
 
 | Field | Type | Description | Note |
 |-------|------|-------------|-------|
-| Progress | float | Progress percentage | 0.0 - 1.0|
+| Progress | float | Progress percentage | 0.0 - 1.0 |
 
 # Export - 0x27
 
@@ -442,6 +442,8 @@ Error:
   - 2: FD not opened in WRITE mode
   - 3: Referenced prototype ID is not valid
   - 4: Server errored
+  - 5: Cannot dup FD
+  - 6: Prototype is unavailable
 
 # export.finished() - 0x29
 
@@ -459,7 +461,7 @@ Spawn mascot by prototype ID. Any errors reported via Notice Warning with Alert 
 | Y | uint32 | Y coordinate | |
 | Spawn behavior | string | Spawn behavior | Can be empty for default behavior |
 
-# Dispose - 0x2B
+# mascot->dismiss() - 0x2B
 
 Dispose mascot by Object ID. Will cause dispose event on overlay, but if mascot has dispose animation and dispose animations are enabled, there's no guarantee that the mascot will be disposed immediately.
 Any errors reported via Notice Warning with Alert = 1.
@@ -480,8 +482,7 @@ plugin->restore_windows()
 plugin->deactivate()
 plugin->activate()
 plugin.status()
-window->*
-window.*
+
 
 # selection->cancel() - 0x3C
 
@@ -491,13 +492,162 @@ Object ID referenced in header used as selection ID.
 
 Any errors reported via Notice Warning with Alert = 1.
 
-TODO: shm_pools
-TODO: buffers
+# Share shm pool - 0x3E
+
+Shares shared memory pool, creates new Object of type shm_pool.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| FD | SCM_RIGHTS | File descriptor of shared memory pool | Requires MMAP_SHARED |
+| New Object ID | uint32 | New Object ID of shared memory pool | |
+| Size | uint32 | Size of shared memory pool | |
+
+# shm_pool->create_buffer() - 0x3F
+
+Create new buffer from shared memory pool
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| New Object ID | uint32 | New Object ID of buffer | |
+| Offset | uint32 | Offset of buffer in shared memory pool | |
+| Width | uint32 | Width of buffer | |
+| Height | uint32 | Height of buffer | |
+| Stride | uint32 | Stride of buffer | |
+| Format | uint32 | Wayland-specific format of buffer | Recommended to use `WL_SHM_FORMAT_ARGB8888` or `WL_SHM_FORMAT_XRGB8888` |
+
+# shm_pool.imported() - 0x40
+
+Marks pool as successfully imported.
+
+# shm_pool.failed() - 0x41
+
+Marks pool as failed to import.
+No additional information provided.
+Acts as destructor for Object
+
+# shm_pool->destroy() - 0x42
+
+Destroy shared memory pool.
+Object ID referenced in header used as shm_pool ID.
+
+# buffer->destroy() - 0x43
+
+Destroy buffer.
+Object ID referenced in header used as buffer ID.
 
 # click_event->accept() - 0x44
-TODO
 
-TODO: popups
+Accepts click event and immediately creates a new Popup Object.
+All other clients will receive a `click_event.expired()` event.
+If called on expired id, overlay will send `popup.dismissed()` event immediately.
+
+Object ID from header used as click_event ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| Popup ID | uint32 | ID of created popup | |
+| Width | uint32 | Height of popup | |
+| Height | uint32 | Width of popup | |
+
+# popup->child_popup() - 0x46
+
+Creates a new child popup.
+Object ID from header used as parent Popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| Popup ID | uint32 | ID of created popup | |
+| Width | uint32 | Height of popup | |
+| Height | uint32 | Width of popup | |
+| X | uint32 | X of popup | Surface local coordinates of the parent |
+| Y | uint32 | Y of popup | Surface local coordinates of the parent |
+
+# popup->attach() - 0x47
+
+Attaches buffer to the popup.
+Object ID from header used as popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| Buffer ID | uint32 | ID of buffer to attach | |
+| X Damage | uint32 | X of damage rectangle | Surface local coordinates |
+| Y Damage | uint32 | Y of damage rectangle | Surface local coordinates |
+| Width Damage | uint32 | Width of damage rectangle | Surface local coordinates |
+| Height Damage | uint32 | Height of damage rectangle | Surface local coordinates |
+
+# popup.mapped() - 0x48
+
+Sent when popup is mapped.
+
+Object ID from header used as popup ID.
+
+# popup.wheel() - 0x49
+
+Sent when mouse wheel is scrolled within popup.
+
+Object ID from header used as popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| Delta | int32 | Scroll delta | |
+
+# popup.dismissed() - 0x4A
+
+Sent when popup is dismissed.
+
+Object ID from header used as popup ID.
+
+# popup.enter() - 0x4B
+
+Sent when popup is entered.
+
+Object ID from header used as popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| X | uint32 | X location of pointer | Surface local coordinates |
+| Y | uint32 | Y location of pointer | Surface local coordinates |
+
+# popup.leave() - 0x4C
+
+Sent when popup is left.
+
+Object ID from header used as popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| X | uint32 | X location of pointer | Surface local coordinates |
+| Y | uint32 | Y location of pointer | Surface local coordinates |
+
+# popup.motion() - 0x4D
+
+Sent when popup is moved.
+
+Object ID from header used as popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| X | uint32 | X location of pointer | Surface local coordinates |
+| Y | uint32 | Y location of pointer | Surface local coordinates |
+
+# popup.clicked() - 0x4E
+
+Sent when popup is clicked.
+
+Object ID from header used as popup ID.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| X | uint32 | X location of pointer | Surface local coordinates |
+| Y | uint32 | Y location of pointer | Surface local coordinates |
+| Button | uint32 | Button that was clicked | linux input keycode |
+
+# popup->dismiss() - 0x4F
+
+Dismiss popup.
+Will dismiss all child popups as well.
+
+Object ID from header used as popup ID.
 
 # Apply behavior - 0x50
 
@@ -543,3 +693,22 @@ Get config key value.
 Sent when click event is invalidated by any cause.
 
 Object ID referenced in header used as click event ID.
+
+| 0x56 | Stop | Ask overlay to stop | Serverbound |
+| 0x57 | prototype->withdraw() | Sent when prototype is withdrawn, acts as destructor for object | Serverbound |
+
+# Stop - 0x56
+
+Ask overlay to stop.
+
+# prototype->withdraw() - 0x57
+
+Sent when prototype is withdrawn, acts as destructor for object.
+
+# popup.frame() - 0x58
+
+Same as frame callbacks in wayland, but client doesn't requests it explicitly.
+
+| Field | Type | Description | Note |
+|-------|------|-------------|-------|
+| Time | uint32 | Time in unspecified clock | |
