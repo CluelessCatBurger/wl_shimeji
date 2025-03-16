@@ -1,3 +1,4 @@
+#include <linux/limits.h>
 #define _GNU_SOURCE
 #include "io.h"
 
@@ -694,4 +695,43 @@ int32_t io_mkdtempat(int dirfd, char *template) {
         }
         // If the directory already exists, try again.
     }
+}
+
+/*
+ * int32_t io_buildtreeat(int32_t dirfd, const char *path);
+ *
+ * Creates all directories in path to file.
+ *
+*/
+
+int32_t io_buildtreeat(int32_t dirfd, const char *path) {
+    if (!path)
+        return IO_INVALID_ARGUMENTS;
+
+    char buf[PATH_MAX] = {0};
+    strncpy(buf, path, PATH_MAX - 1);
+
+    char *dir = buf;
+    char *next = strchr(dir, '/');
+    while (next) {
+        *next = '\0';
+        if (mkdirat(dirfd, dir, 0755) == -1 && errno != EEXIST) {
+            return IO_UNKNOWN_ERROR;
+        }
+        *next = '/';
+        dir = next + 1;
+        next = strchr(dir, '/');
+    }
+    return 0;
+}
+
+/*
+ * int32_t io_buildtree(const char* path);
+ *
+ * Creates all directories in path to file.
+ *
+*/
+
+int32_t io_buildtree(const char* path) {
+    return io_buildtreeat(AT_FDCWD, path);
 }

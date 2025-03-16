@@ -25,5 +25,7 @@ int32_t io_swapat(int32_t src_fd, const char* src_path, int32_t dst_fd, const ch
 int32_t io_unlink(const char* path, int32_t flags);
 int32_t io_unlinkat(int32_t fd, const char* path, int32_t flags);
 int32_t io_mkdtempat(int dirfd, char *template);
+int32_t io_buildtree(const char* path);
+int32_t io_buildtreeat(int dirfd, const char* path);
 
 #endif
