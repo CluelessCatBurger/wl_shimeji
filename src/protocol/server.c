@@ -836,6 +836,7 @@ void* protocol_import_thread(void* arg) {
 
     while (archive_read_next_header(archive, &entry) == ARCHIVE_OK) {
         if ((archive_entry_pathname(entry)[strlen(archive_entry_pathname(entry))-1]) != '/') {
+            io_buildtreeat(newfd, archive_entry_pathname(entry));
             int32_t writefd = openat(newfd, archive_entry_pathname(entry), O_RDWR | O_TRUNC | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
             archive_read_data_into_fd(archive, writefd);
             close(writefd);
@@ -1055,7 +1056,7 @@ void* protocol_export_thread(void* arg)
 
     archive_write_open_fd(writer, export->target_descriptor);
 
-    _add_directory_to_archive(writer, mascot_prototype_store_get_fd(server_state->prototypes), prototype->path);
+    _add_directory_to_archive(writer, prototype->path_fd, ".");
 
     archive_write_close(writer);
     archive_write_free(writer);
