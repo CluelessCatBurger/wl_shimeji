@@ -136,6 +136,9 @@ void protocol_init()
     common_requests[0x22] = protocol_handler_import;
     common_requests[0x27] = protocol_handler_export;
     common_requests[0x56] = protocol_handler_stop;
+    common_requests[0x51] = protocol_handler_get_config_key;
+    common_requests[0x52] = protocol_handler_set_config_key;
+    common_requests[0x53] = protocol_handler_list_config_keys;
 }
 
 struct protocol_client* protocol_accept_connection(ipc_connector_t *connector)

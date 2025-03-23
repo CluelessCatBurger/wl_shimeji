@@ -111,72 +111,6 @@ bool parse_bool(const char* str)
     return true;
 }
 
-config_param_setter config_setter_table_[CONFIG_PARAM_COUNT] =
-{
-    config_set_breeding,
-    config_set_dragging,
-    config_set_ie_interactions,
-    config_set_ie_throwing,
-    config_set_cursor_data,
-    config_set_mascot_limit,
-    config_set_ie_throw_policy,
-    config_set_allow_dismiss_animations,
-    config_set_per_mascot_interactions,
-    config_set_interpolation_framerate,
-    config_set_overlay_layer,
-    config_set_tablets_enabled,
-    config_set_pointer_left_button,
-    config_set_pointer_right_button,
-    config_set_pointer_middle_button,
-    config_set_on_tool_pen,
-    config_set_on_tool_eraser,
-    config_set_on_tool_brush,
-    config_set_on_tool_pencil,
-    config_set_on_tool_airbrush,
-    config_set_on_tool_finger,
-    config_set_on_tool_lens,
-    config_set_on_tool_mouse,
-    config_set_on_tool_button1,
-    config_set_on_tool_button2,
-    config_set_on_tool_button3,
-    config_set_allow_throwing_multihead,
-    config_set_allow_dragging_multihead,
-    config_set_unified_outputs
-};
-
-config_param_getter config_getter_table_[CONFIG_PARAM_COUNT] =
-{
-    config_get_breeding,
-    config_get_dragging,
-    config_get_ie_interactions,
-    config_get_ie_throwing,
-    config_get_cursor_data,
-    config_get_mascot_limit,
-    config_get_ie_throw_policy,
-    config_get_allow_dismiss_animations,
-    config_get_per_mascot_interactions,
-    config_get_interpolation_framerate,
-    config_get_overlay_layer,
-    config_get_tablets_enabled,
-    config_get_pointer_left_button,
-    config_get_pointer_right_button,
-    config_get_pointer_middle_button,
-    config_get_on_tool_pen,
-    config_get_on_tool_eraser,
-    config_get_on_tool_brush,
-    config_get_on_tool_pencil,
-    config_get_on_tool_airbrush,
-    config_get_on_tool_finger,
-    config_get_on_tool_lens,
-    config_get_on_tool_mouse,
-    config_get_on_tool_button1,
-    config_get_on_tool_button2,
-    config_get_on_tool_button3,
-    config_get_allow_throwing_multihead,
-    config_get_allow_dragging_multihead,
-    config_get_unified_outputs
-};
-
 bool config_parse(const char* path)
 {
 
@@ -751,16 +685,6 @@ int32_t config_get_unified_outputs()
     return config.unified_outputs;
 }
 
-bool config_setter_table(uint32_t key_id, int32_t value)
-{
-    return config_setter_table_[key_id](value);
-}
-
-int32_t config_getter_table(uint32_t key_id)
-{
-    return config_getter_table_[key_id]();
-}
-
 const char* config_get_prototypes_location()
 {
     return config.prototypes_location;
@@ -774,4 +698,212 @@ const char* config_get_plugins_location()
 const char* config_get_socket_location()
 {
     return config.socket_location;
+}
+
+bool config_get_by_key(const char* key, char* dest, uint8_t size)
+{
+    if (!strcmp(key, CONFIG_PARAM_BREEDING)) {
+        snprintf(dest, size, "%s", config.breeding ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_DRAGGING)) {
+        snprintf(dest, size, "%s", config.dragging ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_IE_INTERACTIONS)) {
+        snprintf(dest, size, "%s", config.ie_interactions ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_IE_THROWING)) {
+        snprintf(dest, size, "%s", config.ie_throwing ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_IE_THROW_POLICY)) {
+        if (config.ie_throw_policy == -1) {
+            snprintf(dest, size, "looping");
+            return true;
+        } else if (config.ie_throw_policy == 0) {
+            snprintf(dest, size, "none");
+            return true;
+        } else if (config.ie_throw_policy == 1) {
+            snprintf(dest, size, "stop_at_borders");
+            return true;
+        } else if (config.ie_throw_policy == 2) {
+            snprintf(dest, size, "bounce_at_borders");
+            return true;
+        } else if (config.ie_throw_policy == 3) {
+            snprintf(dest, size, "looping");
+            return true;
+        } else if (config.ie_throw_policy == 4) {
+            snprintf(dest, size, "close");
+            return true;
+        } else if (config.ie_throw_policy == 5) {
+            snprintf(dest, size, "minimize");
+            return true;
+        } else if (config.ie_throw_policy == 6) {
+            snprintf(dest, size, "keep_offscreen");
+            return true;
+        } else {
+            snprintf(dest, size, "unknown");
+            return true;
+        }
+    } else if (!strcmp(key, CONFIG_PARAM_CURSOR_DATA)) {
+        snprintf(dest, size, "%s", config.cursor_data ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_MASCOT_LIMIT)) {
+        snprintf(dest, size, "%d", config.mascot_limit);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ALLOW_THROWING_MULTIHEAD)) {
+        snprintf(dest, size, "%s", config.allow_throwing_multihead ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ALLOW_DRAGGING_MULTIHEAD)) {
+        snprintf(dest, size, "%s", config.allow_dragging_multihead ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_UNIFIED_OUTPUTS)) {
+        snprintf(dest, size, "%s", config.unified_outputs ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS)) {
+        snprintf(dest, size, "%s", config.dismiss_animations ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_PER_MASCOT_INTERACTIONS)) {
+        snprintf(dest, size, "%s", config.affordances ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_INTERPOLATION_FRAMERATE)) {
+        snprintf(dest, size, "%d", config.framerate);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_OVERLAY_LAYER)) {
+        if (config.overlay_layer == -1) {
+            snprintf(dest, size, "overlay");
+        } else if (config.overlay_layer == 0) {
+            snprintf(dest, size, "background");
+        } else if (config.overlay_layer == 1) {
+            snprintf(dest, size, "bottom");
+        } else if (config.overlay_layer == 2) {
+            snprintf(dest, size, "top");
+        } else if (config.overlay_layer == 3) {
+            snprintf(dest, size, "overlay");
+        } else {
+            snprintf(dest, size, "unknown");
+        }
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_TABLETS_ENABLED)) {
+        snprintf(dest, size, "%s", config.enable_tablets ? "true" : "false");
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_POINTER_LEFT_BUTTON)) {
+        snprintf(dest, size, "%d", config.pointer_left_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_POINTER_RIGHT_BUTTON)) {
+        snprintf(dest, size, "%d", config.pointer_right_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_POINTER_MIDDLE_BUTTON)) {
+        snprintf(dest, size, "%d", config.pointer_middle_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_PEN)) {
+        snprintf(dest, size, "%d", config.on_tool_pen_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_ERASER)) {
+        snprintf(dest, size, "%d", config.on_tool_eraser_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BRUSH)) {
+        snprintf(dest, size, "%d", config.on_tool_brush_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_PENCIL)) {
+        snprintf(dest, size, "%d", config.on_tool_pencil_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_AIRBRUSH)) {
+        snprintf(dest, size, "%d", config.on_tool_airbrush_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_FINGER)) {
+        snprintf(dest, size, "%d", config.on_tool_finger_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_LENS)) {
+        snprintf(dest, size, "%d", config.on_tool_lens_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_MOUSE)) {
+        snprintf(dest, size, "%d", config.on_tool_mouse_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON1)) {
+        snprintf(dest, size, "%d", config.on_tool_button1_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON2)) {
+        snprintf(dest, size, "%d", config.on_tool_button2_value);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON3)) {
+        snprintf(dest, size, "%d", config.on_tool_button3_value);
+        return true;
+    }
+    return false;
+}
+
+bool config_set_by_key(const char* key, const char* value)
+{
+    if (!strcmp(key, CONFIG_PARAM_BREEDING)) {
+        return config_set_breeding(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_DRAGGING)) {
+        return config_set_dragging(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_IE_INTERACTIONS)) {
+        return config_set_ie_interactions(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_IE_THROWING)) {
+        return config_set_ie_throwing(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_IE_THROW_POLICY)) {
+        int policy = 3; // Default to looping
+        if (!strcasecmp(value, "none")) policy = 0;
+        else if (!strcasecmp(value, "stop_at_borders")) policy = 1;
+        else if (!strcasecmp(value, "bounce_at_borders")) policy = 2;
+        else if (!strcasecmp(value, "looping")) policy = 3;
+        else if (!strcasecmp(value, "close")) policy = 4;
+        else if (!strcasecmp(value, "minimize")) policy = 5;
+        else if (!strcasecmp(value, "keep_offscreen")) policy = 6;
+        return config_set_ie_throw_policy(policy);
+    } else if (!strcmp(key, CONFIG_PARAM_CURSOR_DATA)) {
+        return config_set_cursor_data(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_MASCOT_LIMIT)) {
+        return config_set_mascot_limit(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ALLOW_THROWING_MULTIHEAD)) {
+        return config_set_allow_throwing_multihead(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ALLOW_DRAGGING_MULTIHEAD)) {
+        return config_set_allow_dragging_multihead(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_UNIFIED_OUTPUTS)) {
+        return config_set_unified_outputs(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS)) {
+        return config_set_allow_dismiss_animations(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_PER_MASCOT_INTERACTIONS)) {
+        return config_set_per_mascot_interactions(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_INTERPOLATION_FRAMERATE)) {
+        return config_set_interpolation_framerate(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_OVERLAY_LAYER)) {
+        int layer = 3; // Default to overlay
+        if (!strcasecmp(value, "background")) layer = 0;
+        else if (!strcasecmp(value, "bottom")) layer = 1;
+        else if (!strcasecmp(value, "top")) layer = 2;
+        else if (!strcasecmp(value, "overlay")) layer = 3;
+        return config_set_overlay_layer(layer);
+    } else if (!strcmp(key, CONFIG_PARAM_TABLETS_ENABLED)) {
+        return config_set_tablets_enabled(parse_bool(value));
+    } else if (!strcmp(key, CONFIG_PARAM_POINTER_LEFT_BUTTON)) {
+        return config_set_pointer_left_button(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_POINTER_RIGHT_BUTTON)) {
+        return config_set_pointer_right_button(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_POINTER_MIDDLE_BUTTON)) {
+        return config_set_pointer_middle_button(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_PEN)) {
+        return config_set_on_tool_pen(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_ERASER)) {
+        return config_set_on_tool_eraser(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BRUSH)) {
+        return config_set_on_tool_brush(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_PENCIL)) {
+        return config_set_on_tool_pencil(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_AIRBRUSH)) {
+        return config_set_on_tool_airbrush(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_FINGER)) {
+        return config_set_on_tool_finger(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_LENS)) {
+        return config_set_on_tool_lens(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_MOUSE)) {
+        return config_set_on_tool_mouse(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON1)) {
+        return config_set_on_tool_button1(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON2)) {
+        return config_set_on_tool_button2(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON3)) {
+        return config_set_on_tool_button3(atoi(value));
+    }
+    return false;
 }

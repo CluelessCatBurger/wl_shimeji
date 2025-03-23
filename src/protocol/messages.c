@@ -7,6 +7,7 @@
 #include "protocol/connector.h"
 #include "protocol/server.h"
 #include <master_header.h>
+#include "config.h"
 #include <string.h>
 #include <sys/mman.h>
 
@@ -679,7 +680,7 @@ bool protocol_handler_reload_prototype(struct protocol_client* client, ipc_packe
         ipc_packet_t* warning = NULL;
         switch (result) {
             case PROTOTYPE_LOAD_NOT_FOUND:
-                warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "prototypes.error.not_found", (const char**)&prototype_path, 1, true);
+                warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "prototypes.error.not_found", (const char* []){(const char*)prototype_path}, 1, true);
                 break;
             case PROTOTYPE_LOAD_NOT_DIRECTORY:
                 warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "prototypes.error.not_directory", NULL, 0, true);
@@ -812,14 +813,14 @@ bool protocol_handler_apply_behavior(struct protocol_client* client, ipc_packet_
     if (mascot) {
         const struct mascot_behavior* behavior = mascot_prototype_behavior_by_name(mascot->prototype, behavior_name);
         if (!behavior) {
-            ipc_packet_t* warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "prototype.error.no_behavior", (const char**)&behavior_name, 1, true);
+            ipc_packet_t* warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "prototype.error.no_behavior", (const char* []){(const char*)behavior_name}, 1, true);
             ipc_connector_send(client->connector, warning);
             return true;
         }
 
         mascot_set_behavior(mascot, behavior);
     } else {
-        ipc_packet_t* warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "apply_behavior.error.no_mascot", (const char**)&mascot_id, 1, true);
+        ipc_packet_t* warning = protocol_builder_notice(NOTICE_SEVERITY_WARNING, "apply_behavior.error.no_mascot", NULL, 0, true);
         ipc_connector_send(client->connector, warning);
     }
 
@@ -1078,9 +1079,66 @@ bool protocol_handler_popup_dismiss(struct protocol_client* client, ipc_packet_t
     return true;
 }
 
-bool protocol_handler_set_config_key(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_get_config_key(struct protocol_client* client, ipc_packet_t* packet);
-bool protocol_handler_list_config_keys(struct protocol_client* client, ipc_packet_t* packet);
+bool protocol_handler_set_config_key(struct protocol_client* client, ipc_packet_t* packet)
+{
+    char key[256] = {0};
+    char value[256] = {0};
+    uint8_t key_len = 255;
+    uint8_t value_len = 255;
+
+    ENSURE_MARSHALLER(ipc_packet_read_string(packet, key, &key_len));
+    ENSURE_MARSHALLER(ipc_packet_read_string(packet, value, &value_len));
+
+    bool res = config_set_by_key(key, value);
+    if (!res) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "config.warning.set", (const char* []){(const char*)key}, 1, true);
+        ipc_connector_send(client->connector, error);
+    } else {
+        ipc_packet_t* config_key = protocol_builder_config_key(key, value);
+        ipc_connector_send(client->connector, config_key);
+    }
+    return true;
+}
+
+bool protocol_handler_get_config_key(struct protocol_client* client, ipc_packet_t* packet)
+{
+    char key[256] = {0};
+    uint8_t key_len = 255;
+
+    ENSURE_MARSHALLER(ipc_packet_read_string(packet, key, &key_len));
+    char value[256] = {0};
+    bool res = config_get_by_key(key, value, 255);
+    if (!res) {
+        ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "config.warning.get", (const char* []){(const char*)key}, 1, true);
+        ipc_connector_send(client->connector, error);
+    } else {
+        ipc_packet_t* config_key = protocol_builder_config_key(key, value);
+        ipc_connector_send(client->connector, config_key);
+    }
+    return true;
+}
+
+bool protocol_handler_list_config_keys(struct protocol_client* client, ipc_packet_t* packet) {
+    UNUSED(packet);
+    for (uint32_t i = 0; i < sizeof(config_keys) / sizeof(config_keys[0]); i++) {
+        if (config_keys[i] != NULL) {
+            char value[256] = {0};
+            bool res = config_get_by_key(config_keys[i], value, 255);
+            if (!res) {
+                ipc_packet_t* error = protocol_builder_notice(NOTICE_SEVERITY_ERROR, "config.warning.get", (const char* []){(const char*)config_keys[i]}, 1, true);
+                ipc_connector_send(client->connector, error);
+            } else {
+                ipc_packet_t* config_key = protocol_builder_config_key(config_keys[i], value);
+                ipc_connector_send(client->connector, config_key);
+            }
+        } else {
+            ipc_packet_t* config_key = protocol_builder_config_key(NULL, NULL);
+            ipc_connector_send(client->connector, config_key);
+            return true;
+        }
+    }
+    return false;
+}
 
 bool protocol_handler_import(struct protocol_client* client, ipc_packet_t* packet)
 {

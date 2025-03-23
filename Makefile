@@ -87,7 +87,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 # Rule to build shimejictl
-$(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/shimejictl.py
+$(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/client.py
 	mkdir utils
 	$(PYTHON3) scripts/py-compose.py -s $< -o $@
 
