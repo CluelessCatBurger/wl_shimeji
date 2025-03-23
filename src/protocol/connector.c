@@ -1,5 +1,4 @@
 #include "connector.h"
-#include <utils.h>
 #include <malloc.h>
 #include <errno.h>
 #include <sys/socket.h>
