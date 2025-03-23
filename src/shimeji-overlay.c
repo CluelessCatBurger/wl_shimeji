@@ -772,7 +772,7 @@ int main(int argc, const char** argv)
 
     // Main loop
     while (true) {
-        if ((!mascot_total_count && !fds_count ) || server_state.stop) {
+        if (server_state.stop) {
             break;
         }
 
@@ -852,6 +852,10 @@ int main(int argc, const char** argv)
                     break;
                 }
             }
+        }
+
+        if (!fds_count && !mascot_total_count) {
+            break;
         }
 
     }
