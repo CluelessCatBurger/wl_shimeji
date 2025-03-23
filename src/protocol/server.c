@@ -126,7 +126,7 @@ void protocol_init()
 
     common_requests[0x00] = protocol_handler_client_hello;
     mascot_requests[0x16] = protocol_handler_mascot_get_info;
-    common_requests[0x1E] = protocol_handler_select ;
+    common_requests[0x1E] = protocol_handler_select;
     common_requests[0x21] = protocol_handler_reload_prototype;
     common_requests[0x2A] = protocol_handler_spawn;
     mascot_requests[0x2B] = protocol_handler_dispose;

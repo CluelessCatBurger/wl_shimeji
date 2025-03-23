@@ -278,38 +278,34 @@ ipc_packet_t* protocol_builder_mascot_info(struct mascot* mascot)
     ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, mascot->state));
     if (mascot->current_action.action) {
         ENSURE_MARSHALLER(ipc_packet_write_string(packet, mascot->current_action.action->name));
+    } else {
+        ENSURE_MARSHALLER(ipc_packet_write_string(packet, ""));
     }
-    ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, mascot->action_index));
+    ENSURE_MARSHALLER(ipc_packet_write_uint16(packet, mascot->action_index));
+
     if (mascot->current_behavior) {
         ENSURE_MARSHALLER(ipc_packet_write_string(packet, mascot->current_behavior->name));
     }
     else {
         ENSURE_MARSHALLER(ipc_packet_write_string(packet, ""));
     }
+
     ENSURE_MARSHALLER(ipc_packet_write_string(packet, mascot->current_affordance));
 
-    ENSURE_MARSHALLER(ipc_packet_write_uint16(packet, mascot->as_p));
+    ENSURE_MARSHALLER(ipc_packet_write_uint8(packet, mascot->as_p));
     for (int i = 0; i < mascot->as_p; i++) {
         ENSURE_MARSHALLER(ipc_packet_write_string(packet, mascot->action_stack[i].action->name));
         ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, mascot->action_index_stack[i]));
     }
 
-    if (mascot->current_action.action) {
-        ENSURE_MARSHALLER(ipc_packet_write_string(packet, mascot->current_action.action->name));
-        ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, mascot->action_index));
-    } else {
-        ENSURE_MARSHALLER(ipc_packet_write_string(packet, ""));
-        ENSURE_MARSHALLER(ipc_packet_write_uint32(packet, 0));
-    }
-
-    ENSURE_MARSHALLER(ipc_packet_write_uint16(packet, mascot->behavior_pool_len));
+    ENSURE_MARSHALLER(ipc_packet_write_uint8(packet, mascot->behavior_pool_len));
     for (int i = 0; i < mascot->behavior_pool_len; i++) {
         ENSURE_MARSHALLER(ipc_packet_write_string(packet, mascot->behavior_pool[i].behavior->name));
         ENSURE_MARSHALLER(ipc_packet_write_uint64(packet, mascot->behavior_pool[i].frequency));
     }
 
-    ENSURE_MARSHALLER(ipc_packet_write_uint8(packet, 128));
-    for (int i = 0; i < 128; i++) {
+    ENSURE_MARSHALLER(ipc_packet_write_uint8(packet, MASCOT_LOCAL_VARIABLE_COUNT));
+    for (int i = 0; i < MASCOT_LOCAL_VARIABLE_COUNT+1; i++) {
         ENSURE_MARSHALLER(ipc_packet_write_uint8(packet, mascot->local_variables[i].kind));
         ENSURE_MARSHALLER(ipc_packet_copy_to(packet, &mascot->local_variables[i].value, 4));
         ENSURE_MARSHALLER(ipc_packet_write_uint8(packet, mascot->local_variables[i].used));
