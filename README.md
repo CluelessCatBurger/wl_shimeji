@@ -40,60 +40,82 @@ make install
 
 # How to use
 
-## Converting to shimeji-ee format
+## Converting to wl_shimeji format
+
 First, you need to find some Shimeji-ee mascots. They are usually distributed as zip archives. You can find them on the internet.
-When you got shimejis of your choice, you need to convert them to the wl_shimeji format. Simplest way to do it is to use `shimejictl import` command.
+When you got shimejis of your choice, you need to convert them to the wl_shimeji format.
 
 ```sh
-shimejictl import /path/to/shimeji-ee.zip
+shimejictl convert /path/to/shimeji-ee.zip -O /some/output/directory
 ```
 
-It will convert all shimejis from img/ directory of the Shimeji-ee instance to the wl_shimeji format and save them to .local/share/wl_shimeji/shimejis/ directory.
+It will try to read the zip archive and will ask you to select which mascots you want to convert:
+```bash
+$ shimejictl convert "The Neuroling Collection v0.7.zip" -O output/
+Prototypes available for conversion:
+1. Weuron
+2. Vedaling
+3. Tuteling Cursor
+4. Tuteling
+5. Neuron
+6. Neuroling
+7. Eviling
+8. Evil Neuroling
+9. Broken Neuron
 
-## Summoning mascots
-After you converted your mascots, you can summon them to the screen, but first you need to know the name of the mascot you want to summon.
+Enter prototypes index or name to convert (can be comma-separated or A to convert all)
+>
+```
 
+When you selected mascot types that you need, shimejictl will convert them to the wl_shimeji format and will save them to the output directory with names like
+`Shimeji.{mascot_name}.wlshm`
+
+# Importing .wlshm prototypes
+
+After you successfully converted your mascots, you can import them to the wl_shimeji format using the following command:
 ```sh
-shimejictl list
-```
-It will print the list of all available mascots.
-
-Then you can summon mascots by three ways:
-1. By name, on random screen:
-```sh
-shimejictl summon mascot_name
-```
-2. By name, on specific screen and position:
-```sh
-shimejictl summon mascot_name --select
-```
-3. You can summon all known mascots at once (Note: it will only work if overlay is not running):
-```sh
-shimejictl summon all
+shimejictl prototypes import /path/to/Shimeji.{first_name}.wlshm /path/to/Shimeji.{second_name}.wlshm ...
 ```
 
-All summon commands will start the overlay if it's not running.
+If prototype already exists, shimejictl will skip it unless -f is used.
+
+# Listing available prototypes
+
+You can list all available mascot prototypes using the following command:
+```sh
+shimejictl prototypes list
+```
+
+# Summoning mascots
+
+To summon mascot, you need to know mascot's name, which you can get by using `shimejictl prototypes list` command. When you found mascot of your choice, you can summon using `shimejictl mascot summon {name}` command, where `{name}` is the name of the mascot you want to summon.
+
+For example, if you want to summon a mascot named Neuron, you can use the following command:
+```sh
+shimejictl mascot summon Neuron
+```
+
+If you want to summon mascot at specific location, you can use --select flag or pass your coordinates as -x -y or -position x,y
 
 ## Dismissing mascots
-You can dismiss mascots by using `shimejictl dismiss` command.
+
+To dismiss mascot, you can use `shimejictl mascot dismiss` command.
+shimejictl will ask you to click on target mascot.
+Also we have flags that can be used to dismiss multiple mascots at once.
+Use shimejictl mascot dismiss --help to see all available flags.
+
+## Setting mascots behaviors
+
+You can replace mascot's behavior by using `shimejictl mascot set-behavior {behavior}` command, where `{behavior}` is the name of the behavior you want to set. shimejictl will ask you to click on target mascot.
+
+You can get all available behaviors by using `shimejictl prototypes info {prototype_name}` command, where `{prototype_name}` is the name of the mascot prototype you want to get information about.
+
+# Exporting prototypes
+
+You can export mascot prototype by using `shimejictl prototypes export` command. It will produce .wlshm file that you can then share with others.
 
 ```sh
-shimejictl dismiss
-```
-It will ask you to select the mascot you want to dismiss.
-Command also takes three flags:
-- `--all` - dismiss all mascots at once (mutually exclusive with `--all-other`)
-- `--all-other` - dismiss all mascots except the selected one (mutually exclusive with `--all`)
-- `--same` - tells overlay to target mascots of the same type as the selected one
-
-So for example following command will dismiss all mascots:
-```sh
-shimejictl dismiss --all
-```
-
-And this command will dismiss all mascots of the same type as the selected one:
-```sh
-shimejictl dismiss --all-other --same
+shimejictl prototypes export -i {prototype_name} -o {output_file}
 ```
 
 ## Stopping application
@@ -115,50 +137,34 @@ Or values of all options by using `list` action:
 shimejictl config list
 ```
 
-Config file is usually located at .config/wl_shimeji/shimeji.conf
+Config file is usually located at .config/wl_shimeji/shimeji-overlayd.conf
 
 # Advanced usage
 
-## Using custom config path
-`shimejictl` takes `--config-path` argument to specify custom path to the configuration directory.
+## Multihead usage
 
-## Converting mascots on individual basis
-You can convert mascots to the wl_shimeji format on individual basis by using `shimejictl convert` command.
+wl_shimeji supports multiple screens. However, some features may be disabled by default. Config provides following options:
+ - ALLOW_THROWING_MULTIHEAD: Allows throwing mascot between screens
+ - ALLOW_DRAGGING_MULTIHEAD: Allows dragging mascot between screens
+ - UNIFIED_OUTPUTS: Treats all outputs as one entity
 
-```sh
-shimejictl convert .../Shimeji-EE/img/mascot_name
-```
-Following command will convert mascot with the name `mascot_name` from the Shimeji-ee instance to the wl_shimeji format and save it to .local/share/wl_shimeji/shimejis/ directory.
-IMPORTANT: `convert` command doesn't have full instance context, so conf/ subdirectory with actions.xml and behaviors.xml inside the mascot directory *IS REQUIRED*.
+You may want block one of displays from being used by wl_shimeji in runtime, so we have `shimejictl environment close` to disable one of outputs. shimejictl will ask you to select one of outputs by clicking on it. After this operation, you can't restore display unless you restart wl_shimeji or reconnect display to the system.
 
-## Getting mascot information
-Useful for debugging, `shimejictl info` command prints information about the selected mascot.
+## Interpolation
 
-```sh
-shimejictl info
-```
+wl_shimeji supports movement interpolation of mascots. You can enable it by setting INTERPOLATION_FRAMERATE to value that is not equal to 0. Values > 0 used as interpolation frame rate. -1 Picks output's refresh rate as interpolation frame rate. Values under -1 are not allowed.
 
-## Launching overlay in the foreground
-`shimejictl foreground` command launches overlay in the foreground.
+## Tablets
 
-```sh
-shimejictl foreground
-```
+wl_shimeji recognized pentablets as input method, so you can use it as input device. However, currently subsurfaces bugged under KDE when using them with wp-tablet-v2, so you may want to disable that feature by setting TABLETS_ENABLED to false.
 
-## Exporting configurations
-To export already converted mascots to a configuration pack, use the export subcommand. This will create a zip archive containing all mascots and their configurations, named export.wlshm in the current directory.
+## Mapping mouse buttons
 
-```sh
-shimejictl export
-```
+You can map mouse button and tablet events (stylus down, stylus up) to different actions. For example you can remap right button to 0x01, so it will act as left button and etc.
 
-You can also specify a custom output path by passing it as an argument:
+## Using systemd socket
 
-```sh
-shimejictl export /path/to/output/file.wlshm
-```
-
-You can import this configuration pack later by using `import` subcommand.
+wl_shimeji can be activated on-demand through systemd socket. To enable it, use 'systemctl --use enable wl_shimeji.socket'.
 
 ## Running overlay manually
 You can start overlay manually by running `shimeji-overlayd`. It's not recommended and *useless* in case you don't pass -se flag to it or
@@ -166,10 +172,12 @@ if you don't pass unix fd using -cfd flag, unless you implementing another front
 overlay will close immediately after start.
 
 Arguments:
-- `-s`  - path to the overlay socket file.
-- `-c`  - path to the configuration directory.
+- `-s`, `--socket-path`  - path to the overlay socket file.
+- `-cd`, `--configuration-root`  - path to the configuration root of the wl_shimeji (/home/kotb/.local/share/wl_shimeji by default)
 - `-cfd`, `--caller-fd` - paired unix socket fd used for communication. If closed and no other clients connected nor no mascots exists, overlay will close.
-- `-p`  - path to the plugins directory.
+- `-c`   - config file path.
+- `-pl`  - path to the plugins directory.
+- `-pr`  - path to the prototypes directory.
 - `-se` - summon everyone. If specified, overlay will summon all known mascots upon start.
 - `-v`, `--version`  - version of the overlay.
 - `--no-tablets` - disable wp_tablet_v2 wayland protocol support. (broken on kwin right now anyway)

@@ -1,3 +1,8 @@
+# Types
+
+string - byte-prefixed char string, uint8 n + n * char
+variable - uint8 KIND, float or uint32 value, bool used, bool evaluated once, uint16 script_id
+
 # Header
 
 | Field | Type | Description |

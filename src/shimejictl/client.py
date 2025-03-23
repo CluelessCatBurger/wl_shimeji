@@ -697,12 +697,11 @@ def prototypes_handler(arguments: argparse.Namespace, client: Client, parser):
                 if not os.path.exists(input_file):
                     logger.error(f"File '{input_file}' does not exist")
                     exit(1)
-                for input_file in arguments.input:
-                    with open(input_file, "rb") as f:
-                        if f.read(4) != b'WLPK':
-                            logger.warning(f"File '{input_file}' is not a valid wl_shimeji prototype, please first convert it to a wl_shimeji prototype using shimeji-convert command")
-                            continue
-                        Import(f.fileno(), arguments.force, client.socket)
+                with open(input_file, "rb") as f:
+                    if f.read(4) != b'WLPK':
+                        logger.warning(f"File '{input_file}' is not a valid wl_shimeji prototype, please first convert it to a wl_shimeji prototype using shimeji-convert command")
+                        continue
+                    Import(f.fileno(), arguments.force, client.socket)
 
 
             client.dispatch_events(until=lambda: len(imports) == 0)
@@ -1192,7 +1191,7 @@ if __name__ == "__main__":
     prototype_exporter.add_argument("-f", "--force", action="store_true", help="Overwrite existing files")
 
     prototype_importer = prototype_subparsers.add_parser("import", help="Import a prototype")
-    prototype_importer.add_argument("-i", "--input", action="append", help="Path(s) of the prototype to import. Can be either in wlshm format or in Shimeji-ee format. Can be specified multiple times.")
+    prototype_importer.add_argument("input", nargs="*", help="Path(s) of the prototype to import. Can be either in wlshm format or in Shimeji-ee format. Can be specified multiple times.")
     prototype_importer.add_argument("-f", "--force", action="store_true", help="Overwrite existing prototypes")
 
 # Convert category
