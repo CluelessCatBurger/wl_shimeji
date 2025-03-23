@@ -1,0 +1,6 @@
+[Socket]
+ListenUnix=/run/user/%i/shimeji-overlayd.sock
+Accept=no
+
+[Install]
+WantedBy=sockets.target

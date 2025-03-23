@@ -111,6 +111,9 @@ install: $(UTILS_DIR)/shimejictl
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
+	install -d $(DESTDIR)$(PREFIX)/usr/share/systemd/user/
+	install -m644 systemd/wl_shimeji.socket $(DESTDIR)$(PREFIX)/usr/share/systemd/user/
+	install -m644 systemd/wl_shimeji.service $(DESTDIR)$(PREFIX)/usr/share/systemd/user/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)

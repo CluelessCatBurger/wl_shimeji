@@ -371,6 +371,7 @@ void stop_callback()
 int main(int argc, const char** argv)
 {
     int inhereted_fd = -1;
+    int listen_fd = -1;
     int fds_count = 0;
     bool spawn_everything = false;
     int env_init_flags = 0;
@@ -573,17 +574,29 @@ int main(int argc, const char** argv)
 
     srand48(time(NULL));
 
-    // Create socket
-    int listenfd = create_socket(socket_path);
-    if (listenfd == MASCOT_OVERLAYD_INSTANCE_EXISTS) {
-        INFO("Another instance of mascot-overlayd is already running");
-        return 0;
-    } else if (listenfd == MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR) {
-        ERROR("Failed to create socket");
-    } else if (listenfd == MASCOT_OVERLAYD_INSTANCE_BIND_ERROR) {
-        ERROR("Failed to bind socket");
-    } else if (listenfd == MASCOT_OVERLAYD_INSTANCE_LISTEN_ERROR) {
-        ERROR("Failed to listen on socket");
+    bool own_socket = false;
+    if (getenv("LISTEN_FDS")) {
+        int listen_fds = atoi(getenv("LISTEN_FDS"));
+        if (listen_fds > 1) {
+            ERROR("wl_shimeji doesn't support multiple listen sockets");
+        }
+        listen_fd = 3;
+    }
+
+    if (listen_fd == -1) {
+        // Create socket
+        listen_fd = create_socket(socket_path);
+        if (listen_fd == MASCOT_OVERLAYD_INSTANCE_EXISTS) {
+            INFO("Another instance of mascot-overlayd is already running");
+            return 0;
+        } else if (listen_fd == MASCOT_OVERLAYD_INSTANCE_CREATE_ERROR) {
+            ERROR("Failed to create socket");
+        } else if (listen_fd == MASCOT_OVERLAYD_INSTANCE_BIND_ERROR) {
+            ERROR("Failed to bind socket");
+        } else if (listen_fd == MASCOT_OVERLAYD_INSTANCE_LISTEN_ERROR) {
+            ERROR("Failed to listen on socket");
+        }
+        own_socket = true;
     }
 
     // Initialize affordance manager
@@ -718,10 +731,10 @@ int main(int argc, const char** argv)
 
     // Add listenfd to epoll
     struct epoll_event ev;
-    struct socket_description listen_sd = { .fd = listenfd, .type = SOCKET_TYPE_LISTEN };
+    struct socket_description listen_sd = { .fd = listen_fd, .type = SOCKET_TYPE_LISTEN };
     ev.events = EPOLLIN;
     ev.data.ptr = &listen_sd;
-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &ev) == -1) {
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev) == -1) {
         char buf[256];
         snprintf(buf, 255, "Failed to add IPC socket to epoll: %s", strerrordesc_np(errno));
         server_state.initialization_errors[server_state.initialization_errors_count++] = strdup(buf);
@@ -777,7 +790,7 @@ int main(int argc, const char** argv)
                 // Accept new connection
                 struct sockaddr_un client_addr;
                 socklen_t client_addr_len = sizeof(client_addr);
-                int clientfd = accept(listenfd, (struct sockaddr*)&client_addr, &client_addr_len);
+                int clientfd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_addr_len);
                 if (clientfd == -1) {
                     WARN("Cannot accept new connection from client: %s", strerror(errno));
                     continue;
@@ -842,9 +855,9 @@ int main(int argc, const char** argv)
         }
 
     }
-    close(listenfd);
+    close(listen_fd);
     close(inhereted_fd);
     close(epfd);
-    unlink(socket_path);
+    if (own_socket) unlink(socket_path);
     return 0;
 }
