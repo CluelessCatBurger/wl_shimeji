@@ -22,7 +22,7 @@ jobs:
           submodules: "recursive"
       - name: Install libwayland-dev
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install libwayland-dev libwayland-bin
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install libwayland-dev libwayland-bin libarchive-dev
       - name: Clone wayland-protocols from gitlab
         run: |
           git clone https://gitlab.freedesktop.org/wayland/wayland-protocols --branch 1.40

@@ -17,6 +17,8 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
   - Arch: `pacman -S wayland`
 - wayland-protocols:
   - Arch: `pacman -S wayland-protocols`
+- libarchive:
+  - Arch: `pacman -S libarchive`
 
 ## Runtime requirements
 Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, and provide wl_subcompositor interface.
