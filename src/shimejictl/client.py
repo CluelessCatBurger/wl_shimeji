@@ -483,7 +483,7 @@ def converter_handler(arguments: argparse.Namespace, client: Client, parser):
 
         for path, dirs, files in os.walk(os.path.join(instance_root, "img", prototype)):
             if path != os.path.join(instance_root, "img", prototype):
-                tarinfo = tarfile.TarInfo(path.removeprefix(os.path.join(instance_root, "img", prototype)))
+                tarinfo = tarfile.TarInfo("assets/" + path.removeprefix(os.path.join(instance_root, "img", prototype)))
                 tarinfo.type = tarfile.DIRTYPE
                 tar.addfile(tarinfo)
 
@@ -494,7 +494,7 @@ def converter_handler(arguments: argparse.Namespace, client: Client, parser):
                     tempf.close()
                     encode_img(img, False, tempf.name)
                     tempf = open(tempf.name, "rb")
-                    tarinfo = tarfile.TarInfo(os.path.join("assets", path.removeprefix(os.path.join(instance_root, "img", prototype)), file.removesuffix(".png")\
+                    tarinfo = tarfile.TarInfo("assets/" + os.path.join(path.removeprefix(os.path.join(instance_root, "img", prototype)), file.removesuffix(".png")\
                     .removesuffix(".jpg")\
                     .removesuffix(".jpeg")\
                     .removesuffix(".gif")\
