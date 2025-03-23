@@ -1129,3 +1129,14 @@ bool protocol_handler_export(struct protocol_client* client, ipc_packet_t* packe
     }
     return true;
 }
+
+bool protocol_handler_stop(struct protocol_client* client, ipc_packet_t* packet)
+{
+    UNUSED(client);
+    UNUSED(packet);
+    struct protocol_server_state* state = protocol_get_server_state();
+
+    state->stop = true;
+
+    return true;
+}

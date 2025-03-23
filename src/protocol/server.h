@@ -55,12 +55,6 @@ struct protocol_server_state {
     struct list* imports;
     struct list* exports;
 
-    struct list* shm_pools;
-    struct list* buffers;
-    struct list* popups;
-
-    struct list* windows;
-
     protocol_click_event_t* last_click_event;
     protocol_selection_t* active_selection;
 
@@ -75,6 +69,8 @@ struct protocol_server_state {
     bool    initialization_result;
     char ** initialization_errors;
     uint8_t initialization_errors_count;
+
+    bool stop;
 
     pthread_mutex_t environment_mutex;
     pthread_mutex_t prototypes_mutex;

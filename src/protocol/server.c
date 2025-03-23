@@ -135,6 +135,7 @@ void protocol_init()
     selection_requests[0x3D] = protocol_handler_selection_cancel;
     common_requests[0x22] = protocol_handler_import;
     common_requests[0x27] = protocol_handler_export;
+    common_requests[0x56] = protocol_handler_stop;
 }
 
 struct protocol_client* protocol_accept_connection(ipc_connector_t *connector)
@@ -381,7 +382,6 @@ void protocol_server_announce_new_prototype(struct mascot_prototype* prototype, 
             ipc_connector_send(client->connector, commit_prototypes);
         }
         pthread_mutex_unlock(&server_state->clients_mutex);
-
     }
 }
 

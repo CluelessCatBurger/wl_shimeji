@@ -226,7 +226,7 @@ void sigaction_handler(int signum, siginfo_t* info, void* context)
         signal_code = signum;
     } else if (signum == SIGINT) {
         INFO("Received SIGINT, shutting down...");
-        should_exit = true;
+        server_state.stop = true;
     } else if (signum == SIGHUP) {
         INFO("Received SIGHUP, reloading configuration...");
         config_parse(server_state.configuration_file);
@@ -365,7 +365,7 @@ void* mascot_manager_thread(void* arg)
 
 void stop_callback()
 {
-    should_exit = true;
+    server_state.stop = true;
 }
 
 int main(int argc, const char** argv)
@@ -547,10 +547,6 @@ int main(int argc, const char** argv)
         server_state.plugins = list_init(1);
         server_state.imports = list_init(1);
         server_state.exports = list_init(1);
-        server_state.shm_pools = list_init(1);
-        server_state.buffers = list_init(1);
-        server_state.popups = list_init(1);
-        server_state.windows = list_init(1);
         server_state.prototypes = mascot_prototype_store_new();
         strncpy(server_state.configuration_root, configuration_root, PATH_MAX);
         strncpy(server_state.plugins_location, plugins_location, PATH_MAX);
@@ -763,7 +759,7 @@ int main(int argc, const char** argv)
 
     // Main loop
     while (true) {
-        if ((!mascot_total_count && !fds_count ) || should_exit) {
+        if ((!mascot_total_count && !fds_count ) || server_state.stop) {
             break;
         }
 
