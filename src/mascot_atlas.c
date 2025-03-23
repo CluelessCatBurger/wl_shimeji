@@ -25,6 +25,7 @@
 
 #include "mascot_atlas.h"
 #include <errno.h>
+#include <io.h>
 
 #define QOI_IMPLEMENTATION
 #include "third_party/qoi/qoi.h"
@@ -95,95 +96,6 @@ void _write_buffers(environment_buffer_factory_t* factory, uint64_t* buffer_fact
     free(buffers);
 }
 
-
-bool _recursive_walk(const char* dirname, uint32_t* file_count, char*** file_paths, const char* prefix)
-{
-    INFO("Performing recursive walk for dir \"%s\"", dirname);
-    char** paths_array = calloc(64, sizeof(char*));
-    uint16_t paths_array_size = 64;
-    if (!paths_array) {
-        ERROR("Failed to perform recursive walk for dir \"%s\": Allocation failed for paths array", dirname);
-    }
-
-    DIR* dir;
-    if (!(dir = opendir(dirname))) {
-        WARN("Failed to perform recursive walk for dir \"%s\": %s", dirname, strerrordesc_np(errno));
-        goto fail_walk;
-    }
-
-    struct dirent* direntry = NULL;
-    while ((direntry = readdir(dir))) {
-        if (direntry->d_type == DT_DIR) {
-            if (direntry->d_name[0] == '.') continue;
-            char subdir[256] = {0};
-            size_t printed = snprintf(subdir, 256, "%s/%s", dirname, direntry->d_name);
-            if (printed >= 256) {
-                WARN("Failed to perform recursive walk for dir \"%s\": Path too long for subdir %s", dirname, direntry->d_name);
-                continue;
-            }
-            char **subdir_file_paths = NULL;
-            uint32_t subdir_file_count = 0;
-
-            if (!_recursive_walk(subdir, &subdir_file_count, &subdir_file_paths, direntry->d_name)) {
-                WARN("Failed to perform recursive walk for dir \"%s\": Subdir %s failed", dirname, direntry->d_name);
-                continue;
-            }
-            for (uint16_t i = 0; i < subdir_file_count; i++) {
-                if (*file_count >= paths_array_size) {
-                    char** new_paths_array = realloc(paths_array, paths_array_size * 2 * sizeof(char*));
-                    if (!new_paths_array) {
-                        ERROR("Failed to perform recursive walk for dir \"%s\": Reallocation failed for paths array", dirname);
-                    }
-                    paths_array = new_paths_array;
-                    paths_array_size *= 2;
-                }
-                char name[256] = {0};
-                size_t printed = snprintf(name, 256, "%s/%s", prefix, subdir_file_paths[i]);
-                UNUSED(printed);
-                paths_array[*file_count] = !(*prefix) ? strdup(name+1) : strdup(name);
-                if (!paths_array[*file_count]) {
-                    ERROR("Failed to perform recursive walk for dir \"%s\": Allocation failed for file %s", dirname, direntry->d_name);
-                }
-                (*file_count)++;
-            }
-            free(subdir_file_paths);
-        } else if (direntry->d_type == DT_REG) {
-            if (*file_count >= paths_array_size) {
-                char** new_paths_array = realloc(paths_array, paths_array_size * 2 * sizeof(char*));
-                if (!new_paths_array) {
-                    ERROR("Failed to perform recursive walk for dir \"%s\": Reallocation failed for paths array", dirname);
-                }
-                paths_array = new_paths_array;
-                paths_array_size *= 2;
-            }
-            char name[258] = {0};
-            size_t printed = snprintf(name, 258, "%s/%s", prefix, direntry->d_name);
-            UNUSED(printed);
-            paths_array[*file_count] = !(*prefix) ? strdup(name+1) : strdup(name);
-            if (!paths_array[*file_count]) {
-                ERROR("Failed to perform recursive walk for dir \"%s\": Allocation failed for file %s", dirname, direntry->d_name);
-            }
-            (*file_count)++;
-        }
-
-    }
-
-    closedir(dir);
-
-    *file_paths = paths_array;
-    return true;
-
-fail_walk:
-    if (paths_array) {
-        for (uint16_t i = 0; i < paths_array_size; i++) {
-            if (paths_array[i]) free(paths_array[i]);
-        }
-    }
-    free(paths_array);
-    if (dir) closedir(dir);
-    return false;
-}
-
 struct mascot_atlas* mascot_atlas_new(const char* dirname)
 {
 
@@ -197,11 +109,10 @@ struct mascot_atlas* mascot_atlas_new(const char* dirname)
 
     DEBUG("Creating mascot atlas from dir \"%s\"", dirname);
 
-    if (!_recursive_walk(dirname, &file_count, &file_paths, "")) {
+    if (io_find(dirname, "*.qoi", IO_RECURSIVE | IO_CASE_INSENSITIVE | IO_FILE_TYPE_REGULAR, &file_paths, (int32_t*)&file_count)) {
         WARN("Could not create atlas from dir \"%s\": Recursive walk failed", dirname);
         return NULL;
     }
-
     if (!file_count) {
         WARN("Could not create atlas from dir \"%s\": No files found", dirname);
         free(file_paths);

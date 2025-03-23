@@ -1,0 +1,6 @@
+[Socket]
+ListenSequentialPacket=%t/shimeji-overlayd.sock
+Accept=no
+
+[Install]
+WantedBy=sockets.target

@@ -18,6 +18,8 @@
 */
 
 #include "jump.h"
+#include "environment.h"
+#include "mascot.h"
 #include <stdint.h>
 #include <sys/types.h>
 
@@ -209,26 +211,26 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
 
     bool looking_right = posx < target_x;
 
-    if (target_x < 0) {
-        mascot->TargetX->value.i = target_x = 0;
-    } else if (target_x > (int)environment_workarea_width(mascot->environment)) {
-        mascot->TargetX->value.i = target_x = environment_workarea_width(mascot->environment);
+    if (target_x < (int)environment_workarea_left(mascot->environment)) {
+        mascot->TargetX->value.i = target_x = environment_workarea_left(mascot->environment);
+    } else if (target_x > (int)environment_workarea_right(mascot->environment)) {
+        mascot->TargetX->value.i = target_x = environment_workarea_right(mascot->environment);
     }
 
     if (target_y == -1) {
         mascot->TargetY->value.i = target_y = posy;
-    } else if (target_y < 0) {
-        mascot->TargetY->value.i = target_y = 0;
-    } else if (target_y > (int)environment_workarea_height(mascot->environment)) {
-        mascot->TargetY->value.i = target_y = environment_workarea_height(mascot->environment);
+    } else if (target_y < (int)environment_workarea_top(mascot->environment)) {
+        mascot->TargetY->value.i = target_y = environment_workarea_top(mascot->environment);
+    } else if (target_y > (int)environment_workarea_bottom(mascot->environment)) {
+        mascot->TargetY->value.i = target_y = environment_workarea_bottom(mascot->environment);
     }
 
     // Calculate distances
     float distance_x = target_x - posx;
 
     // Check if posy has reached the screen height and make the object slide
-    if (posy >= (int32_t)environment_workarea_height(mascot->environment)) {
-        posy = environment_workarea_height(mascot->environment); // Cap the y-coordinate
+    if (posy >= (int32_t)environment_workarea_bottom(mascot->environment)) {
+        posy = environment_workarea_bottom(mascot->environment); // Cap the y-coordinate
         velocity_y = 0; // Stop vertical movement to slide horizontally
     } else {
         // Calculate the vertical distance to the peak based on the current position
@@ -262,10 +264,6 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
         posy = target_y;
     }
 
-    DEBUG("<Mascot:%s:%u> JUMP: moving to %d, %d", mascot->prototype->name, mascot->id, target_x, target_y);
-    DEBUG("<Mascot:%s:%u> JUMP: moving by %f, %f", mascot->prototype->name, mascot->id, velocity_x, velocity_y);
-    DEBUG("<Mascot:%s:%u> JUMP: distances %f", mascot->prototype->name, mascot->id, distance_x);
-
     if (distance_x == 0) {
         return mascot_tick_reenter;
     }
@@ -278,6 +276,8 @@ enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_ac
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
         enum environment_move_result move_res = environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
         if (move_res == environment_move_clamped) {
+            mascot->X->value.i = target_x;
+            mascot->Y->value.i = target_y;
             return mascot_tick_reenter;
         }
         mascot->action_duration = tick + 5;

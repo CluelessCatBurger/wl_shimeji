@@ -13,7 +13,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #include "master_header.h"
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
+#include <assert.h>
 
 #define EVAL_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define EVAL_MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -71,7 +73,7 @@ PRINT_FORMAT void __error(const char* file, int line, const char* fmt, ...)
     snprintf(prefix, 127, "\033[33m[%s][ERROR][%s:%d]: ", timebuf, file, line);
     log_print(prefix, fmt, args);
     va_end(args);
-    exit(1);
+    abort();
 }
 
 PRINT_FORMAT void __warn(const char* file, int line, const char* fmt, ...)

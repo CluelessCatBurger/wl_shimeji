@@ -27,6 +27,7 @@
 #include "environment.h"
 #include "mascot.h"
 #include "expressions.h"
+#include "physics.h"
 #include "plugins.h"
 
 bool mascot_noop(struct expression_vm_state* state);
@@ -435,7 +436,8 @@ bool mascot_environment_cursor_dy(struct expression_vm_state* state)
 bool mascot_environment_screen_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_width(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_width_aligned(state->ref_mascot->environment, alignment);
     state->sp++;
     return true;
 }
@@ -444,7 +446,9 @@ bool mascot_environment_screen_width(struct expression_vm_state* state)
 bool mascot_environment_screen_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment);
+
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_height_aligned(state->ref_mascot->environment, alignment);
     state->sp++;
     return true;
 }
@@ -453,8 +457,10 @@ bool mascot_environment_screen_height(struct expression_vm_state* state)
 bool mascot_environment_work_area_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_width(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_width_aligned(state->ref_mascot->environment, alignment);
     state->sp++;
+    INFO("Work area width: %d", state->stack[state->sp - 1]);
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ENVIRONMENT_WORK_AREA_WIDTH { "mascot.environment.workarea.width", mascot_environment_work_area_width }
@@ -462,7 +468,8 @@ bool mascot_environment_work_area_width(struct expression_vm_state* state)
 bool mascot_environment_work_area_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment)-128;
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_height_aligned(state->ref_mascot->environment, alignment) - 128;
     state->sp++;
     return true;
 }
@@ -471,7 +478,8 @@ bool mascot_environment_work_area_height(struct expression_vm_state* state)
 bool mascot_environment_work_area_left(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = 0;
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_LEFT, alignment);
     state->sp++;
     return true;
 }
@@ -481,7 +489,8 @@ bool mascot_environment_work_area_top(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     // state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment)-128;
-    state->stack[state->sp] = 0;
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_CEILING, alignment);
     state->sp++;
     return true;
 }
@@ -490,7 +499,8 @@ bool mascot_environment_work_area_top(struct expression_vm_state* state)
 bool mascot_environment_work_area_right(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_workarea_width(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_RIGHT, alignment);
     state->sp++;
     return true;
 }
@@ -499,7 +509,8 @@ bool mascot_environment_work_area_right(struct expression_vm_state* state)
 bool mascot_environment_work_area_bottom(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp] = environment_screen_height(state->ref_mascot->environment);
+    int32_t alignment = BORDER_TYPE(check_collision_at(environment_local_geometry(state->ref_mascot->environment), state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, 0));
+    state->stack[state->sp] = environment_workarea_coordinate_aligned(state->ref_mascot->environment, BORDER_TYPE_FLOOR, alignment);
     state->sp++;
     return true;
 }
@@ -542,7 +553,7 @@ bool mascot_environment_left_ison(struct expression_vm_state* state)
     struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
     if (border == environment_border_type_wall) {
         int anchor_x = state->stack[state->sp-2];
-        state->stack[state->sp-2] = anchor_x == 0 || anchor_x == ie->x;
+        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_left(state->ref_mascot->environment) || anchor_x == ie->x;
     } else state->stack[state->sp-2] = 0;
     state->sp--;
     return true;
@@ -556,7 +567,7 @@ bool mascot_environment_right_ison(struct expression_vm_state* state)
     struct ie_object* ie = environment_get_ie(state->ref_mascot->environment);
     if (border == environment_border_type_wall) {
         int anchor_x = state->stack[state->sp-2];
-        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_width(state->ref_mascot->environment) || anchor_x == ie->x+ie->width;
+        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_right(state->ref_mascot->environment) || anchor_x == ie->x+ie->width;
     } else state->stack[state->sp-2] = 0;
     state->sp--;
     return true;
@@ -567,9 +578,9 @@ bool mascot_environment_work_area_left_border_ison(struct expression_vm_state* s
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_wall && state->ref_mascot->X->value.i == 0) {
+    if (border == environment_border_type_wall && state->ref_mascot->X->value.i == (int32_t)environment_workarea_left(state->ref_mascot->environment)) {
         int anchor_x = state->stack[state->sp-2];
-        state->stack[state->sp-2] = anchor_x == 0;
+        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_left(state->ref_mascot->environment);
     } else {
         state->stack[state->sp-2] = 0;
     }
@@ -582,9 +593,9 @@ bool mascot_environment_work_area_right_border_ison(struct expression_vm_state* 
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_wall && state->ref_mascot->X->value.i == (int32_t)environment_screen_width(state->ref_mascot->environment)) {
+    if (border == environment_border_type_wall && state->ref_mascot->X->value.i == (int32_t)environment_workarea_right(state->ref_mascot->environment)) {
         int anchor_x = state->stack[state->sp-2];
-        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_width(state->ref_mascot->environment);
+        state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_right(state->ref_mascot->environment);
     } else {
         state->stack[state->sp-2] = 0;
     }
@@ -599,7 +610,7 @@ bool mascot_environment_work_area_top_border_ison(struct expression_vm_state* st
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
     if (border == environment_border_type_ceiling) {
         int anchor_y = state->stack[state->sp-1];
-        state->stack[state->sp-2] = anchor_y == 0;
+        state->stack[state->sp-2] = anchor_y == (int32_t)environment_workarea_top(state->ref_mascot->environment);
     } else {
         state->stack[state->sp-2] = 0;
     }
@@ -614,7 +625,7 @@ bool mascot_environment_work_area_bottom_border_ison(struct expression_vm_state*
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
     if (border == environment_border_type_floor) {
         int anchor_y = state->stack[state->sp-1];
-        state->stack[state->sp-2] = anchor_y == (int32_t)environment_screen_height(state->ref_mascot->environment);
+        state->stack[state->sp-2] = anchor_y == (int32_t)environment_workarea_bottom(state->ref_mascot->environment);
     } else {
         state->stack[state->sp-2] = 0;
     }
@@ -836,7 +847,7 @@ bool mascot_environment_active_ie_right_border_ison(struct expression_vm_state* 
     if (ie) {
         if (border == environment_border_type_wall) {
             int anchor_x = state->stack[state->sp-2];
-            state->stack[state->sp-2] = (ie->x + ie->width == anchor_x) && ie->x + ie->width != (int32_t)environment_workarea_width(state->ref_mascot->environment);
+            state->stack[state->sp-2] = (ie->x + ie->width == anchor_x) && ie->x + ie->width != (int32_t)environment_workarea_right(state->ref_mascot->environment);
         }
         else state->stack[state->sp-2] = 0;
     } else {
@@ -895,10 +906,16 @@ bool mascot_noop(struct expression_vm_state* state)
 bool target_anchor(struct expression_vm_state* state)
 {
     if (state->sp + 2 >= 255) return false;
+
+    int32_t diff_x = 0, diff_y = 0;
+    if (state->ref_mascot->environment != state->ref_mascot->target_mascot->environment) {
+        environment_global_coordinates_delta(state->ref_mascot->environment, state->ref_mascot->target_mascot->environment, &diff_x, &diff_y);
+    }
+
     if (state->ref_mascot->target_mascot) {
-        state->stack[state->sp] = state->ref_mascot->target_mascot->X->value.i;
+        state->stack[state->sp] = state->ref_mascot->target_mascot->X->value.i + diff_x;
         state->sp++;
-        state->stack[state->sp] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i;
+        state->stack[state->sp] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i + diff_y;
         state->sp++;
     } else {
         state->stack[state->sp] = 0.0;
@@ -913,8 +930,14 @@ bool target_anchor(struct expression_vm_state* state)
 bool target_anchor_x(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
+
+    int32_t diff_x = 0, diff_y = 0;
+    if (state->ref_mascot->environment != state->ref_mascot->target_mascot->environment) {
+        environment_global_coordinates_delta(state->ref_mascot->environment, state->ref_mascot->target_mascot->environment, &diff_x, &diff_y);
+    }
+
     if (state->ref_mascot->target_mascot) {
-        state->stack[state->sp++] = state->ref_mascot->target_mascot->X->value.i;
+        state->stack[state->sp++] = state->ref_mascot->target_mascot->X->value.i + diff_x;
     } else {
         state->stack[state->sp++] = 0.0;
     }
@@ -925,8 +948,12 @@ bool target_anchor_x(struct expression_vm_state* state)
 bool target_anchor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
+    int32_t diff_x = 0, diff_y = 0;
+    if (state->ref_mascot->environment != state->ref_mascot->target_mascot->environment) {
+        environment_global_coordinates_delta(state->ref_mascot->environment, state->ref_mascot->target_mascot->environment, &diff_x, &diff_y);
+    }
     if (state->ref_mascot->target_mascot) {
-        state->stack[state->sp++] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i;
+        state->stack[state->sp++] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i + diff_y;
     } else {
         state->stack[state->sp++] = 0.0;
     }

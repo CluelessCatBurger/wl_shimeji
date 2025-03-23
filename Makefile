@@ -12,7 +12,7 @@ PREFIX ?= /usr/local
 
 override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
 override CFLAGS  += $(shell pkg-config --cflags wayland-client)
-override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor --libs) -lm
+override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor libarchive --libs) -lm
 
 override WAYLAND_PROTOCOLS_DIR ?= $(shell pkg-config wayland-protocols --variable=pkgdatadir)
 override WAYLAND_SCANNER = $(shell pkg-config --variable=wayland_scanner wayland-scanner)
@@ -38,6 +38,7 @@ override WL_HEADERS := \
 override SRC := \
 	$(wildcard $(SRCDIR)/*.c) \
 	$(wildcard $(SRCDIR)/actions/*.c) \
+	$(wildcard $(SRCDIR)/protocol/*.c) \
 	$(WL_HEADERS:.h=.c)
 
 override OBJS := $(SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
@@ -79,14 +80,14 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
 $(PLUGINS_TARGET): $(PLUGINS_OBJS)
-	$(CC) $(shell pkg-config --cflags wayland-client) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
+	$(CC) $(CFLAGS) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
 
 # Rule to build shimejictl
-$(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/shimejictl.py
+$(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/client.py
 	mkdir utils
 	$(PYTHON3) scripts/py-compose.py -s $< -o $@
 
@@ -110,6 +111,9 @@ install: $(UTILS_DIR)/shimejictl
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
+	install -d $(DESTDIR)$(PREFIX)/share/systemd/user/
+	install -m644 systemd/wl_shimeji.socket $(DESTDIR)$(PREFIX)/share/systemd/user/
+	install -m644 systemd/wl_shimeji.service $(DESTDIR)$(PREFIX)/share/systemd/user/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)

@@ -19,6 +19,7 @@
 
 #include "move.h"
 #include "actionbase.h"
+#include "environment.h"
 
 enum mascot_tick_result move_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
@@ -80,18 +81,18 @@ enum mascot_tick_result move_action_init(struct mascot *mascot, struct mascot_ac
     if (!target_y->used) mascot->TargetY->value.i = -1;
 
     if (mascot->TargetX->value.i != -1) {
-        if (mascot->TargetX->value.i < 0) {
-            mascot->TargetX->value.i = 0;
-        } else if (mascot->TargetX->value.i > (int32_t)environment_workarea_width(mascot->environment)) {
-            mascot->TargetX->value.i = environment_workarea_width(mascot->environment);
+        if (mascot->TargetX->value.i < (int)environment_workarea_left(mascot->environment)) {
+            mascot->TargetX->value.i = environment_workarea_left(mascot->environment);
+        } else if (mascot->TargetX->value.i > (int32_t)environment_workarea_right(mascot->environment)) {
+            mascot->TargetX->value.i = environment_workarea_right(mascot->environment);
         }
     }
 
     if (mascot->TargetY->value.i != -1) {
-        if (mascot->TargetY->value.i < 0) {
-            mascot->TargetY->value.i = 0;
-        } else if (mascot->TargetY->value.i > (int32_t)environment_workarea_height(mascot->environment)) {
-            mascot->TargetY->value.i = (int32_t)environment_workarea_height(mascot->environment);
+        if (mascot->TargetY->value.i < (int)environment_workarea_top(mascot->environment)) {
+            mascot->TargetY->value.i = (int)environment_workarea_top(mascot->environment);
+        } else if (mascot->TargetY->value.i > (int32_t)environment_workarea_bottom(mascot->environment)) {
+            mascot->TargetY->value.i = (int32_t)environment_workarea_bottom(mascot->environment);
         }
     }
 
@@ -223,11 +224,11 @@ enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_ac
     if (target_x != INT32_MAX && target_x != -1) {
         if (posx < target_x) looking_right = true;
         else if (posx > target_x) looking_right = false;
-        if (target_x < 0) {
-            target_x = 0;
+        if (target_x < (int)environment_workarea_left(mascot->environment)) {
+            target_x = (int)environment_workarea_left(mascot->environment);
         }
-        else if (target_x > (int32_t)environment_workarea_width(mascot->environment)) {
-            target_x = (int32_t)environment_workarea_width(mascot->environment);
+        else if (target_x > (int32_t)environment_workarea_right(mascot->environment)) {
+            target_x = (int32_t)environment_workarea_right(mascot->environment);
         }
 
         if (fabs(velocity_x) >= abs(posx - target_x)) {
@@ -242,11 +243,11 @@ enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_ac
         bool down = posy > target_y;
         DEBUG("<Mascot:%s:%u> Move action tick, posy, target_y, down: %d, %d, %d", mascot->prototype->name, mascot->id, posy, target_y, down);
         DEBUG("<Mascot:%s:%u> Move action tick, velocity = %f,%f", mascot->prototype->name, mascot->id, velocity_x, velocity_y);
-        if (target_y < 0) {
-            mascot->TargetY->value.i = target_y = 0;
+        if (target_y < environment_workarea_top(mascot->environment)) {
+            mascot->TargetY->value.i = target_y = environment_workarea_top(mascot->environment);
         }
-        else if (target_y > (int32_t)environment_workarea_height(mascot->environment)) {
-            mascot->TargetY->value.i = target_y = (int32_t)environment_workarea_height(mascot->environment);
+        else if (target_y > (int32_t)environment_workarea_bottom(mascot->environment)) {
+            mascot->TargetY->value.i = target_y = (int32_t)environment_workarea_bottom(mascot->environment);
         }
 
         if (fabs(velocity_y) >= abs(posy - target_y)) {
@@ -265,8 +266,14 @@ enum mascot_tick_result move_action_tick(struct mascot *mascot, struct mascot_ac
 
     if ((posx == target_x || target_x == -1 ) && (posy == target_y || target_y == -1)) {
         DEBUG("<Mascot:%s:%u> Reached target, current pos (%d,%d), setting pos (%d,%d)", mascot->prototype->name, mascot->id, posx, posy, target_x, target_y);
-        environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
-        return mascot_tick_reenter;
+        enum environment_move_result move_result = environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
+        if (move_result == environment_move_ok) return mascot_tick_reenter;
+        else {
+            mascot->TargetX->value.i = mascot->X->value.i;
+            mascot->TargetY->value.i = mascot->Y->value.i;
+
+            return mascot_tick_reenter;
+        }
     }
 
     if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {

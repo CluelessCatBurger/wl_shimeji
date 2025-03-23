@@ -19,6 +19,7 @@
 
 #define _GNU_SOURCE
 
+#include <pthread.h>
 #include "wayland_includes.h"
 #include <sys/mman.h>
 #include "mascot_atlas.h"
@@ -35,6 +36,8 @@
 #include "config.h"
 #include "list.h"
 #include <wayland-cursor.h>
+#include "physics.h"
+#include "protocol/server.h"
 
 // Workarounds section (SMH my head hyprland)
 bool we_on_hyprland = false;
@@ -73,9 +76,10 @@ struct zxdg_output_manager_v1* xdg_output_manager = NULL;
 void (*new_environment)(environment_t*) = NULL;
 void (*rem_environment)(environment_t*) = NULL;
 void (*orphaned_mascot)(struct mascot*) = NULL;
-void (*mascot_dropped_oob)(struct mascot*, int32_t x, int32_t y) = NULL;
 void (*env_broadcast_input_enabled)(bool) = NULL;
-struct mascot* (*mascot_by_coordinates)(environment_t*, int32_t, int32_t) = NULL;
+environment_t* (*lookup_environment_by_coords)(int32_t, int32_t) = NULL;
+
+#define environment_by_global_coords(x,y) lookup_environment_by_coords ? lookup_environment_by_coords(x, y) : NULL
 
 struct wl_buffer* anchor_buffer = NULL;
 struct wl_region* empty_region = NULL;
@@ -91,6 +95,19 @@ int32_t active_grabbers_count = 0;
 #define BUTTON_TYPE_MIDDLE 1
 #define BUTTON_TYPE_RIGHT 2
 #define BUTTON_TYPE_PEN 3
+
+struct environment_callbacks {
+    const struct wl_pointer_listener* pointer_listener;
+    const struct wl_surface_listener* surface_listener;
+    const struct wl_callback_listener* callback_listener;
+    const struct wl_keyboard_listener* keyboard_listener;
+    const struct wl_touch_listener* touch_listener;
+    const struct zwp_tablet_pad_v2_listener* tablet_pad_listener;
+    const struct zwp_tablet_tool_v2_listener* tablet_tool_listener;
+    const struct zwp_tablet_v2_listener* tablet_listener;
+
+    void* data;
+};
 
 struct output_info {
     struct wl_output* output;
@@ -130,7 +147,14 @@ struct environment {
     int32_t lwidth, lheight;
     int32_t lx, ly;
 
-    struct list* referenced_mascots;
+
+    struct {
+        struct list* referenced_mascots;
+        struct mascot_affordance_manager* affordances;
+        mascot_prototype_store* prototype_store;
+        pthread_mutex_t mutex;
+    } mascot_manager;
+
     struct ie_object* ie;
 
     bool select_active;
@@ -138,6 +162,33 @@ struct environment {
     void* select_data;
 
     void* external_data;
+
+    struct bounding_box global_geometry;
+    struct bounding_box workarea_geometry;
+    struct bounding_box advertised_geometry;
+
+    struct list* neighbors; // Neighbored environments in contact with this one
+    int32_t border_mask; // Mask for border type checks for mascot
+    bool ceiling_aligned;
+    bool floor_aligned;
+    bool left_aligned;
+    bool right_aligned;
+};
+
+struct environment_shm_pool {
+    struct wl_shm_pool* pool;
+};
+
+struct environment_popup {
+    struct wl_surface* surface;
+    struct xdg_popup* popup;
+    struct xdg_surface* xdg_surface;
+    struct xdg_positioner* position;
+    uint32_t xdg_serial;
+    uint32_t input_serial;
+
+    struct mascot* mascot;
+    environment_t* environment;
 };
 
 struct wl_surface_data {
@@ -264,6 +315,12 @@ struct environment_buffer {
     uint32_t width;
     uint32_t height;
     uint32_t stride;
+
+    float scale_factor;
+    struct {
+        uint32_t x, y;
+        uint32_t width, height;
+    } input_region_desc; // In buffer coordinates
 };
 
 // Pointer with most recent activity
@@ -284,6 +341,8 @@ struct envs_queue {
 };
 
 // Helper functions ---------------------------------------------------------
+
+void environment_recalculate_advertised_geometry(environment_t* env);
 
 environment_t* environment_from_surface(struct wl_surface* surface)
 {
@@ -706,6 +765,9 @@ static void environment_dimensions_changed_callback(uint32_t width, uint32_t hei
     environment_t* env = (environment_t*)data;
     env->width = width;
     env->height = height;
+    env->workarea_geometry.width = width;
+    env->workarea_geometry.height = height;
+    environment_recalculate_advertised_geometry(env);
 }
 
 static void environment_wants_to_close_callback(void* data)
@@ -889,6 +951,14 @@ static void on_output_done(void* data, struct wl_output* output)
 {
     UNUSED(output);
     UNUSED(data);
+    environment_t* env = (environment_t*)data;
+    environment_recalculate_advertised_geometry(env);
+    for (uint32_t i = 0; i < list_size(env->neighbors); i++) {
+        environment_t* neighbor = list_get(env->neighbors, i);
+        environment_recalculate_advertised_geometry(neighbor);
+    }
+    protocol_server_environment_changed(env);
+    env->xdg_output_done = true;
 }
 
 static void on_output_scale(void* data, struct wl_output* output, int32_t factor)
@@ -1094,8 +1164,15 @@ static void on_pointer_frame(void* data, struct wl_pointer* pointer)
         surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->above_surface);
         if (new_env && new_env != env && env_pointer->grabbed_subsurface) {
             struct mascot * mascot = environment_subsurface_get_mascot(env_pointer->grabbed_subsurface);
-            if (mascot) {
+            if (mascot && (config_get_allow_dragging_multihead() || config_get_unified_outputs())) {
+                int32_t diffx, diffy;
+                environment_global_coordinates_delta(env, new_env, &diffx, &diffy);
+                int32_t newx = env_pointer->x, newy = env_pointer->y;
+
+                mascot_moved(mascot, newx, yconv(new_env, newy));
+                mascot_apply_environment_position_diff(mascot, diffx, diffy, DIFF_HORIZONTAL_MOVE | DIFF_VERTICAL_MOVE, new_env);
                 mascot_environment_changed(mascot, new_env);
+                env_pointer->frame.mask &= ~EVENT_FRAME_MOTIONS;
             }
             env = new_env;
         }
@@ -1295,7 +1372,9 @@ static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uin
     if (env_pointer->grabbed_subsurface) return;
 
     // Get hotspot
-    struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
+    int32_t scaled_x = wl_fixed_to_int(env_pointer->frame.surface_local_x), scaled_y = wl_fixed_to_int(env_pointer->frame.surface_local_y);
+    environment_subsurface_scale_coordinates(env_surface, &scaled_x, &scaled_y);
+    struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(env_surface->mascot, scaled_x, scaled_y);
     if (hotspot && !(env_pointer->grabbed_subsurface || env->select_active)) environment_pointer_apply_cursor(env_pointer, hotspot->cursor);
     else if (!hotspot && !(env_pointer->grabbed_subsurface || env->select_active)) environment_pointer_apply_cursor(env_pointer, -2);
     else environment_pointer_apply_cursor(env_pointer, -1);
@@ -1401,11 +1480,17 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
         pressed_button = mascot_hotspot_button_right;
     }
 
+    int32_t scaled_x = env_pointer->surface_x, scaled_y = env_pointer->surface_y;
+    environment_subsurface_scale_coordinates(env_surface, &scaled_x, &scaled_y);
+
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
         if (!env->select_active && !env_pointer->grabbed_subsurface) {
-            bool hotspot_press_result = mascot_hotspot_hold(mascot, env_pointer->surface_x, env_pointer->surface_y, pressed_button, false);
+            bool hotspot_press_result = mascot_hotspot_hold(mascot, scaled_x, scaled_y, pressed_button, false);
             if (!hotspot_press_result && pressed_button == mascot_hotspot_button_left) {
                 mascot_drag_started(mascot, env_pointer);
+            }
+            if (!hotspot_press_result && pressed_button == mascot_hotspot_button_right) {
+                protocol_server_announce_new_click(mascot, env_pointer->x, env_pointer->y);
             }
         } else {
             environment_on_pointer_button(data, pointer, serial, time, button, state);
@@ -1418,8 +1503,8 @@ static void mascot_on_pointer_button(void* data, struct wl_pointer* pointer, uin
             mascot_drag_ended(environment_subsurface_get_mascot(env_pointer->grabbed_subsurface), true);
         } else {
             if (mascot->hotspot_active || env_pointer->grabbed_subsurface) {
-                mascot_hotspot_hold(mascot, env_pointer->surface_x, env_pointer->surface_y, pressed_button, true);
-                struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(mascot, env_pointer->surface_x, env_pointer->surface_y);
+                mascot_hotspot_hold(mascot, scaled_x, scaled_y, pressed_button, true);
+                struct mascot_hotspot* hotspot = mascot_hotspot_by_pos(mascot, scaled_x, scaled_y);
                 if (hotspot) {
                     environment_pointer_apply_cursor(env_pointer, hotspot->cursor);
                 } else {
@@ -1914,15 +1999,13 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
             struct wl_surface* surface = env_pointer->frame.surface_changed;
 
             if (!env->select_active && is_root_surface(surface)) {
-                if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && mascot_by_coordinates && !disable_tablet_workarounds) {
+                if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && !disable_tablet_workarounds) {
                     why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
                     WARN("WORKAROUND: zwp_tablet_v2 proximity_in events are received by parent in KDE, not by subsurface. Applying stupid workaround.");
                 }
-                if (mascot_by_coordinates) {
-                    struct mascot* mascot = mascot_by_coordinates(env, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
-                    if (mascot) {
-                        env_pointer->frame.surface_changed = mascot->subsurface->surface;
-                    }
+                struct mascot* mascot = environment_mascot_by_coordinates(env, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
+                if (mascot) {
+                    env_pointer->frame.surface_changed = mascot->subsurface->surface;
                 }
             }
         }
@@ -1995,25 +2078,29 @@ static void xdg_output_logical_position(void* data, struct zxdg_output_v1* xdg_o
 {
     UNUSED(xdg_output);
     environment_t* env = data;
-    env->xdg_output_done = true;
+    env->xdg_output_done = false;
     env->lx = x;
     env->ly = y;
+    env->global_geometry.x = x;
+    env->global_geometry.y = y;
 }
 
 static void xdg_output_logical_size(void* data, struct zxdg_output_v1* xdg_output, int32_t width, int32_t height)
 {
     UNUSED(xdg_output);
     environment_t* env = data;
-    env->xdg_output_done = true;
+    env->xdg_output_done = false;
     env->lwidth = width;
     env->lheight = height;
+    env->global_geometry.width = width;
+    env->global_geometry.height = height;
 }
 
 static void xdg_output_name(void* data, struct zxdg_output_v1* xdg_output, const char* name)
 {
     UNUSED(xdg_output);
     environment_t* env = data;
-    env->xdg_output_done = true;
+    env->xdg_output_done = false;
     env->output.name = strdup(name);
 }
 
@@ -2021,7 +2108,7 @@ static void xdg_output_description(void* data, struct zxdg_output_v1* xdg_output
 {
     UNUSED(xdg_output);
     environment_t* env = data;
-    env->xdg_output_done = true;
+    env->xdg_output_done = false;
     env->output.desc = strdup(description);
 }
 
@@ -2029,8 +2116,13 @@ static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output)
 {
     UNUSED(xdg_output);
     environment_t* env = data;
+    environment_recalculate_advertised_geometry(env);
+    for (uint32_t i = 0; i < list_size(env->neighbors); i++) {
+        environment_t* neighbor = list_get(env->neighbors, i);
+        environment_recalculate_advertised_geometry(neighbor);
+    }
+    protocol_server_environment_changed(env);
     env->xdg_output_done = true;
-    INFO("Environment id %d is ready. lpos (%d,%d), lsize (%d,%d)", env->id, env->lx, env->ly, env->lwidth, env->lheight);
 }
 
 // Registry callbacks ---------------------------------------------------------
@@ -2094,7 +2186,9 @@ static void handle_output(void* data, uint32_t id, uint32_t version)
         env->id = wl_refcounter++;
         env->output.output = output;
         env->output.id = display_id++;
-        env->referenced_mascots = list_init(256);
+        env->mascot_manager.referenced_mascots = list_init(256);
+        env->neighbors = list_init(4);
+        pthread_mutex_init(&env->mascot_manager.mutex, NULL);
         wl_output_add_listener(output, &wl_output_listener, (void*)env);
         wl_output_set_user_data(output, (void*)env);
         new_environment(env);
@@ -2176,7 +2270,7 @@ static const struct wl_registry_listener registry_listener = {
 
 enum environment_init_status environment_init(int flags,
     void(*new_listener)(environment_t*), void(*rem_listener)(environment_t*),
-    void(*orph_listener)(struct mascot*), void(*mascot_dropped_oob_listener)(struct mascot*, int32_t, int32_t)
+    void(*orph_listener)(struct mascot*)
 )
 {
 
@@ -2204,7 +2298,6 @@ enum environment_init_status environment_init(int flags,
     new_environment = new_listener;
     rem_environment = rem_listener;
     orphaned_mascot = orph_listener;
-    mascot_dropped_oob = mascot_dropped_oob_listener;
 
     struct envs_queue* envs = (struct envs_queue*)calloc(1, sizeof(struct envs_queue));
     envs->flags = flags;
@@ -2269,17 +2362,26 @@ int environment_dispatch()
 
 void environment_unlink(environment_t *env)
 {
-
-    for (uint32_t i = 0; i < list_size(env->referenced_mascots); i++) {
-        struct mascot* mascot = list_get(env->referenced_mascots, i);
+    pthread_mutex_lock(&env->mascot_manager.mutex);
+    for (uint32_t i = 0; i < list_size(env->mascot_manager.referenced_mascots); i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
         if (mascot) {
             if (orphaned_mascot) {
                 orphaned_mascot(mascot);
+            } else {
+                WARN("<Mascot:%s:%u> Can not find new environment for orphaned mascot, dismissing", mascot->prototype->name, mascot->id);
+                mascot_attach_affordance_manager(mascot, NULL);
+                mascot_unlink(mascot);
             }
+            list_remove(env->mascot_manager.referenced_mascots, i);
         }
     }
+    list_free(env->mascot_manager.referenced_mascots);
+    pthread_mutex_unlock(&env->mascot_manager.mutex);
 
-    list_free(env->referenced_mascots);
+    pthread_mutex_destroy(&env->mascot_manager.mutex);
+
+    protocol_server_environment_widthdraw(env);
 
     if (env->xdg_output) {
         zxdg_output_v1_destroy(env->xdg_output);
@@ -2296,6 +2398,7 @@ void environment_unlink(environment_t *env)
         wl_output_destroy(env->output.output);
     }
     free(env);
+    wl_display_flush(display);
 }
 
 void environment_new_env_listener(void(*listener)(environment_t*))
@@ -2388,11 +2491,6 @@ void environment_destroy_subsurface(environment_subsurface_t* surface)
 
     surface->env->pending_commit = true;
 
-    uint32_t mascot_index = list_find(surface->env->referenced_mascots, surface->mascot);
-    if (mascot_index != UINT32_MAX) {
-        list_remove(surface->env->referenced_mascots, mascot_index);
-    }
-
     free(surface);
 }
 
@@ -2412,9 +2510,10 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 
     wl_surface_attach(surface->surface, sprite->buffer->buffer, 0, 0);
     wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-    if (!surface->drag_pointer) {
-        wl_surface_set_input_region(surface->surface, sprite->buffer->region);
-    }
+    // if (!surface->drag_pointer) {
+    //     environment_buffer_scale_input_region(sprite->buffer, surface->env->scale);
+    //     wl_surface_set_input_region(surface->surface, sprite->buffer->region);
+    // }
 
     if (!surface->pose) {
         wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
@@ -2450,23 +2549,57 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 enum environment_move_result environment_subsurface_move(environment_subsurface_t* surface, int32_t dx, int32_t dy, bool use_callback, bool use_interpolation)
 {
     if (!surface->surface) return environment_move_invalid;
-    if (!config_get_framerate()) use_interpolation = false;
+    if (!config_get_interpolation_framerate()) use_interpolation = false;
 
     enum environment_move_result result = environment_move_ok;
 
-    if (dy < 0) {
-        dy = 0;
-        result = environment_move_clamped;
-    } else if (dy > (int32_t)environment_workarea_height(surface->env)) {
-        dy = environment_workarea_height(surface->env);
-        result = environment_move_clamped;
+    int32_t proposed_x = dx, proposed_y = dy;
+    int32_t collision = 0;
+
+    int current_x = dx;
+    int current_y = yconv(surface->env, dy);
+    if (surface->mascot) {
+        current_x = surface->mascot->X->value.i;
+        current_y = yconv(surface->env, surface->mascot->Y->value.i);
     }
 
-    if (dx < 0) {
-        dx = 0;
-        result = environment_move_clamped;
-    } else if (dx > (int32_t)environment_workarea_width(surface->env)) {
-        dx = environment_workarea_width(surface->env);
+    // Check collisions for environment
+    collision = check_movement_collision(
+        &surface->env->workarea_geometry,
+        current_x, current_y,
+        dx, yconv(surface->env, dy),
+        BORDER_TYPE_NONE,
+        &proposed_x, &proposed_y
+    );
+
+    if (MOVE_OOB(collision) && (config_get_allow_throwing_multihead() || config_get_unified_outputs())) {
+        int32_t global_x = dx, global_y = yconv(surface->env, dy);
+        environment_to_global_coordinates(surface->env, &global_x, &global_y);
+        environment_t* new_env = environment_by_global_coords(global_x, global_y);
+        if (new_env) {
+            int32_t diff_x, diff_y;
+            environment_global_coordinates_delta(surface->env, new_env, &diff_x, &diff_y);
+            proposed_x = dx;
+            proposed_y = dy;
+
+            int32_t move_flags = 0;
+            if (!(collision & (BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR))) {
+                move_flags |= DIFF_VERTICAL_MOVE;
+            }
+            if (BORDER_IS_WALL(collision)) {
+                move_flags |= DIFF_HORIZONTAL_MOVE;
+            }
+
+            mascot_moved(surface->mascot, proposed_x, proposed_y);
+            mascot_apply_environment_position_diff(surface->mascot, diff_x, diff_y, move_flags, new_env);
+            mascot_environment_changed(surface->mascot, new_env);
+            return environment_move_ok;
+        }
+    }
+
+    if (COLLIDED(collision) && !environment_neighbor_border(surface->env, proposed_x, proposed_y)) {
+        dx = proposed_x;
+        dy = yconv(surface->env, proposed_y);
         result = environment_move_clamped;
     }
 
@@ -2475,13 +2608,6 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
     bool has_active_ie = false;
     if (environment_get_ie(surface->env)) {
         has_active_ie = surface->env->ie->active;
-    }
-
-    int current_x = dx;
-    int current_y = dy;
-    if (surface->mascot) {
-        current_x = surface->mascot->X->value.i;
-        current_y = yconv(surface->env, surface->mascot->Y->value.i);
     }
 
     int32_t ie_out_x = dx;
@@ -2588,11 +2714,42 @@ void environment_subsurface_release(environment_subsurface_t* surface) {
     drag_pointer->above_environment = NULL;
     environment_pointer_apply_cursor(drag_pointer, -2);
 
-    if (drag_pointer->x < 0 || drag_pointer->y < 0 || drag_pointer->x > (int32_t)environment_workarea_width(surface->env) || drag_pointer->y > (int32_t)environment_workarea_height(surface->env)) {
-        if (mascot_dropped_oob) {
-            mascot_dropped_oob(surface->mascot, drag_pointer->x, drag_pointer->y);
-        }
-    }
+    // int32_t mascot_x = surface->mascot->X->value.i;
+    // int32_t mascot_y = yconv(surface->env, surface->mascot->Y->value.i);
+
+    // INFO("Is outside %d, (box %ux%ux%ux%u, pos is %d, %d)", is_outside(&surface->env->workarea_geometry, mascot_x, mascot_y), surface->env->workarea_geometry.x, surface->env->workarea_geometry.y, surface->env->workarea_geometry.width, surface->env->workarea_geometry.height, mascot_x, mascot_y);
+    // INFO("Is inside %d, (box %ux%ux%ux%u, pos is %d, %d)", is_inside(&surface->env->workarea_geometry,  mascot_x, mascot_y), surface->env->workarea_geometry.x, surface->env->workarea_geometry.y, surface->env->workarea_geometry.width, surface->env->workarea_geometry.height,  mascot_x, mascot_y);
+
+
+    // if (is_outside(&surface->env->workarea_geometry,  mascot_x, mascot_y)) {
+    //     INFO("Is outside, at %d, %d",  mascot_x, mascot_y);
+    //     int32_t global_x = mascot_x, global_y = mascot_y;
+    //     environment_to_global_coordinates(surface->env, &global_x, &global_y);
+    //     environment_t* new_env = environment_by_global_coords(global_x, global_y);
+    //     if (new_env) {
+    //         int32_t diff_x, diff_y;
+    //         environment_global_coordinates_delta(surface->env, new_env, &diff_x, &diff_y);
+    //         int32_t proposed_x = drag_pointer->x + diff_x;
+    //         int32_t proposed_y = drag_pointer->y - diff_y;
+    //         if (surface->mascot) {
+    //             surface->mascot->X->value.i = proposed_x;
+    //             surface->mascot->Y->value.i = yconv(new_env, proposed_y);
+    //         }
+    //         INFO("Mascot moved to new environment %d, new position: (%d, %d)", new_env->id, proposed_x, proposed_y);
+    //         mascot_moved(surface->mascot, proposed_x, yconv(surface->env, proposed_y));
+    //         mascot_environment_changed(surface->mascot, new_env);
+    //         environment_subsurface_set_position(surface, proposed_x, proposed_y);
+    //     } else {
+    //         int32_t x = drag_pointer->x;
+    //         int32_t y = drag_pointer->y;
+    //         int32_t proposed_x = x;
+    //         int32_t proposed_y = y;
+    //         project_coords_to_border(&surface->env->workarea_geometry, x, y, BORDER_TYPE_ANY, &proposed_x, &proposed_y);
+    //         mascot_moved(surface->mascot, proposed_x, yconv(surface->env, proposed_y));
+    //         environment_subsurface_set_position(surface, proposed_x, proposed_y);
+    //         environment_subsurface_reset_interpolation(surface);
+    //     }
+    // }
 
     surface->env->pending_commit = true;
     surface->drag_pointer = NULL;
@@ -2718,7 +2875,6 @@ void environment_subsurface_associate_mascot(environment_subsurface_t* surface, 
 {
     if (!surface) return;
     surface->mascot = mascot_ptr;
-    list_add(surface->env->referenced_mascots, mascot_ptr);
 }
 
 void environment_subsurface_set_offset(environment_subsurface_t* surface, int32_t x, int32_t y) {
@@ -2733,7 +2889,8 @@ void environment_select_position(environment_t* env, void (*callback)(environmen
     env->select_callback = callback;
     env->select_active = callback != NULL;
     env->select_data = data;
-    environment_pointer_apply_cursor(active_pointer, mascot_hotspot_cursor_crosshair);
+    if (env->select_active) environment_pointer_apply_cursor(active_pointer, mascot_hotspot_cursor_crosshair);
+    environment_set_input_state(env, env->select_active);
 }
 
 void environment_set_input_state(environment_t* env, bool active)
@@ -2752,11 +2909,13 @@ int environment_get_display_fd() {
 
 struct mascot* environment_subsurface_get_mascot(environment_subsurface_t* surface)
 {
+    if (!surface) return NULL;
     return surface->mascot;
 }
 
 const struct mascot_pose* environment_subsurface_get_pose(environment_subsurface_t* surface)
 {
+    if (!surface) return NULL;
     return surface->pose;
 }
 
@@ -2853,6 +3012,99 @@ bool environment_ie_restore(environment_t *env)
     }
 }
 
+bool environment_ask_close(environment_t *environment)
+{
+    if (!environment) return false;
+    if (!environment->is_ready) return false;
+
+    environment_wants_to_close_callback(environment);
+    return true;
+}
+
+environment_shm_pool_t* environment_import_shm_pool(int32_t fd, uint32_t size)
+{
+    if (fd < 0 || size == 0) return NULL;
+
+    void* shared_pool = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (!shared_pool) {
+        WARN("Cannot import shared memory pool requested by client");
+        return NULL;
+    }
+    munmap(shared_pool, size);
+
+    environment_shm_pool_t* pool = calloc(1, sizeof(environment_shm_pool_t));
+    if (!pool) return NULL;
+
+    pool->pool = wl_shm_create_pool(shm_manager, fd, size);
+    close(fd);
+
+    return pool;
+}
+
+environment_buffer_t* environment_shm_pool_create_buffer(
+    environment_shm_pool_t* pool,
+    uint32_t offset,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride,
+    uint32_t format
+)
+{
+    if (!pool) return NULL;
+
+    environment_buffer_t* buffer = calloc(1, sizeof(environment_buffer_t));
+    if (!buffer) return NULL;
+
+    buffer->buffer = wl_shm_pool_create_buffer(pool->pool, offset, width, height, stride, format);
+    buffer->width = width;
+    buffer->height = height;
+    buffer->stride = stride;
+
+    return buffer;
+}
+
+void environment_shm_pool_destroy(environment_shm_pool_t* pool)
+{
+    if (!pool) return;
+
+    wl_shm_pool_destroy(pool->pool);
+    free(pool);
+}
+
+environment_popup_t* environment_popup_create(environment_t* environment, struct mascot* mascot, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    if (!environment || !mascot) return NULL;
+
+    environment_popup_t* popup = calloc(1, sizeof(environment_popup_t));
+    if (!popup) return NULL;
+
+    popup->environment = environment;
+    popup->mascot = mascot;
+
+    popup->surface = wl_compositor_create_surface(compositor);
+    popup->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, popup->surface);
+    popup->position = xdg_wm_base_create_positioner(xdg_wm_base);
+
+    xdg_positioner_set_anchor_rect(popup->position, x, y, 1, 1);
+    xdg_positioner_set_size(popup->position, width, height);
+
+    popup->popup = xdg_surface_get_popup(popup->xdg_surface, NULL, popup->position);
+    zwlr_layer_surface_v1_get_popup(environment->root_surface->layer_surface, popup->popup);
+
+    struct environment_callbacks* callbacks = calloc(1, sizeof(struct environment_callbacks));
+    wl_surface_attach_callbacks(popup->surface, callbacks);
+
+    return popup;
+}
+
+void environment_popup_commit(environment_popup_t* popup)
+{
+    if (!popup) return;
+
+    wl_surface_commit(popup->surface);
+}
+
+
 #endif
 
 enum environment_move_result environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
@@ -2927,6 +3179,10 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
     surface->x = dx;
     surface->y = dy;
 
+    // if (is_outside(&surface->env->geometry, dx, dy) && surface->is_grabbed) {
+    //     result = environment_move_out_of_bounds;
+    // }
+
     surface->env->pending_commit = true;
 
     return result;
@@ -2944,12 +3200,33 @@ int32_t environment_screen_height(environment_t* env)
 
 int32_t environment_workarea_width(environment_t* env)
 {
-    return env->width;
+    return env->advertised_geometry.width ? env->advertised_geometry.width : (int32_t)env->width;
 }
 
 int32_t environment_workarea_height(environment_t* env)
 {
-    return env->height;
+    return env->advertised_geometry.height ? env->advertised_geometry.height : (int32_t)env->height;
+
+}
+
+int32_t environment_workarea_left(environment_t* env)
+{
+    return env->advertised_geometry.x;
+}
+
+int32_t environment_workarea_right(environment_t* env)
+{
+    return env->advertised_geometry.x + env->advertised_geometry.width;
+}
+
+int32_t environment_workarea_top(environment_t* env)
+{
+    return env->advertised_geometry.y;
+}
+
+int32_t environment_workarea_bottom(environment_t* env)
+{
+    return env->advertised_geometry.y + env->advertised_geometry.height;
 }
 
 uint32_t environment_id(environment_t* env)
@@ -2989,29 +3266,27 @@ enum environment_border_type environment_get_border_type(environment_t *env, int
 
     y = yconv(env, y);
 
-    int32_t ie_out_x = 0;
-    int32_t ie_out_y = 0;
-    enum environment_border_type ie_border_type = environment_try_ie_collision(env, x, y, x, y, &ie_out_x, &ie_out_y);
+    int32_t border_type = BORDER_TYPE(check_collision_at(&env->workarea_geometry, x, y, 0));
+    int32_t masked_border = APPLY_MASK(border_type, env->border_mask);
 
-    // Detect type of border by coordinates using output size (width, height)
-    if (y <= 0) return environment_border_type_ceiling;
-    else if (x >= (int32_t)environment_workarea_width(env)|| x <= 0) return environment_border_type_wall;
-    else if (y >= (int32_t)environment_workarea_height(env)) return environment_border_type_floor;
-    else if (ie_border_type == environment_border_type_wall) return environment_border_type_wall;
-    else if (ie_border_type == environment_border_type_ceiling) return environment_border_type_ceiling;
-    else if (ie_border_type == environment_border_type_floor) return environment_border_type_floor;
-    else return environment_border_type_none;
+    if (masked_border & BORDER_TYPE_CEILING) return environment_border_type_ceiling;
+    if (BORDER_IS_WALL(masked_border)) return environment_border_type_wall;
+    if (masked_border & BORDER_TYPE_FLOOR) return environment_border_type_floor;
+
+    if (environment_neighbor_border(env, x, y)) return environment_border_type_none;
+
+    if (border_type & BORDER_TYPE_CEILING) return environment_border_type_ceiling;
+    if (BORDER_IS_WALL(border_type)) return environment_border_type_wall;
+    if (border_type & BORDER_TYPE_FLOOR) return environment_border_type_floor;
+
+    return environment_border_type_none;
+
 }
 
 
 void environment_set_broadcast_input_enabled_listener(void(*listener)(bool))
 {
     env_broadcast_input_enabled = listener;
-}
-
-void environment_set_mascot_by_coords_callback(struct mascot* (*callback)(environment_t*, int32_t, int32_t))
-{
-    mascot_by_coordinates = callback;
 }
 
 bool environment_migrate_subsurface(environment_subsurface_t* surface, environment_t* env)
@@ -3029,19 +3304,19 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
     // Unlink subsurface from the old environment
     struct mascot* mascot = environment_subsurface_get_mascot(surface);
     if (mascot) {
-        uint32_t mascot_index = list_find(surface->env->referenced_mascots, mascot);
+        mascot_announce_affordance(mascot, NULL);
+        uint32_t mascot_index = list_find(surface->env->mascot_manager.referenced_mascots, mascot);
         if (mascot_index != UINT32_MAX) {
-            list_remove(surface->env->referenced_mascots, mascot_index);
+            list_remove(surface->env->mascot_manager.referenced_mascots, mascot_index);
         }
     }
+
+    mascot_attach_affordance_manager(mascot, NULL);
 
     // Next we change our vision of the environment
     surface->env = env;
 
-    // Link subsurface to the new environment
-    if (mascot) {
-        list_add(env->referenced_mascots, mascot);
-    }
+    mascot_attach_affordance_manager(mascot, env->mascot_manager.affordances);
 
     // Get all user data from the surface
     struct wl_surface_data* userdata = wl_surface_get_user_data(surface->surface);
@@ -3072,8 +3347,15 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
 
     free(userdata);
 
+    // Link subsurface to the new environment
+    // pthread_mutex_lock(&env->mascot_manager.mutex);
+    if (mascot) {
+        list_add(env->mascot_manager.referenced_mascots, mascot);
+    }
+
     // Map the surface again
     environment_subsurface_attach(surface, pose);
+    // pthread_mutex_unlock(&env->mascot_manager.mutex);
 
     return true;
 
@@ -3171,8 +3453,14 @@ void environment_buffer_add_to_input_region(environment_buffer_t* buffer, int32_
             WARN("Failed to add buffer to input region: Failed to create region");
             return;
         }
+        buffer->scale_factor = 1;
     }
     wl_region_add(buffer->region, x, y, width, height);
+    buffer->input_region_desc.x = x;
+    buffer->input_region_desc.y = y;
+    buffer->input_region_desc.width = width;
+    buffer->input_region_desc.height = height;
+
 }
 
 void environment_buffer_subtract_from_input_region(environment_buffer_t* buffer, int32_t x, int32_t y, int32_t width, int32_t height)
@@ -3186,8 +3474,29 @@ void environment_buffer_subtract_from_input_region(environment_buffer_t* buffer,
             WARN("Failed to subtract buffer from input region: Failed to create region");
             return;
         }
+        buffer->scale_factor = 1;
     }
     wl_region_subtract(buffer->region, x, y, width, height);
+}
+
+void environment_buffer_scale_input_region(environment_buffer_t* buffer, float scale)
+{
+    if (!buffer) return;
+    if (!buffer->buffer) return;
+    if (!buffer->region) return;
+
+    if (buffer->scale_factor == scale) return;
+
+    wl_region_destroy(buffer->region);
+    buffer->region = wl_compositor_create_region(compositor);
+    if (!buffer->region) {
+        WARN("Failed to scale input region: Failed to create region");
+        return;
+    }
+
+    environment_buffer_add_to_input_region(buffer, buffer->input_region_desc.x/scale, buffer->input_region_desc.y/scale, buffer->input_region_desc.width/scale, buffer->input_region_desc.height/scale);
+
+    buffer->scale_factor = scale;
 }
 
 void environment_buffer_destroy(environment_buffer_t* buffer)
@@ -3203,14 +3512,15 @@ uint64_t environment_interpolate(environment_t *env)
     if (!env) return 0;
     if (!env->is_ready) return 0;
 
-    float framerate = config_get_framerate();
+    float framerate = config_get_interpolation_framerate();
     if (framerate < 0) framerate = (env->output.refresh / 1000.0);
     if (framerate < 1.0) return 0;
 
     float progress_fraction = framerate / 25.0;
     // Iterate through references mascots
-    for (uint32_t i = 0, c = list_count(env->referenced_mascots); i < list_size(env->referenced_mascots) && c > 0; i++) {
-        struct mascot* mascot = list_get(env->referenced_mascots, i);
+    pthread_mutex_lock(&env->mascot_manager.mutex);
+    for (uint32_t i = 0, c = list_count(env->mascot_manager.referenced_mascots); i < list_size(env->mascot_manager.referenced_mascots) && c > 0; i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
         if (mascot) {
             c--;
             if (mascot->subsurface) {
@@ -3239,6 +3549,7 @@ uint64_t environment_interpolate(environment_t *env)
             }
         }
     }
+    pthread_mutex_unlock(&env->mascot_manager.mutex);
     // Usecs to sleep
     return 1000000 / (env->output.refresh / 1000.0);
 }
@@ -3264,5 +3575,468 @@ void environment_subsurface_reset_interpolation(environment_subsurface_t* subsur
     subsurface->interpolation_data.prev_y = subsurface->y;
     subsurface->interpolation_data.x = subsurface->x;
     subsurface->interpolation_data.y = subsurface->y;
+}
 
+void environment_subsurface_scale_coordinates(environment_subsurface_t* surface, int32_t* x, int32_t* y)
+{
+    if (!surface) return;
+    if (!x || !y) return;
+    *x = *x * surface->env->scale;
+    *y = *y * surface->env->scale;
+}
+
+uint32_t environment_tick(environment_t* environment, uint32_t tick)
+{
+    if (!environment) return 0;
+    if (!environment->is_ready) return 0;
+    pthread_mutex_lock(&environment->mascot_manager.mutex);
+    struct list* mascots = environment->mascot_manager.referenced_mascots;
+    struct mascot_tick_return result = {};
+    for (size_t i = 0, c = 0; i < list_size(mascots) && c < list_count(mascots); i++) {
+        struct mascot* mascot = list_get(mascots, i);
+        if (!mascot) continue;
+        ++c;
+        enum mascot_tick_result tick_status = mascot_tick(mascot, tick, &result);
+        if (tick_status == mascot_tick_dispose) {
+            mascot_announce_affordance(mascot, NULL);
+            mascot_attach_affordance_manager(mascot, NULL);
+            mascot_unlink(mascot);
+            list_remove(mascots, i);
+        } else if (tick_status == mascot_tick_error) {
+            mascot_announce_affordance(mascot, NULL);
+            mascot_attach_affordance_manager(mascot, NULL);
+            mascot_unlink(mascot);
+            list_remove(mascots, i);
+        }
+        if (result.events_count) {
+            for (size_t j = 0; j < result.events_count; j++) {
+                enum mascot_tick_result event_type = result.events[j].event_type;
+                if (event_type == mascot_tick_clone) {
+                    struct mascot* clone = result.events[j].event.mascot;
+                    if (clone) {
+                        list_add(mascots, clone);
+                        mascot_attach_affordance_manager(clone, environment->mascot_manager.affordances);
+                        mascot_link(clone);
+                        protocol_server_environment_emit_mascot(environment, clone);
+                    }
+                }
+            }
+        }
+        if (tick_status == mascot_tick_reenter) {
+            i--;
+            c--;
+        }
+    }
+    pthread_mutex_unlock(&environment->mascot_manager.mutex);
+    return list_count(mascots);
+}
+
+void environment_remove_mascot(environment_t* environment, struct mascot* mascot)
+{
+    if (!environment) return;
+    if (!mascot) return;
+    pthread_mutex_lock(&environment->mascot_manager.mutex);
+
+    int res = ACTION_SET_ACTION_TRANSIENT;
+
+    if (mascot->prototype->dismiss_action && config_get_allow_dismiss_animations()) {
+        struct mascot_action_reference dismiss = {
+            .action = (struct mascot_action*)mascot->prototype->dismiss_action,
+        };
+        res = mascot_set_action(mascot, &dismiss, false, 0);
+    }
+
+    if (res != ACTION_SET_RESULT_OK) {
+        uint32_t index = list_find(environment->mascot_manager.referenced_mascots, mascot);
+        if (index != UINT32_MAX) {
+            list_remove(environment->mascot_manager.referenced_mascots, index);
+        }
+        mascot_attach_affordance_manager(mascot, NULL);
+        mascot_unlink(mascot);
+    }
+    pthread_mutex_unlock(&environment->mascot_manager.mutex);
+}
+
+void environment_set_prototype_store(environment_t* environment, mascot_prototype_store* store)
+{
+    if (!environment) return;
+    if (!store) return;
+    environment->mascot_manager.prototype_store = store;
+}
+
+uint32_t environment_mascot_count(environment_t* environment)
+{
+    if (!environment) return 0;
+    return list_count(environment->mascot_manager.referenced_mascots);
+}
+
+void environment_summon_mascot(
+    environment_t* environment, struct mascot_prototype* prototype,
+    int32_t x, int32_t y, void(*callback)(struct mascot*, void*), void* data
+)
+{
+    if (!environment) return;
+    if (!prototype) return;
+    struct mascot* mascot = mascot_new(prototype, NULL, 0, 0, x, y, 2.0, 0.05, 0.1, false, environment);
+    if (!mascot){
+        if (callback) callback(mascot, data);
+        return;
+    }
+
+    struct list *mascots = environment->mascot_manager.referenced_mascots;
+    pthread_mutex_lock(&environment->mascot_manager.mutex);
+    list_add(mascots, mascot);
+    mascot_attach_affordance_manager(mascot, environment->mascot_manager.affordances);
+    mascot_link(mascot);
+    pthread_mutex_unlock(&environment->mascot_manager.mutex);
+
+    protocol_server_environment_emit_mascot(environment, mascot);
+
+    if (callback) callback(mascot, data);
+}
+
+void environment_set_global_coordinates_searcher(
+    environment_t* (environment_by_global_coordinates)(int32_t x, int32_t y)
+)
+{
+    lookup_environment_by_coords = environment_by_global_coordinates;
+}
+
+void environment_global_coordinates_delta(
+    environment_t* environment_a,
+    environment_t* environment_b,
+    int32_t* dx, int32_t* dy
+)
+{
+    if (!environment_a || !environment_b) return;
+    if (!dx || !dy) return;
+
+    // Calculate difference between two environments in global coordinates
+    // This is useful for calculating the new position of a mascot when moving it between environments
+
+    int32_t dx_ = environment_a->lx - environment_b->lx;
+    int32_t dy_ = environment_a->ly - environment_b->ly;
+
+    *dx = dx_;
+    *dy = dy_;
+}
+
+struct mascot* environment_mascot_by_coordinates(environment_t* environment, int32_t x, int32_t y)
+{
+    if (!environment) return NULL;
+    if (!environment->is_ready) return NULL;
+    if (!environment->mascot_manager.referenced_mascots) return NULL;
+
+    struct list* mascots = environment->mascot_manager.referenced_mascots;
+    struct mascot* mascot = NULL;
+    uint32_t mascot_score = 0;
+    pthread_mutex_lock(&environment->mascot_manager.mutex);
+    INFO("Size, count %d %d", list_size(mascots), list_count(mascots));
+    for (size_t i = 0, c = 0; i < list_size(mascots) && c < list_count(mascots); i++) {
+        struct mascot* mascot_ = list_get(mascots, i);
+        INFO("Checking mascot: %p index %d", mascot_, i);
+        if (!mascot_) continue;
+        INFO("Checking mascot: score %d", mascot_score);
+        c++;
+        if (mascot_->dragged) continue;
+        if (mascot_->subsurface) {
+            if (x >= mascot_->subsurface->x && x <= mascot_->subsurface->x + mascot_->subsurface->width) {
+                if (y >= mascot_->subsurface->y && y <= mascot_->subsurface->y + mascot_->subsurface->height) {
+                    INFO("Mascot found by coordinates: %p %d", mascot_, mascot_score);
+                    if (!mascot_->dragged_tick || mascot_->dragged_tick > mascot_score) {
+                        mascot = mascot_;
+                        mascot_score = mascot_->dragged_tick;
+                    }
+                }
+            }
+        }
+    }
+    pthread_mutex_unlock(&environment->mascot_manager.mutex);
+    return mascot;
+}
+
+struct mascot* environment_mascot_by_id(environment_t* environment, uint32_t id)
+{
+    if (!environment) return NULL;
+    if (!environment->is_ready) return NULL;
+    if (!environment->mascot_manager.referenced_mascots) return NULL;
+
+    struct list* mascots = environment->mascot_manager.referenced_mascots;
+    struct mascot* mascot = NULL;
+    pthread_mutex_lock(&environment->mascot_manager.mutex);
+    for (size_t i = 0; i < list_size(mascots); i++) {
+        struct mascot* mascot_ = list_get(mascots, i);
+        if (!mascot_) continue;
+        if (mascot_->id == id) {
+            mascot = mascot_;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&environment->mascot_manager.mutex);
+    return mascot;
+}
+
+struct list* environment_mascot_list(environment_t* environment, pthread_mutex_t** list_mutex)
+{
+    if (!environment) return NULL;
+
+    if (list_mutex) *list_mutex = &environment->mascot_manager.mutex;
+    return environment->mascot_manager.referenced_mascots;
+}
+
+struct bounding_box* environment_global_geometry(environment_t* environment)
+{
+    if (!environment) return NULL;
+    return &environment->global_geometry;
+}
+
+struct bounding_box* environment_local_geometry(environment_t* environment)
+{
+    if (!environment) return NULL;
+    return &environment->workarea_geometry;
+}
+
+void environment_to_global_coordinates(
+    environment_t* environment,
+    int32_t* x, int32_t* y
+)
+{
+    if (!environment) return;
+    if (!x || !y) return;
+    *x += environment->lx;
+    *y += environment->ly;
+}
+
+void environment_recalculate_advertised_geometry(environment_t* env)
+{
+    if (!env) return;
+    if (!env->is_ready) return;
+
+    // Initialize variables to store the maximum dimensions and offsets
+    int32_t max_left_offset = 0, max_right_offset = 0, max_top_offset = 0, max_bottom_offset = 0;
+    int32_t max_width = env->workarea_geometry.width, max_height = env->workarea_geometry.height;
+
+    int32_t new_border_mask = 0;
+    bool ceiling_aligned = false, floor_aligned = false, left_aligned = false, right_aligned = false;
+
+    // Iterate through the neighbors to find the maximum dimensions and offsets
+    for (size_t i = 0; i < list_size(env->neighbors); i++) {
+        environment_t* neighbor = list_get(env->neighbors, i);
+        if (!neighbor) continue;
+        if (!neighbor->is_ready) continue;
+
+        // Check if the neighbor touches the left border
+        if (bounding_box_touches(&env->global_geometry, &neighbor->global_geometry, BORDER_TYPE_RIGHT | BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR)) {
+            int32_t left_offset = env->global_geometry.x - neighbor->global_geometry.x;
+            if (left_offset > max_left_offset) {
+                max_left_offset = left_offset;
+                max_width = neighbor->global_geometry.width + env->global_geometry.width;
+            }
+            new_border_mask |= BORDER_TYPE_LEFT;
+            if (neighbor->global_geometry.y == env->global_geometry.y) {
+                ceiling_aligned = true;
+            }
+            if (neighbor->global_geometry.y + neighbor->global_geometry.height == env->global_geometry.y + env->global_geometry.height) {
+                floor_aligned = true;
+            }
+            continue;
+        }
+
+        // Check if the neighbor touches the right border
+        if (bounding_box_touches(&env->global_geometry, &neighbor->global_geometry, BORDER_TYPE_LEFT | BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR)) {
+            int32_t right_offset = neighbor->global_geometry.x + neighbor->global_geometry.width - env->global_geometry.x;
+            if (right_offset > max_right_offset) {
+                max_right_offset = right_offset;
+                max_width = neighbor->global_geometry.width + env->global_geometry.width;
+            }
+            new_border_mask |= BORDER_TYPE_RIGHT;
+            if (neighbor->global_geometry.y == env->global_geometry.y) {
+                ceiling_aligned = true;
+            }
+            if (neighbor->global_geometry.y + neighbor->global_geometry.height == env->global_geometry.y + env->global_geometry.height) {
+                floor_aligned = true;
+            }
+            continue;
+        }
+
+        // Check if the neighbor touches the top border
+        if (bounding_box_touches(&env->global_geometry, &neighbor->global_geometry, BORDER_TYPE_RIGHT | BORDER_TYPE_LEFT | BORDER_TYPE_FLOOR)) {
+            int32_t top_offset = env->global_geometry.y - neighbor->global_geometry.y;
+            if (top_offset > max_top_offset) {
+                max_top_offset = top_offset;
+                max_height = neighbor->global_geometry.height + env->global_geometry.height;
+            }
+            new_border_mask |= BORDER_TYPE_CEILING;
+            if (neighbor->global_geometry.x == env->global_geometry.x) {
+                left_aligned = true;
+            }
+            if (neighbor->global_geometry.x + neighbor->global_geometry.width == env->global_geometry.x + env->global_geometry.width) {
+                right_aligned = true;
+            }
+            continue;
+        }
+
+        // Check if the neighbor touches the bottom border
+        if (bounding_box_touches(&env->global_geometry, &neighbor->global_geometry, BORDER_TYPE_RIGHT | BORDER_TYPE_CEILING | BORDER_TYPE_LEFT)) {
+            int32_t bottom_offset = neighbor->global_geometry.y + neighbor->global_geometry.height - env->global_geometry.y;
+            if (bottom_offset > max_bottom_offset) {
+                max_bottom_offset = bottom_offset;
+                max_height = neighbor->global_geometry.height + env->global_geometry.height;
+            }
+            new_border_mask |= BORDER_TYPE_FLOOR;
+            if (neighbor->global_geometry.x == env->global_geometry.x) {
+                left_aligned = true;
+            }
+            if (neighbor->global_geometry.x + neighbor->global_geometry.width == env->global_geometry.x + env->global_geometry.width) {
+                right_aligned = true;
+            }
+            continue;
+        }
+    }
+
+    // Update the advertised geometry based on the maximum dimensions and offsets
+    env->advertised_geometry.x = env->workarea_geometry.x - max_left_offset;
+    env->advertised_geometry.y = env->workarea_geometry.y - max_top_offset;
+    env->advertised_geometry.width = max_width;
+    env->advertised_geometry.height = max_height;
+    env->ceiling_aligned = ceiling_aligned;
+    env->floor_aligned = floor_aligned;
+    env->left_aligned = left_aligned;
+    env->right_aligned = right_aligned;
+
+    // Mask the borders that are touched by neighbors
+    env->border_mask = new_border_mask;
+    INFO("------------[Environment %d recalculate advertised geometry]---------------", env->id);
+    INFO("New border mask is %d", env->border_mask);
+    INFO("Advertised geometry is %d, %d, %d, %d", env->advertised_geometry.x, env->advertised_geometry.y, env->advertised_geometry.width, env->advertised_geometry.height);
+    INFO("Geometry alignment: %s%s%s%s", ceiling_aligned ? "ceiling " : "", floor_aligned ? "floor " : "", left_aligned ? "left " : "", right_aligned ? "right" : "");
+    INFO("--------------------------------------------------------------------------");
+}
+
+void environment_announce_neighbor(environment_t* environment, environment_t* neighbor)
+{
+    if (!environment || !neighbor) return;
+    if (!config_get_unified_outputs()) return;
+    if (environment == neighbor) return;
+
+    INFO("Announcing neighbor %d to %d", neighbor->id, environment->id);
+
+    if (environment->neighbors) {
+        if (list_find(environment->neighbors, neighbor) != UINT32_MAX) {
+            WARN("waht?");
+            return;
+        }
+    }
+    list_add(environment->neighbors, neighbor);
+    environment_recalculate_advertised_geometry(environment);
+}
+
+void environment_widthdraw_neighbor(environment_t* environment, environment_t* neighbor)
+{
+    if (!environment || !neighbor) return;
+    if (!config_get_unified_outputs()) return;
+    if (environment == neighbor) return;
+
+    INFO("Widthdrawing neighbor %d from %d", neighbor->id, environment->id);
+
+    uint32_t index = list_find(environment->neighbors, neighbor);
+    if (index != UINT32_MAX) {
+        list_remove(environment->neighbors, index);
+        environment_recalculate_advertised_geometry(environment);
+    }
+}
+
+bool environment_neighbor_border(environment_t* environment, int32_t x, int32_t y)
+{
+    if (!environment) return false;
+    if (!environment->is_ready) return false;
+
+    int32_t global_x = x, global_y = y;
+    environment_to_global_coordinates(environment, &global_x, &global_y);
+
+    for (size_t i = 0; i < list_size(environment->neighbors); i++) {
+        environment_t* neighbor = list_get(environment->neighbors, i);
+        if (!neighbor) continue;
+        int32_t collision_at = BORDER_TYPE(check_collision_at(&neighbor->global_geometry, global_x, global_y, 0));
+        if (collision_at) return true;
+    }
+    return false;
+}
+
+void environment_set_affordance_manager(environment_t* environment, struct mascot_affordance_manager* manager)
+{
+    if (!environment) return;
+    environment->mascot_manager.affordances = manager;
+    for (size_t i = 0; i < list_size(environment->mascot_manager.referenced_mascots); i++) {
+        struct mascot* mascot = list_get(environment->mascot_manager.referenced_mascots, i);
+        if (!mascot) continue;
+        mascot_attach_affordance_manager(mascot, manager);
+    }
+}
+
+int32_t environment_workarea_coordinate_aligned(environment_t* env, int32_t border_type, int32_t alignment_type)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t retval = 0;
+    if (border_type & BORDER_TYPE_LEFT) {
+        retval = env->workarea_geometry.x;
+        if (alignment_type & BORDER_TYPE_FLOOR && env->ceiling_aligned) {
+            retval = env->advertised_geometry.x;
+        } else if (alignment_type & BORDER_TYPE_CEILING && env->floor_aligned) {
+            retval = env->advertised_geometry.x;
+        }
+    } else if (border_type & BORDER_TYPE_RIGHT) {
+        retval = env->workarea_geometry.x + env->workarea_geometry.width;
+        if (alignment_type & BORDER_TYPE_FLOOR && env->ceiling_aligned) {
+            retval = env->advertised_geometry.x + env->advertised_geometry.width;
+        } else if (alignment_type & BORDER_TYPE_CEILING && env->floor_aligned) {
+            retval = env->advertised_geometry.x + env->advertised_geometry.width;
+        }
+    } else if (border_type & BORDER_TYPE_CEILING) {
+        retval = env->advertised_geometry.y;
+        if (alignment_type & BORDER_TYPE_LEFT && env->left_aligned) {
+            retval = env->advertised_geometry.y;
+        } else if (alignment_type & BORDER_TYPE_RIGHT && env->right_aligned) {
+            retval = env->advertised_geometry.y;
+        }
+    } else if (border_type & BORDER_TYPE_FLOOR) {
+        retval = env->advertised_geometry.y + env->advertised_geometry.height;
+        if (alignment_type & BORDER_TYPE_LEFT && env->left_aligned) {
+            retval = env->advertised_geometry.y + env->advertised_geometry.height;
+        } else if (alignment_type & BORDER_TYPE_RIGHT && env->right_aligned) {
+            retval = env->advertised_geometry.y + env->advertised_geometry.height;
+        }
+    }
+
+    return retval;
+}
+
+int32_t environment_workarea_width_aligned(environment_t* env, int32_t alignment_type)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t retval = env->workarea_geometry.width;
+    if (alignment_type & BORDER_TYPE_CEILING && env->ceiling_aligned) {
+        retval = env->advertised_geometry.width;
+    } else if (alignment_type & BORDER_TYPE_FLOOR && env->floor_aligned) {
+        retval = env->advertised_geometry.width;
+    }
+    return retval;
+}
+
+int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignment_type)
+{
+    if (!env) return 0;
+    if (!env->is_ready) return 0;
+
+    int32_t retval = env->workarea_geometry.height;
+    if (alignment_type & BORDER_TYPE_LEFT && env->left_aligned) {
+        retval = env->advertised_geometry.height;
+    } else if (alignment_type & BORDER_TYPE_RIGHT && env->right_aligned) {
+        retval = env->advertised_geometry.height;
+    }
+    return retval;
 }

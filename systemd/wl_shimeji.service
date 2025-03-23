@@ -1,0 +1,7 @@
+[Unit]
+Description=wl_shimeji's overlay daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/shimeji-overlayd
+Restart=never

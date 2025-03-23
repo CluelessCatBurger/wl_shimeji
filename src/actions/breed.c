@@ -28,7 +28,7 @@ enum mascot_tick_result breed_action_init(struct mascot *mascot, struct mascot_a
         return mascot_tick_next;
     }
 
-    if (config_get_mascot_limit() <= mascot_total_count) {
+    if (config_get_mascot_limit() <= (int32_t)mascot_total_count) {
         return mascot_tick_next;
     }
 

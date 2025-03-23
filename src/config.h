@@ -22,78 +22,59 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
-#define CONFIG_PARAM_BREEDING_ID 0
-#define CONFIG_PARAM_DRAGGING_ID 1
-#define CONFIG_PARAM_IE_INTERACTIONS_ID 2
-#define CONFIG_PARAM_IE_THROWING_ID 3
-#define CONFIG_PARAM_CURSOR_DATA_ID 4
-#define CONFIG_PARAM_MASCOT_LIMIT_ID 5
-#define CONFIG_PARAM_IE_THROW_POLICY_ID 6
-#define CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS_ID 7
-#define CONFIG_PARAM_PER_MASCOT_INTERACTIONS_ID 8
-#define CONFIG_PARAM_TICK_DELAY_ID 9
-#define CONFIG_PARAM_OVERLAY_LAYER 10
+#define CONFIG_PARAM_BREEDING "BREEDING"
+#define CONFIG_PARAM_DRAGGING "DRAGGING"
+#define CONFIG_PARAM_IE_INTERACTIONS "WINDOW_INTERACTIONS"
+#define CONFIG_PARAM_IE_THROWING "WINDOW_THROWING"
+#define CONFIG_PARAM_CURSOR_DATA "CURSOR_POSITION"
+#define CONFIG_PARAM_MASCOT_LIMIT "MASCOT_LIMIT"
+#define CONFIG_PARAM_IE_THROW_POLICY "WINDOW_THROW_POLICY"
+#define CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS "DISMISS_ANIMATIONS"
+#define CONFIG_PARAM_PER_MASCOT_INTERACTIONS "AFFORDANCES"
+#define CONFIG_PARAM_INTERPOLATION_FRAMERATE "INTERPOLATION_FRAMERATE"
+#define CONFIG_PARAM_OVERLAY_LAYER "WLR_SHELL_LAYER"
+#define CONFIG_PARAM_TABLETS_ENABLED "TABLETS_ENABLED"
+#define CONFIG_PARAM_POINTER_LEFT_BUTTON "POINTER_LEFT_BUTTON"
+#define CONFIG_PARAM_POINTER_RIGHT_BUTTON "POINTER_RIGHT_BUTTON"
+#define CONFIG_PARAM_POINTER_MIDDLE_BUTTON "POINTER_MIDDLE_BUTTON"
+#define CONFIG_PARAM_ON_TOOL_PEN "ON_TOOL_PEN"
+#define CONFIG_PARAM_ON_TOOL_ERASER "ON_TOOL_ERASER"
+#define CONFIG_PARAM_ON_TOOL_BRUSH "ON_TOOL_BRUSH"
+#define CONFIG_PARAM_ON_TOOL_PENCIL "ON_TOOL_PENCIL"
+#define CONFIG_PARAM_ON_TOOL_AIRBRUSH "ON_TOOL_AIRBRUSH"
+#define CONFIG_PARAM_ON_TOOL_FINGER "ON_TOOL_FINGER"
+#define CONFIG_PARAM_ON_TOOL_LENS "ON_TOOL_LENS"
+#define CONFIG_PARAM_ON_TOOL_MOUSE "ON_TOOL_MOUSE"
+#define CONFIG_PARAM_ON_TOOL_BUTTON1 "ON_TOOL_BUTTON1"
+#define CONFIG_PARAM_ON_TOOL_BUTTON2 "ON_TOOL_BUTTON2"
+#define CONFIG_PARAM_ON_TOOL_BUTTON3 "ON_TOOL_BUTTON3"
+#define CONFIG_PARAM_ALLOW_THROWING_MULTIHEAD "ALLOW_THROWING_MULTIHEAD"
+#define CONFIG_PARAM_ALLOW_DRAGGING_MULTIHEAD "ALLOW_DRAGGING_MULTIHEAD"
+#define CONFIG_PARAM_UNIFIED_OUTPUTS "UNIFIED_OUTPUTS"
+#define CONFIG_PARAM_COUNT 29
 
 #define POINTER_PRIMARY_BUTTON 0x01
 #define POINTER_SECONDARY_BUTTON 0x02
 #define POINTER_THIRD_BUTTON 0x04
 
-struct config {
-    bool breeding;
-    bool dragging;
-    bool ie_interactions;
-    bool ie_throwing;
-    bool cursor_data;
-    bool dismiss_animations;
-    bool affordances;
-    int32_t overlay_layer;
-
-    int32_t framerate;
-
-    uint32_t mascot_limit;
-    int32_t ie_throw_policy;
-
-    // Button mappings
-    int32_t pointer_left_value;
-    int32_t pointer_right_value;
-    int32_t pointer_middle_value;
-
-    // Tablets config
-    bool enable_tablets;
-
-    // Mappings for tool up/down events
-    int32_t on_tool_pen_value;
-    int32_t on_tool_eraser_value;
-    int32_t on_tool_brush_value;
-    int32_t on_tool_pencil_value;
-    int32_t on_tool_airbrush_value;
-    int32_t on_tool_finger_value;
-    int32_t on_tool_lens_value;
-    int32_t on_tool_mouse_value;
-
-    // Mappings for tool button events
-    int32_t on_tool_button1_value;
-    int32_t on_tool_button2_value;
-    int32_t on_tool_button3_value;
-};
-
 // Uses global variable
 bool config_parse(const char* path);
 void config_write(const char* path);
 
-bool config_set_breeding(bool value);
-bool config_set_dragging(bool value);
-bool config_set_ie_interactions(bool value);
-bool config_set_ie_throwing(bool value);
-bool config_set_cursor_data(bool value);
-bool config_set_mascot_limit(uint32_t value);
+bool config_set_breeding(int32_t value);
+bool config_set_dragging(int32_t value);
+bool config_set_ie_interactions(int32_t value);
+bool config_set_ie_throwing(int32_t value);
+bool config_set_cursor_data(int32_t value);
+bool config_set_mascot_limit(int32_t value);
 bool config_set_ie_throw_policy(int32_t value);
-bool config_set_allow_dismiss_animations(bool value);
-bool config_set_per_mascot_interactions(bool value);
-bool config_set_framerate(int32_t value);
+bool config_set_allow_dismiss_animations(int32_t value);
+bool config_set_per_mascot_interactions(int32_t value);
+bool config_set_interpolation_framerate(int32_t value);
 bool config_set_overlay_layer(int32_t value);
-bool config_set_tablets_enabled(bool value);
+bool config_set_tablets_enabled(int32_t value);
 bool config_set_pointer_left_button(int32_t value);
 bool config_set_pointer_right_button(int32_t value);
 bool config_set_pointer_middle_button(int32_t value);
@@ -108,32 +89,78 @@ bool config_set_on_tool_mouse(int32_t value);
 bool config_set_on_tool_button1(int32_t value);
 bool config_set_on_tool_button2(int32_t value);
 bool config_set_on_tool_button3(int32_t value);
+bool config_set_allow_throwing_multihead(int32_t value);
+bool config_set_allow_dragging_multihead(int32_t value);
+bool config_set_unified_outputs(int32_t value);
 
-bool config_get_breeding();
-bool config_get_dragging();
-bool config_get_ie_interactions();
-bool config_get_ie_throwing();
-bool config_get_cursor_data();
-uint32_t config_get_mascot_limit();
+int32_t config_get_breeding();
+int32_t config_get_dragging();
+int32_t config_get_ie_interactions();
+int32_t config_get_ie_throwing();
+int32_t config_get_cursor_data();
+int32_t config_get_mascot_limit();
 int32_t config_get_ie_throw_policy();
-bool config_get_allow_dismiss_animations();
-bool config_get_per_mascot_interactions();
-int32_t config_get_framerate();
+int32_t config_get_allow_dismiss_animations();
+int32_t config_get_per_mascot_interactions();
+int32_t config_get_interpolation_framerate();
 int32_t config_get_overlay_layer();
-bool config_get_tablets_enabled();
-uint32_t config_get_pointer_left_button();
-uint32_t config_get_pointer_right_button();
-uint32_t config_get_pointer_middle_button();
-uint32_t config_get_on_tool_pen();
-uint32_t config_get_on_tool_eraser();
-uint32_t config_get_on_tool_brush();
-uint32_t config_get_on_tool_pencil();
-uint32_t config_get_on_tool_airbrush();
-uint32_t config_get_on_tool_finger();
-uint32_t config_get_on_tool_lens();
-uint32_t config_get_on_tool_mouse();
-uint32_t config_get_on_tool_button1();
-uint32_t config_get_on_tool_button2();
-uint32_t config_get_on_tool_button3();
+int32_t config_get_tablets_enabled();
+int32_t config_get_pointer_left_button();
+int32_t config_get_pointer_right_button();
+int32_t config_get_pointer_middle_button();
+int32_t config_get_on_tool_pen();
+int32_t config_get_on_tool_eraser();
+int32_t config_get_on_tool_brush();
+int32_t config_get_on_tool_pencil();
+int32_t config_get_on_tool_airbrush();
+int32_t config_get_on_tool_finger();
+int32_t config_get_on_tool_lens();
+int32_t config_get_on_tool_mouse();
+int32_t config_get_on_tool_button1();
+int32_t config_get_on_tool_button2();
+int32_t config_get_on_tool_button3();
+int32_t config_get_allow_throwing_multihead();
+int32_t config_get_allow_dragging_multihead();
+int32_t config_get_unified_outputs();
+
+const char* config_get_prototypes_location();
+const char* config_get_plugins_location();
+const char* config_get_socket_location();
+
+bool config_get_by_key(const char* key, char* dest, uint8_t size);
+bool config_set_by_key(const char* key, const char* value);
+
+__attribute((unused)) static const char* config_keys[] = {
+    CONFIG_PARAM_BREEDING,
+    CONFIG_PARAM_DRAGGING,
+    CONFIG_PARAM_IE_INTERACTIONS,
+    CONFIG_PARAM_IE_THROWING,
+    CONFIG_PARAM_IE_THROW_POLICY,
+    CONFIG_PARAM_CURSOR_DATA,
+    CONFIG_PARAM_MASCOT_LIMIT,
+    CONFIG_PARAM_ALLOW_THROWING_MULTIHEAD,
+    CONFIG_PARAM_ALLOW_DRAGGING_MULTIHEAD,
+    CONFIG_PARAM_UNIFIED_OUTPUTS,
+    CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS,
+    CONFIG_PARAM_PER_MASCOT_INTERACTIONS,
+    CONFIG_PARAM_INTERPOLATION_FRAMERATE,
+    CONFIG_PARAM_OVERLAY_LAYER,
+    CONFIG_PARAM_TABLETS_ENABLED,
+    CONFIG_PARAM_POINTER_LEFT_BUTTON,
+    CONFIG_PARAM_POINTER_RIGHT_BUTTON,
+    CONFIG_PARAM_POINTER_MIDDLE_BUTTON,
+    CONFIG_PARAM_ON_TOOL_PEN,
+    CONFIG_PARAM_ON_TOOL_ERASER,
+    CONFIG_PARAM_ON_TOOL_BRUSH,
+    CONFIG_PARAM_ON_TOOL_PENCIL,
+    CONFIG_PARAM_ON_TOOL_AIRBRUSH,
+    CONFIG_PARAM_ON_TOOL_FINGER,
+    CONFIG_PARAM_ON_TOOL_LENS,
+    CONFIG_PARAM_ON_TOOL_MOUSE,
+    CONFIG_PARAM_ON_TOOL_BUTTON1,
+    CONFIG_PARAM_ON_TOOL_BUTTON2,
+    CONFIG_PARAM_ON_TOOL_BUTTON3,
+    NULL
+};
 
 #endif
