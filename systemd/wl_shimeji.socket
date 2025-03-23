@@ -1,5 +1,5 @@
 [Socket]
-ListenUnix=/run/user/%i/shimeji-overlayd.sock
+ListenSequentialPacket=/run/user/%i/shimeji-overlayd.sock
 Accept=no
 
 [Install]
