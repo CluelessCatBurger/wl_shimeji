@@ -3012,6 +3012,99 @@ bool environment_ie_restore(environment_t *env)
     }
 }
 
+bool environment_ask_close(environment_t *environment)
+{
+    if (!environment) return false;
+    if (!environment->is_ready) return false;
+
+    environment_wants_to_close_callback(environment);
+    return true;
+}
+
+environment_shm_pool_t* environment_import_shm_pool(int32_t fd, uint32_t size)
+{
+    if (fd < 0 || size == 0) return NULL;
+
+    void* shared_pool = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (!shared_pool) {
+        WARN("Cannot import shared memory pool requested by client");
+        return NULL;
+    }
+    munmap(shared_pool, size);
+
+    environment_shm_pool_t* pool = calloc(1, sizeof(environment_shm_pool_t));
+    if (!pool) return NULL;
+
+    pool->pool = wl_shm_create_pool(shm_manager, fd, size);
+    close(fd);
+
+    return pool;
+}
+
+environment_buffer_t* environment_shm_pool_create_buffer(
+    environment_shm_pool_t* pool,
+    uint32_t offset,
+    uint32_t width,
+    uint32_t height,
+    uint32_t stride,
+    uint32_t format
+)
+{
+    if (!pool) return NULL;
+
+    environment_buffer_t* buffer = calloc(1, sizeof(environment_buffer_t));
+    if (!buffer) return NULL;
+
+    buffer->buffer = wl_shm_pool_create_buffer(pool->pool, offset, width, height, stride, format);
+    buffer->width = width;
+    buffer->height = height;
+    buffer->stride = stride;
+
+    return buffer;
+}
+
+void environment_shm_pool_destroy(environment_shm_pool_t* pool)
+{
+    if (!pool) return;
+
+    wl_shm_pool_destroy(pool->pool);
+    free(pool);
+}
+
+environment_popup_t* environment_popup_create(environment_t* environment, struct mascot* mascot, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
+{
+    if (!environment || !mascot) return NULL;
+
+    environment_popup_t* popup = calloc(1, sizeof(environment_popup_t));
+    if (!popup) return NULL;
+
+    popup->environment = environment;
+    popup->mascot = mascot;
+
+    popup->surface = wl_compositor_create_surface(compositor);
+    popup->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, popup->surface);
+    popup->position = xdg_wm_base_create_positioner(xdg_wm_base);
+
+    xdg_positioner_set_anchor_rect(popup->position, x, y, 1, 1);
+    xdg_positioner_set_size(popup->position, width, height);
+
+    popup->popup = xdg_surface_get_popup(popup->xdg_surface, NULL, popup->position);
+    zwlr_layer_surface_v1_get_popup(environment->root_surface->layer_surface, popup->popup);
+
+    struct environment_callbacks* callbacks = calloc(1, sizeof(struct environment_callbacks));
+    wl_surface_attach_callbacks(popup->surface, callbacks);
+
+    return popup;
+}
+
+void environment_popup_commit(environment_popup_t* popup)
+{
+    if (!popup) return;
+
+    wl_surface_commit(popup->surface);
+}
+
+
 #endif
 
 enum environment_move_result environment_ie_move(environment_t* env, int32_t dx, int32_t dy)
@@ -3946,96 +4039,4 @@ int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignmen
         retval = env->advertised_geometry.height;
     }
     return retval;
-}
-
-bool environment_ask_close(environment_t *environment)
-{
-    if (!environment) return false;
-    if (!environment->is_ready) return false;
-
-    environment_wants_to_close_callback(environment);
-    return true;
-}
-
-environment_shm_pool_t* environment_import_shm_pool(int32_t fd, uint32_t size)
-{
-    if (fd < 0 || size == 0) return NULL;
-
-    void* shared_pool = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (!shared_pool) {
-        WARN("Cannot import shared memory pool requested by client");
-        return NULL;
-    }
-    munmap(shared_pool, size);
-
-    environment_shm_pool_t* pool = calloc(1, sizeof(environment_shm_pool_t));
-    if (!pool) return NULL;
-
-    pool->pool = wl_shm_create_pool(shm_manager, fd, size);
-    close(fd);
-
-    return pool;
-}
-
-environment_buffer_t* environment_shm_pool_create_buffer(
-    environment_shm_pool_t* pool,
-    uint32_t offset,
-    uint32_t width,
-    uint32_t height,
-    uint32_t stride,
-    uint32_t format
-)
-{
-    if (!pool) return NULL;
-
-    environment_buffer_t* buffer = calloc(1, sizeof(environment_buffer_t));
-    if (!buffer) return NULL;
-
-    buffer->buffer = wl_shm_pool_create_buffer(pool->pool, offset, width, height, stride, format);
-    buffer->width = width;
-    buffer->height = height;
-    buffer->stride = stride;
-
-    return buffer;
-}
-
-void environment_shm_pool_destroy(environment_shm_pool_t* pool)
-{
-    if (!pool) return;
-
-    wl_shm_pool_destroy(pool->pool);
-    free(pool);
-}
-
-environment_popup_t* environment_popup_create(environment_t* environment, struct mascot* mascot, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
-{
-    if (!environment || !mascot) return NULL;
-
-    environment_popup_t* popup = calloc(1, sizeof(environment_popup_t));
-    if (!popup) return NULL;
-
-    popup->environment = environment;
-    popup->mascot = mascot;
-
-    popup->surface = wl_compositor_create_surface(compositor);
-    popup->xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, popup->surface);
-    popup->position = xdg_wm_base_create_positioner(xdg_wm_base);
-
-    xdg_positioner_set_anchor_rect(popup->position, x, y, 1, 1);
-    xdg_positioner_set_size(popup->position, width, height);
-
-    popup->popup = xdg_surface_get_popup(popup->xdg_surface, NULL, popup->position);
-    zwlr_layer_surface_v1_get_popup(environment->root_surface->layer_surface, popup->popup);
-
-    struct environment_callbacks* callbacks = calloc(1, sizeof(struct environment_callbacks));
-    wl_surface_attach_callbacks(popup->surface, callbacks);
-
-    return popup;
-}
-
-void environment_popup_commit(environment_popup_t* popup)
-{
-    if (!popup) return;
-
-    wl_surface_commit(popup->surface);
 }
