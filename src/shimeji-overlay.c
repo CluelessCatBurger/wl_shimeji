@@ -543,6 +543,11 @@ int main(int argc, const char** argv)
 
     // Initialize state
     {
+
+        pthread_mutexattr_t init_attrs = {0};
+        pthread_mutexattr_init(&init_attrs);
+        pthread_mutexattr_settype(&init_attrs, PTHREAD_MUTEX_RECURSIVE);
+
         server_state.clients = list_init(1);
         server_state.environments = list_init(1);
         server_state.plugins = list_init(1);
@@ -553,9 +558,9 @@ int main(int argc, const char** argv)
         strncpy(server_state.plugins_location, plugins_location, PATH_MAX);
         strncpy(server_state.prototypes_location, prototypes_location, PATH_MAX);
         strncpy(server_state.configuration_file, plugins_location, PATH_MAX);
-        pthread_mutex_init(&server_state.environment_mutex, NULL);
-        pthread_mutex_init(&server_state.prototypes_mutex, NULL);
-        pthread_mutex_init(&server_state.clients_mutex, NULL);
+        pthread_mutex_init(&server_state.environment_mutex, &init_attrs);
+        pthread_mutex_init(&server_state.prototypes_mutex, &init_attrs);
+        pthread_mutex_init(&server_state.clients_mutex, &init_attrs);
         server_state.initialization_errors = calloc(16, sizeof(char*));
     }
 
