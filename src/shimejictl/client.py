@@ -285,7 +285,6 @@ def prototype_find(name: str) -> Prototype | None:
         if int(name) in prototypes:
             return prototypes[int(name)]
 
-    print([x.name for x in prototypes.values()] + [x.display_name for x in prototypes.values()])
     best_match = lv_variant([x.name for x in prototypes.values()] + [x.display_name for x in prototypes.values()], name)
     for proto in prototypes.values():
         if proto.name == best_match:
