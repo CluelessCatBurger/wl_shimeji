@@ -1166,6 +1166,7 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
     mascot->action_index = 0;
     mascot->as_p = 0;
 
+    mascot_build_behavior_pool(mascot, NULL, false);
     if (behavior) {
         if (behavior->is_condition) {
             WARN("<Mascot:%s:%u> Behavior is a condition, not a behavior", mascot->prototype->name, mascot->id);
@@ -1173,7 +1174,6 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
         }
         mascot_build_behavior_pool(mascot, behavior, behavior->add_behaviors);
     }
-    else mascot_build_behavior_pool(mascot, NULL, false);
 }
 
 enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
