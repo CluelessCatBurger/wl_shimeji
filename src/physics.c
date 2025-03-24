@@ -1,5 +1,4 @@
 #include "physics.h"
-#include <stdio.h>
 
 // Checks if a point lies on the border of a bounding box
 int32_t check_collision_at(struct bounding_box* box, int32_t x, int32_t y, int32_t border_mask)

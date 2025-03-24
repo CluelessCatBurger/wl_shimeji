@@ -1526,24 +1526,24 @@ static void mascot_on_pointer_axis(void* data, struct wl_pointer* pointer, uint3
 
     environment_pointer_t* env_pointer = (environment_pointer_t*)data;
     if (!env_pointer) {
-        ERROR("Critical! No pointer in mascot_on_pointer_enter!");
+        ERROR("Critical! No pointer in mascot_on_pointer_axis!");
     }
 
     environment_subsurface_t* env_surface = environment_subsurface_from_surface(env_pointer->above_surface);
     if (!env_surface) {
-        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_enter!");
+        WARN("Unexpected lack of env_subsurface while we are in mascot_on_pointer_axis!");
         return;
     }
 
     environment_t* env = environment_from_surface(env_pointer->above_surface);
     if (!env) {
-        WARN("Unexpected lack of env while we are in mascot_on_pointer_enter!");
+        WARN("Unexpected lack of env while we are in mascot_on_pointer_axis!");
         return;
     }
 
     struct mascot * mascot = environment_subsurface_get_mascot(env_surface);
     if (!mascot) {
-        WARN("Unexpected lack of mascot while we are in mascot_on_pointer_button!");
+        WARN("Unexpected lack of mascot while we are in mascot_on_pointer_axis!");
         return;
     }
 
@@ -3740,15 +3740,35 @@ struct mascot* environment_mascot_by_coordinates(environment_t* environment, int
         c++;
         if (mascot_->dragged) continue;
         if (mascot_->subsurface) {
-            if (x >= mascot_->subsurface->x && x <= mascot_->subsurface->x + mascot_->subsurface->width) {
-                if (y >= mascot_->subsurface->y && y <= mascot_->subsurface->y + mascot_->subsurface->height) {
-                    INFO("Mascot found by coordinates: %p %d", mascot_, mascot_score);
-                    if (!mascot_->dragged_tick || mascot_->dragged_tick > mascot_score) {
-                        mascot = mascot_;
-                        mascot_score = mascot_->dragged_tick;
-                    }
+            struct bounding_box hitbox = {INNER_COLLISION,-1,-1,-1,-1};
+            if (mascot_->subsurface->pose) {
+                int surface_anchor_x = 0;
+                int surface_anchor_y = 0;
+                if (mascot_->subsurface->pose) {
+                    surface_anchor_x += (mascot_->subsurface->mascot->LookingRight->value.i ? -mascot_->subsurface->width - mascot_->subsurface->pose->anchor_x : mascot_->subsurface->pose->anchor_x);
+                    surface_anchor_y += mascot_->subsurface->pose->anchor_y;
+                }
+
+                surface_anchor_x = (float)surface_anchor_x / mascot_->subsurface->env->scale;
+                surface_anchor_y = (float)surface_anchor_y / mascot_->subsurface->env->scale;
+
+                struct mascot_sprite* sprite = mascot_->subsurface->pose->sprite[mascot_->LookingRight->value.i];
+                hitbox.x = mascot_->subsurface->x + mascot_->subsurface->pose->anchor_x;
+                hitbox.y = mascot_->subsurface->y + mascot_->subsurface->pose->anchor_y;
+                hitbox.width = sprite->width;
+                hitbox.height = sprite->height;
+            }
+            INFO("Checking hitbox: %d %d %d %d, pointer at (%d, %d)", hitbox.x, hitbox.y, hitbox.width, hitbox.height, x, y);
+            if (is_inside(&hitbox, x, y) || check_collision_at(&hitbox, x, y, 0)) {
+                INFO("Mascot found by coordinates: %p %d", mascot_, mascot_score);
+                if (!mascot_->dragged_tick || mascot_->dragged_tick > mascot_score) {
+                    mascot = mascot_;
+                    mascot_score = mascot_->dragged_tick;
                 }
             }
+            // if (x >= mascot_->subsurface->x && x <= mascot_->subsurface->x + mascot_->subsurface->width) {
+
+            // }
         }
     }
     pthread_mutex_unlock(&environment->mascot_manager.mutex);
