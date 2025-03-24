@@ -17,6 +17,8 @@ from PIL import Image
 from qoi.src.qoi import encode_img
 import time
 
+from levenstein import lv_variant
+
 import random
 
 import logging
@@ -279,25 +281,16 @@ class Client:
         self.packet_callbacks[packet_type] = callback
 
 def prototype_find(name: str) -> Prototype | None:
-    for id, prototype in prototypes.items():
-        if str(id) == name:
-            return prototype
-        elif prototype.name == name:
-            return prototype
-        elif prototype.display_name == name:
-            return prototype
-        elif prototype.name.startswith(name):
-            return prototype
-        elif prototype.display_name.startswith(name):
-            return prototype
-        elif prototype.name.endswith(name):
-            return prototype
-        elif prototype.display_name.endswith(name):
-            return prototype
-        elif name in prototype.name:
-            return prototype
-        elif name in prototype.display_name:
-            return prototype
+    if name.isdigit():
+        if int(name) in prototypes:
+            return prototypes[int(name)]
+
+    best_match = lv_variant([x.name for x in prototypes.values()] + [x.display_name for x in prototypes.values()], name)
+    for proto in prototypes.values():
+        if proto.name == name:
+            return proto
+        elif proto.display_name == name:
+            return proto
 
     return None
 
