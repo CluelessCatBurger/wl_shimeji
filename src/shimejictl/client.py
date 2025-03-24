@@ -285,11 +285,12 @@ def prototype_find(name: str) -> Prototype | None:
         if int(name) in prototypes:
             return prototypes[int(name)]
 
+    print([x.name for x in prototypes.values()] + [x.display_name for x in prototypes.values()])
     best_match = lv_variant([x.name for x in prototypes.values()] + [x.display_name for x in prototypes.values()], name)
     for proto in prototypes.values():
-        if proto.name == name:
+        if proto.name == best_match:
             return proto
-        elif proto.display_name == name:
+        elif proto.display_name == best_match:
             return proto
 
     return None
@@ -1109,7 +1110,6 @@ def config_handler(arguments: argparse.Namespace, client: Client, parser):
             exit(1)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     argparser = argparse.ArgumentParser(description="CLI client for the wl_shimeji overlay")
     argparser.add_argument("-s", "--socket", help="Path to the shimeji-overlayd socket")
     argparser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
@@ -1224,6 +1224,8 @@ if __name__ == "__main__":
 
     if arguments.verbose:
         logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
     startopts: dict[str, Any] = {
         "cmdline": []
@@ -1248,21 +1250,30 @@ if __name__ == "__main__":
         startopts["cmdline"].append("--configuration-root")
         startopts["cmdline"].append(arguments.config_root)
 
-    client = Client(socket_path, startopts)
+    try:
+        client = Client(socket_path, startopts)
+    except KeyboardInterrupt:
+        logging.info("Interrupted.")
+    except Exception as e:
+        logging.error(f"Failed to start client: {e}")
+        exit(1)
 
-    match arguments.category:
-        case "prototypes":
-            prototypes_handler(arguments, client, prototype_category)
-        case "convert":
-            converter_handler(arguments, client, convert_category)
-        case "mascot":
-            mascot_handler(arguments, client, mascot_category)
-        case "environment":
-            environment_handler(arguments, client, environment_category)
-        case "stop":
-            client.queue_packet(Stop())
-        case "config":
-            config_handler(arguments, client, config_category)
-        case _:
-            argparser.print_help()
-            exit(1)
+    try:
+        match arguments.category:
+            case "prototypes":
+                prototypes_handler(arguments, client, prototype_category)
+            case "convert":
+                converter_handler(arguments, client, convert_category)
+            case "mascot":
+                mascot_handler(arguments, client, mascot_category)
+            case "environment":
+                environment_handler(arguments, client, environment_category)
+            case "stop":
+                client.queue_packet(Stop())
+            case "config":
+                config_handler(arguments, client, config_category)
+            case _:
+                argparser.print_help()
+                exit(1)
+    except KeyboardInterrupt:
+        logging.info("Interrupted.")
