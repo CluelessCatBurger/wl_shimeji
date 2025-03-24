@@ -507,8 +507,8 @@ def converter_handler(arguments: argparse.Namespace, client: Client, parser):
         tar.close()
 
         wlpak_prefix = b"WLPK"
-        wlpak_prefix += struct.pack(f"B{len(manifest["name"].encode("utf-8"))}s", len(manifest['name'].encode("utf-8")), manifest['name'].encode("utf-8"))
-        wlpak_prefix += struct.pack(f"B{len(manifest["version"].encode("utf-8"))}s", len(manifest['version'].encode("utf-8")), manifest['version'].encode("utf-8"))
+        wlpak_prefix += struct.pack(f"B{len(manifest['name'].encode('utf-8'))}s", len(manifest['name'].encode("utf-8")), manifest['name'].encode("utf-8"))
+        wlpak_prefix += struct.pack(f"B{len(manifest['version'].encode('utf-8'))}s", len(manifest['version'].encode("utf-8")), manifest['version'].encode("utf-8"))
         wlpak_prefix += b"\x00" * (512 - len(wlpak_prefix))
 
         wlpak.write(wlpak_prefix)
