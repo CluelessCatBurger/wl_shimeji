@@ -79,25 +79,6 @@ enum mascot_tick_result jump_action_init(struct mascot *mascot, struct mascot_ac
     if (mascot_assign_variable(mascot, MASCOT_LOCAL_VARIABLE_VELOCITYPARAM_ID, velocity_param) == mascot_tick_error) return mascot_tick_error;
     if (!velocity_param->used) mascot->VelocityParam->value.f = 20.0;
 
-    // if (abs(mascot->TargetX->value.i - mascot->X->value.i) > (environment_screen_width(mascot->environment)/2)) {
-    //     LOG("DEBUG", RED, "<Mascot:%s:%u> Jump action target is too far", mascot->prototype->name, mascot->id);
-    //     int32_t random_num = rand();
-    //     if (random_num < RAND_MAX / 2) {
-    //         jump_action_clean(mascot);
-    //         return mascot_tick_next;
-    //     } else {
-    //         if (random_num < RAND_MAX / 3) {
-    //             if (mascot->X->value.i > 0) {
-    //                 mascot->X->value.i -= 1;
-    //             } else {
-    //                 mascot->X->value.i += 1;
-    //             }
-    //             mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-    //             jump_action_clean(mascot);
-    //             return mascot_tick_reenter;
-    //         }
-    //     }
-    // }
     if (mascot->TargetX->value.i == -1 || mascot->TargetY->value.i == -1) {
         jump_action_clean(mascot);
         return mascot_tick_next;
@@ -120,13 +101,6 @@ struct mascot_action_next jump_action_next(struct mascot* mascot, struct mascot_
     result.next_action = *actionref;
 
     if (mascot->TargetX->value.i == mascot->X->value.i) {
-        DEBUG("<Mascot:%s:%u> Destination met", mascot->prototype->name, mascot->id);
-        result.status = mascot_tick_next;
-        return result;
-    }
-
-    if (mascot->action_duration <= tick) {
-        DEBUG("<Mascot:%s:%u> Jump action watchdog run out", mascot->prototype->name, mascot->id);
         result.status = mascot_tick_next;
         return result;
     }
@@ -195,93 +169,37 @@ struct mascot_action_next jump_action_next(struct mascot* mascot, struct mascot_
 enum mascot_tick_result jump_action_tick(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
     UNUSED(actionref);
-
-    enum mascot_tick_result oob_check = mascot_out_of_bounds_check(mascot);
-    if (oob_check != mascot_tick_ok) {
-        return oob_check;
-    }
+    UNUSED(tick);
 
     int32_t posx = mascot->X->value.i;
     int32_t posy = mascot->Y->value.i;
     int32_t target_x = mascot->TargetX->value.i;
     int32_t target_y = mascot->TargetY->value.i;
-    float velocity_x = mascot->VelocityX->value.f;
-    float velocity_y = mascot->VelocityY->value.f;
-    float velocity = mascot->VelocityParam->value.f;
+    float velocity_param = mascot->VelocityParam->value.f;
 
     bool looking_right = posx < target_x;
 
-    if (target_x < (int)environment_workarea_left(mascot->environment)) {
-        mascot->TargetX->value.i = target_x = environment_workarea_left(mascot->environment);
-    } else if (target_x > (int)environment_workarea_right(mascot->environment)) {
-        mascot->TargetX->value.i = target_x = environment_workarea_right(mascot->environment);
-    }
-
-    if (target_y == -1) {
-        mascot->TargetY->value.i = target_y = posy;
-    } else if (target_y < (int)environment_workarea_top(mascot->environment)) {
-        mascot->TargetY->value.i = target_y = environment_workarea_top(mascot->environment);
-    } else if (target_y > (int)environment_workarea_bottom(mascot->environment)) {
-        mascot->TargetY->value.i = target_y = environment_workarea_bottom(mascot->environment);
-    }
-
-    // Calculate distances
     float distance_x = target_x - posx;
-
-    // Check if posy has reached the screen height and make the object slide
-    if (posy >= (int32_t)environment_workarea_bottom(mascot->environment)) {
-        posy = environment_workarea_bottom(mascot->environment); // Cap the y-coordinate
-        velocity_y = 0; // Stop vertical movement to slide horizontally
-    } else {
-        // Calculate the vertical distance to the peak based on the current position
-        float distance_y_to_target = target_y - posy;
-
-        if (distance_x != 0) {
-            // Adjust velocity_y to decelerate as it approaches the target
-            velocity_x = velocity * (distance_x / sqrtf(distance_x * distance_x + distance_y_to_target * distance_y_to_target));
-            velocity_y = velocity * (distance_y_to_target / sqrtf(distance_x * distance_x + distance_y_to_target * distance_y_to_target));
-
-            // Ensure the object slows down as it approaches the target
-            if (posy > target_y) {
-                velocity_y = -fabs(velocity_y); // Move down if above the target
-            } else {
-                velocity_y = fabs(velocity_y); // Move up if below the target
-            }
-
-            // Update position
-            posx += (int32_t)velocity_x;
-            posy += (int32_t)velocity_y;
-
-            // Store updated velocities for the next tick
-            mascot->VelocityX->value.f = velocity_x;
-            mascot->VelocityY->value.f = velocity_y;
-        }
-    }
-
-
-    if (fabs(distance_x) < fabs(velocity_x)) {
-        posx = target_x;
-        posy = target_y;
-    }
-
-    if (distance_x == 0) {
-        return mascot_tick_reenter;
-    }
+    float distance_y = (target_y - posy) + fabsf(distance_x);
+    float distance_abs = sqrtf(distance_x * distance_x + distance_y * distance_y);
 
     if (looking_right != mascot->LookingRight->value.i) {
         mascot->LookingRight->value.i = looking_right;
         mascot_reattach_pose(mascot);
     }
 
-    if (posx != mascot->X->value.i || posy != mascot->Y->value.i) {
-        enum environment_move_result move_res = environment_subsurface_move(mascot->subsurface, posx, posy, true, true);
-        if (move_res == environment_move_clamped) {
-            mascot->X->value.i = target_x;
-            mascot->Y->value.i = target_y;
-            return mascot_tick_reenter;
-        }
-        mascot->action_duration = tick + 5;
+    if (distance_abs <= velocity_param || distance_abs == 0.0f) {
+        environment_subsurface_move(mascot->subsurface, target_x, target_y, true, true);
+        return mascot_tick_reenter;
     }
+
+    float velocity_x = (distance_x / distance_abs) * velocity_param;
+    float velocity_y = (distance_y / distance_abs) * velocity_param;
+
+    environment_subsurface_move(mascot->subsurface,
+                                (int32_t)(posx + velocity_x),
+                                (int32_t)(posy + velocity_y),
+                                true, true);
 
     return mascot_tick_ok;
 }

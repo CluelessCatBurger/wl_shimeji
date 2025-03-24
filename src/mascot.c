@@ -1179,8 +1179,9 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
 enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
 {
     if (
-        mascot->X->value.i < (int32_t)environment_workarea_left(mascot->environment) || mascot->X->value.i > (int32_t)environment_workarea_right(mascot->environment) ||
-        mascot->Y->value.i < (int32_t)environment_workarea_top(mascot->environment) || mascot->Y->value.i > (int32_t)environment_workarea_bottom(mascot->environment)
+        (mascot->X->value.i < (int32_t)environment_workarea_left(mascot->environment) || mascot->X->value.i > (int32_t)environment_workarea_right(mascot->environment) ||
+            mascot->Y->value.i < (int32_t)environment_workarea_top(mascot->environment) || mascot->Y->value.i > (int32_t)environment_workarea_bottom(mascot->environment))
+        && mascot->state != mascot_state_jump
     ) {
         INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
         mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
@@ -1188,12 +1189,6 @@ enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
         mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
         environment_subsurface_set_position(mascot->subsurface, mascot->X->value.i, mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i));
         environment_subsurface_reset_interpolation(mascot->subsurface);
-
-        // if (mascot->X->value.i < 0) mascot->X->value.i = 0;
-        // if (mascot->X->value.i > (int32_t)environment_workarea_width(mascot->environment)) mascot->X->value.i = environment_workarea_width(mascot->environment);
-        // if (mascot->Y->value.i < 0) mascot->Y->value.i = 0;
-        // if (mascot->Y->value.i > (int32_t)environment_workarea_height(mascot->environment)) mascot->Y->value.i = environment_workarea_height(mascot->environment);
-
         return mascot_tick_reenter;
     }
     return mascot_tick_ok;
