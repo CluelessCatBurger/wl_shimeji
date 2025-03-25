@@ -212,7 +212,7 @@ class Client:
                 logger.info("Overlay is already running")
                 raise SystemExit(1)
         except (ConnectionRefusedError, FileNotFoundError) as e:
-            if (self.startup_options.get("start", False)):
+            if not (self.startup_options.get("start", False)):
                 logger.info("Overlay is not running")
                 raise SystemExit(1)
             logger.debug(f"Failed to connect to overlay at \"{self.address}\": {e}")
@@ -222,7 +222,11 @@ class Client:
             cmdline.extend(self.startup_options.get('cmdline', []))
             cmdline.append('-cfd')
             cmdline.append(str(overlay_side.fileno()))
-            proc_handle = subprocess.Popen(cmdline, close_fds=True, pass_fds=[overlay_side.fileno()], start_new_session=True)
+            proc_handle = subprocess.Popen(
+                cmdline, close_fds=True, pass_fds=[overlay_side.fileno()], start_new_session=True,
+                stdout=None if self.startup_options.get("verbose", False) else subprocess.DEVNULL,
+                stderr=None if self.startup_options.get("verbose", False) else subprocess.DEVNULL,
+            )
             overlay_side.close()
             out = None
             try:
@@ -1211,6 +1215,43 @@ if __name__ == "__main__":
 
     stop_parser = category.add_parser("stop", help="Ask overlay daemon to stop")
 
+# Foreground
+    foreground_parser = category.add_parser("foreground", help="Run overlay daemon in foreground")
+
+# Shortcuts
+
+    summoner = category.add_parser("summon", help="Summon a mascot")
+    summoner.add_argument("name", help="Name of the mascot to summon. You can see available mascot types using prototypes list")
+    summoner.add_argument('-s', "--select", action="store_true", help="Use selection mechanism to select place where to summon")
+    summoner.add_argument("-e", "--environment", action="append", help="Selects possible environments to summon in. If specified with select, will act as filter for the selection")
+    summoner.add_argument("-x", help="Selects X coordinates to summon in. Does nothing when select is specified.")
+    summoner.add_argument("-y", help="Selects Y coordinates to summon in. Does nothing when select is specified.")
+    summoner.add_argument("--position", help="Takes a position in the format x,y, mutually exclusive with -x and -y")
+    summoner.add_argument("-b", "--behavior", help="Specifies starting behavior.", default="")
+
+    dismisser = category.add_parser("dismiss", help="Dismiss a mascot")
+    dismisser.add_argument("-i", "--id", help="ID of the mascot to dismiss.")
+    dismisser.add_argument('-s', "--select", action="store_true", help="Use selection mechanism to select place where to summon")
+    dismisser.add_argument("-e", "--environment", action="append", help="Selects possible environments to where dismiss can be done. Acts as filter for the selection and if specified with --all will act as filter during processing")
+    dismisser.add_argument("-a", "--all", action="store_true", help="Dismiss all mascots. Mutually exclusive with --all-other")
+    dismisser.add_argument("-o", "--filter-other", action="store_true", help="Dismiss all mascots except the one selected")
+    dismisser.add_argument("-fs", "--filter-same-type", action="store_true", help="Dismiss all mascots of the same type as the selected one")
+
+    behavior_setter = category.add_parser("set-behavior", help="Set behavior of a mascot")
+    behavior_setter.add_argument("-i", "--id", help="ID of the mascot to set behavior for. If not specified, selection mechanism will be used")
+    behavior_setter.add_argument("behavior_name", help="Behavior(s) to set for the mascot.")
+
+    prototype_exporter = category.add_parser("export", help="Export a prototype")
+    prototype_exporter.add_argument("-i", "--name", action="append", help="Name of the prototype to export. Can be specified multiple times.")
+    prototype_exporter.add_argument("-o", "--output", action="append", help="Output file path. Should match inputs count or be a directory")
+    prototype_exporter.add_argument("-f", "--force", action="store_true", help="Overwrite existing files")
+
+    prototype_importer = category.add_parser("import", help="Import a prototype")
+    prototype_importer.add_argument("input", nargs="*", help="Path(s) of the prototype to import. Can be either in wlshm format or in Shimeji-ee format. Can be specified multiple times.")
+    prototype_importer.add_argument("-f", "--force", action="store_true", help="Overwrite existing prototypes")
+
+    prototype_list = category.add_parser("list", help="List known prototypes")
+    prototype_list.add_argument("-d", "--detailed", action="store_true", help="Show detailed information about the prototypes")
 
     arguments = argparser.parse_args()
     if arguments.category is None:
@@ -1221,14 +1262,20 @@ if __name__ == "__main__":
         os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "shimeji-overlayd.sock")
     )
 
-    if arguments.verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.INFO)
-
     startopts: dict[str, Any] = {
         "cmdline": []
     }
+
+    if arguments.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+        startopts["verbose"] = True
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+
+    if arguments.socket:
+        startopts["cmdline"].append('-s')
+        startopts["cmdline"].append(socket_path)
 
     if arguments.do_not_start:
         startopts["start"] = False
@@ -1249,6 +1296,10 @@ if __name__ == "__main__":
         startopts["cmdline"].append("--configuration-root")
         startopts["cmdline"].append(arguments.config_root)
 
+    if arguments.category == "foreground":
+        startopts["start"] = True
+        startopts["verbose"] = True
+
     try:
         client = Client(socket_path, startopts)
     except KeyboardInterrupt:
@@ -1256,6 +1307,13 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Failed to start client: {e}")
         exit(1)
+
+    if arguments.category == "foreground":
+        try:
+            client.dispatch_events()
+        except KeyboardInterrupt:
+            logging.info("Interrupted.")
+        exit(0)
 
     try:
         match arguments.category:
@@ -1271,6 +1329,30 @@ if __name__ == "__main__":
                 client.queue_packet(Stop())
             case "config":
                 config_handler(arguments, client, config_category)
+            case "summon":
+                arguments.category = "mascot"
+                arguments.action = "summon"
+                mascot_handler(arguments, client, argparser)
+            case "dismiss":
+                arguments.category = "mascot"
+                arguments.action = "dismiss"
+                mascot_handler(arguments, client, argparser)
+            case "set-behavior":
+                arguments.category = "mascot"
+                arguments.action = "set-behavior"
+                mascot_handler(arguments, client, argparser)
+            case "list":
+                arguments.category = "prototypes"
+                arguments.action = "list"
+                prototypes_handler(arguments, client, argparser)
+            case "import":
+                arguments.category = "prototypes"
+                arguments.action = "import"
+                prototypes_handler(arguments, client, argparser)
+            case "export":
+                arguments.category = "prototypes"
+                arguments.action = "export"
+                prototypes_handler(arguments, client, argparser)
             case _:
                 argparser.print_help()
                 exit(1)
