@@ -2544,10 +2544,10 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 
     wl_surface_attach(surface->surface, sprite->buffer->buffer, 0, 0);
     wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-    // if (!surface->drag_pointer) {
-    //     environment_buffer_scale_input_region(sprite->buffer, surface->env->scale);
-    //     wl_surface_set_input_region(surface->surface, sprite->buffer->region);
-    // }
+    if (!surface->drag_pointer) {
+        environment_buffer_scale_input_region(sprite->buffer, surface->env->scale);
+        wl_surface_set_input_region(surface->surface, sprite->buffer->region);
+    }
 
     if (!surface->pose) {
         wl_subsurface_place_below(surface->subsurface, surface->env->root_environment_subsurface->surface);
