@@ -22,6 +22,7 @@
 #include "expressions.h"
 #include "mascot_config_parser.h"
 #include "config.h"
+#include "physics.h"
 #include "plugins.h"
 #include <pthread.h>
 #include <stdbool.h>
@@ -1178,12 +1179,12 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
 
 enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
 {
+    struct bounding_box* env_bbox = environment_local_geometry(mascot->environment);
     if (
-        (mascot->X->value.i < (int32_t)environment_workarea_left(mascot->environment) || mascot->X->value.i > (int32_t)environment_workarea_right(mascot->environment) ||
-            mascot->Y->value.i < (int32_t)environment_workarea_top(mascot->environment) || mascot->Y->value.i > (int32_t)environment_workarea_bottom(mascot->environment))
+        is_outside(env_bbox, mascot->X->value.i, mascot->Y->value.i)
         && mascot->state != mascot_state_jump
     ) {
-        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d), respawning!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, environment_workarea_width(mascot->environment), environment_workarea_height(mascot->environment));
+        INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while allowed values are from 0,0 to %d,%d (Geometry offset is %d,%d)), respawning!", mascot->prototype->name, mascot->id, mascot->X->value.i, mascot->Y->value.i, env_bbox->width, env_bbox->height, env_bbox->x, env_bbox->y);
         mascot->X->value.i = rand() % environment_workarea_width(mascot->environment);
         mascot->Y->value.i = environment_workarea_height(mascot->environment) - 256;
         mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
