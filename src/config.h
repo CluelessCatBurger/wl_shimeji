@@ -53,7 +53,9 @@
 #define CONFIG_PARAM_ALLOW_THROWING_MULTIHEAD "ALLOW_THROWING_MULTIHEAD"
 #define CONFIG_PARAM_ALLOW_DRAGGING_MULTIHEAD "ALLOW_DRAGGING_MULTIHEAD"
 #define CONFIG_PARAM_UNIFIED_OUTPUTS "UNIFIED_OUTPUTS"
-#define CONFIG_PARAM_COUNT 29
+#define CONFIG_PARAM_OPACITY "OPACITY"
+#define CONFIG_PARAM_MASCOT_SCALE "MASCOT_SCALE"
+#define CONFIG_PARAM_COUNT 31
 
 #define POINTER_PRIMARY_BUTTON 0x01
 #define POINTER_SECONDARY_BUTTON 0x02
@@ -92,6 +94,8 @@ bool config_set_on_tool_button3(int32_t value);
 bool config_set_allow_throwing_multihead(int32_t value);
 bool config_set_allow_dragging_multihead(int32_t value);
 bool config_set_unified_outputs(int32_t value);
+bool config_set_opacity(float value);
+bool config_set_mascot_scale(float value);
 
 int32_t config_get_breeding();
 int32_t config_get_dragging();
@@ -122,6 +126,8 @@ int32_t config_get_on_tool_button3();
 int32_t config_get_allow_throwing_multihead();
 int32_t config_get_allow_dragging_multihead();
 int32_t config_get_unified_outputs();
+float config_get_mascot_scale();
+float config_get_opacity();
 
 const char* config_get_prototypes_location();
 const char* config_get_plugins_location();
@@ -160,6 +166,8 @@ __attribute((unused)) static const char* config_keys[] = {
     CONFIG_PARAM_ON_TOOL_BUTTON1,
     CONFIG_PARAM_ON_TOOL_BUTTON2,
     CONFIG_PARAM_ON_TOOL_BUTTON3,
+    CONFIG_PARAM_OPACITY,
+    CONFIG_PARAM_MASCOT_SCALE,
     NULL
 };
 

@@ -69,6 +69,7 @@ struct wp_viewporter* viewporter = NULL;
 // staging extensions
 struct wp_fractional_scale_manager_v1* fractional_manager = NULL;
 struct wp_cursor_shape_manager_v1* cursor_shape_manager = NULL;
+struct wp_alpha_modifier_v1* alpha_modifier_manager = NULL;
 
 // unstable extensions
 struct zxdg_output_manager_v1* xdg_output_manager = NULL;
@@ -210,6 +211,7 @@ struct environment_subsurface {
     struct wl_subsurface* subsurface;
     struct wp_viewport* viewport;
     struct wp_fractional_scale_v1* fractional_scale;
+    struct wp_alpha_modifier_surface_v1* alpha_modifier;
     const struct mascot_pose* pose;
     environment_t* env;
     struct mascot* mascot;
@@ -1383,8 +1385,8 @@ static void mascot_on_pointer_motion(void* data, struct wl_pointer* pointer, uin
             anchor_y = env_surface->pose->anchor_y;
         }
 
-        global_x = mascot->X->value.i + wl_fixed_to_int(x) + anchor_x / env_surface->env->scale;
-        global_y = yconv(env_surface->env, mascot->Y->value.i) + wl_fixed_to_int(y) + anchor_y / env_surface->env->scale;
+        global_x = mascot->X->value.i + wl_fixed_to_int(x) + anchor_x / (config_get_mascot_scale() * env_surface->env->scale);
+        global_y = yconv(env_surface->env, mascot->Y->value.i) + wl_fixed_to_int(y) + anchor_y / (config_get_mascot_scale() * env_surface->env->scale);
     }
 
 
@@ -1959,8 +1961,8 @@ static void on_tool_motion(void* data, struct zwp_tablet_tool_v2* tool, wl_fixed
             }
 
             // Transform global coordinates to surface_local coordinates
-            local_x = global_x - anchor_x * env->scale - mascot->X->value.i;
-            local_y = global_y - anchor_y * env->scale - yconv(env, mascot->Y->value.i);
+            local_x = global_x - anchor_x * (config_get_mascot_scale() * env->scale) - mascot->X->value.i;
+            local_y = global_y - anchor_y * (config_get_mascot_scale() * env->scale) - yconv(env, mascot->Y->value.i);
 
             env_pointer->frame.surface_local_x = wl_fixed_from_int(local_x);
             env_pointer->frame.surface_local_y = wl_fixed_from_int(local_y);
@@ -2258,6 +2260,13 @@ static void handle_xdg_output_manager(void* data, uint32_t id, uint32_t version)
     INFO("Binded xdg_output_manager global of ver %u", version);
 }
 
+static void handle_alpha_modifier_v1(void* data, uint32_t id, uint32_t version)
+{
+    UNUSED(data);
+    alpha_modifier_manager = wl_registry_bind(registry, id, &wp_alpha_modifier_v1_interface, version);
+    INFO("Binded wp_alpha_modifier_v1 global of ver %u", version);
+}
+
 static void on_global (void* data, struct wl_registry* registry, uint32_t id, const char* iface_name, uint32_t version)
 {
     UNUSED(registry);
@@ -2286,7 +2295,10 @@ static void on_global (void* data, struct wl_registry* registry, uint32_t id, co
         handle_cursor_shape(data, id, version);
     } else if (!strcmp(iface_name, zxdg_output_manager_v1_interface.name)) {
         handle_xdg_output_manager(data, id, version);
+    } else if (!strcmp(iface_name, wp_alpha_modifier_v1_interface.name)) {
+        handle_alpha_modifier_v1(data, id, version);
     }
+
 }
 
 static void on_global_remove(void *data, struct wl_registry *registry, uint32_t id) {
@@ -2489,6 +2501,11 @@ environment_subsurface_t* environment_create_subsurface(environment_t* env)
         }
     }
 
+    if (alpha_modifier_manager) {
+        subsurface->alpha_modifier = wp_alpha_modifier_v1_get_surface(alpha_modifier_manager, subsurface->surface);
+        wp_alpha_modifier_surface_v1_set_multiplier(subsurface->alpha_modifier, (uint32_t)((double)config_get_opacity() * (double)UINT32_MAX));
+    }
+
     if (env->output.scale && !fractional_manager && !viewporter) {
         wl_surface_set_buffer_scale(subsurface->surface, env->output.scale);
     }
@@ -2503,6 +2520,10 @@ environment_subsurface_t* environment_create_subsurface(environment_t* env)
 
 void environment_destroy_subsurface(environment_subsurface_t* surface)
 {
+    if (surface->alpha_modifier) {
+        wp_alpha_modifier_surface_v1_destroy(surface->alpha_modifier);
+    }
+
     if (surface->fractional_scale) {
         wp_fractional_scale_v1_destroy(surface->fractional_scale);
     }
@@ -2544,9 +2565,11 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
 
     wl_surface_attach(surface->surface, sprite->buffer->buffer, 0, 0);
     wl_surface_damage_buffer(surface->surface, 0, 0, INT32_MAX, INT32_MAX);
-    if (!surface->drag_pointer) {
-        environment_buffer_scale_input_region(sprite->buffer, surface->env->scale);
+    if (!surface->drag_pointer && config_get_dragging()) {
+        environment_buffer_scale_input_region(sprite->buffer, (config_get_mascot_scale() * surface->env->scale));
         wl_surface_set_input_region(surface->surface, sprite->buffer->region);
+    } else {
+        wl_surface_set_input_region(surface->surface, empty_region);
     }
 
     if (!surface->pose) {
@@ -2567,12 +2590,16 @@ void environment_subsurface_attach(environment_subsurface_t* surface, const stru
     if (viewporter) {
         wp_viewport_set_destination(
             surface->viewport,
-            sprite->width / surface->env->scale,
-            sprite->height / surface->env->scale
+            sprite->width / (config_get_mascot_scale() * surface->env->scale),
+            sprite->height / (config_get_mascot_scale() * surface->env->scale)
         );
         wl_surface_commit(surface->surface);
     } else {
         wl_surface_set_buffer_scale(surface->surface, surface->env->scale);
+    }
+
+    if (surface->alpha_modifier) {
+        wp_alpha_modifier_surface_v1_set_multiplier(surface->alpha_modifier, (uint32_t)((double)config_get_opacity() * (double)UINT32_MAX));
     }
 
     environment_subsurface_set_position(surface, surface->mascot->X->value.i, yconv(surface->env, surface->mascot->Y->value.i));
@@ -2939,7 +2966,7 @@ void enviroment_wait_until_ready(environment_t* env)
 
 float environment_screen_scale(environment_t* env)
 {
-    return env->scale;
+    return config_get_mascot_scale() * env->scale;
 }
 
 void environment_subsurface_associate_mascot(environment_subsurface_t* surface, struct mascot* mascot_ptr)
@@ -3242,8 +3269,8 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
         surface_anchor_y += surface->pose->anchor_y;
     }
 
-    surface_anchor_x = (float)surface_anchor_x / surface->env->scale;
-    surface_anchor_y = (float)surface_anchor_y / surface->env->scale;
+    surface_anchor_x = (float)surface_anchor_x / (config_get_mascot_scale() * surface->env->scale);
+    surface_anchor_y = (float)surface_anchor_y / (config_get_mascot_scale() * surface->env->scale);
 
     wl_subsurface_set_position(surface->subsurface, dx + surface_anchor_x, dy + surface_anchor_y);
 
@@ -3261,12 +3288,12 @@ enum environment_move_result environment_subsurface_set_position(environment_sub
 
 int32_t environment_screen_width(environment_t* env)
 {
-    return env->output.width / env->scale;
+    return env->output.width / (config_get_mascot_scale() * env->scale);
 }
 
 int32_t environment_screen_height(environment_t* env)
 {
-    return env->output.height / env->scale;
+    return env->output.height / (config_get_mascot_scale() * env->scale);
 }
 
 int32_t environment_workarea_width(environment_t* env)
@@ -3392,6 +3419,7 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
     // Get all user data from the surface
     struct wl_surface_data* userdata = wl_surface_get_user_data(surface->surface);
 
+    if (surface->alpha_modifier) wp_alpha_modifier_surface_v1_destroy(surface->alpha_modifier);
     if (surface->viewport) wp_viewport_destroy(surface->viewport);
     if (surface->fractional_scale) wp_fractional_scale_v1_destroy(surface->fractional_scale);
     wl_subsurface_destroy(surface->subsurface);
@@ -3407,6 +3435,11 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
     if (viewporter) {
         surface->viewport = wp_viewporter_get_viewport(viewporter, surface->surface);
         if (!surface->viewport) ERROR("Failed to create viewport!");
+    }
+
+    if (alpha_modifier_manager) {
+        surface->alpha_modifier = wp_alpha_modifier_v1_get_surface(alpha_modifier_manager, surface->surface);
+        if (!surface->alpha_modifier) ERROR("Failed to create alpha modifier!");
     }
 
     if (env->output.scale && !fractional_manager && !viewporter) {
@@ -3565,7 +3598,7 @@ void environment_buffer_scale_input_region(environment_buffer_t* buffer, float s
         return;
     }
 
-    environment_buffer_add_to_input_region(buffer, buffer->input_region_desc.x/scale, buffer->input_region_desc.y/scale, buffer->input_region_desc.width/scale, buffer->input_region_desc.height/scale);
+    wl_region_add(buffer->region, buffer->input_region_desc.x/scale, buffer->input_region_desc.y/scale, buffer->input_region_desc.width/scale, buffer->input_region_desc.height/scale);
 
     buffer->scale_factor = scale;
 }
@@ -3652,8 +3685,8 @@ void environment_subsurface_scale_coordinates(environment_subsurface_t* surface,
 {
     if (!surface) return;
     if (!x || !y) return;
-    *x = *x * surface->env->scale;
-    *y = *y * surface->env->scale;
+    *x = *x * (config_get_mascot_scale() * surface->env->scale);
+    *y = *y * (config_get_mascot_scale() * surface->env->scale);
 }
 
 uint32_t environment_tick(environment_t* environment, uint32_t tick)
@@ -3820,8 +3853,8 @@ struct mascot* environment_mascot_by_coordinates(environment_t* environment, int
                     surface_anchor_y += mascot_->subsurface->pose->anchor_y;
                 }
 
-                surface_anchor_x = (float)surface_anchor_x / mascot_->subsurface->env->scale;
-                surface_anchor_y = (float)surface_anchor_y / mascot_->subsurface->env->scale;
+                surface_anchor_x = (float)surface_anchor_x / (config_get_mascot_scale() * mascot_->subsurface->env->scale);
+                surface_anchor_y = (float)surface_anchor_y / (config_get_mascot_scale() * mascot_->subsurface->env->scale);
 
                 struct mascot_sprite* sprite = mascot_->subsurface->pose->sprite[mascot_->LookingRight->value.i];
                 hitbox.x = mascot_->subsurface->x + mascot_->subsurface->pose->anchor_x;

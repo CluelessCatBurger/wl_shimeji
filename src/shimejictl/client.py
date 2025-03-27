@@ -1068,7 +1068,9 @@ def config_handler(arguments: argparse.Namespace, client: Client, parser):
         "ON_TOOL_MOUSE": "On Tool Mouse Button",
         "ON_TOOL_BUTTON1": "On Tool Button 1",
         "ON_TOOL_BUTTON2": "On Tool Button 2",
-        "ON_TOOL_BUTTON3": "On Tool Button 3"
+        "ON_TOOL_BUTTON3": "On Tool Button 3",
+        "OPACITY": "Opacity",
+        "MASCOT_SCALE": "Scaling"
     }
     starttime = time.time()
     wait_until_null_null = False

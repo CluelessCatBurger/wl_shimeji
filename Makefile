@@ -33,7 +33,8 @@ override WL_HEADERS := \
 	$(WL_PROTO_DIR)/xdg-shell.h \
 	$(WL_PROTO_DIR)/fractional-scale-v1.h \
 	$(WL_PROTO_DIR)/wlr-layer-shell.h \
-	$(WL_PROTO_DIR)/xdg-output.h
+	$(WL_PROTO_DIR)/xdg-output.h \
+	$(WL_PROTO_DIR)/alpha-modifier-v1.h
 
 override SRC := \
 	$(wildcard $(SRCDIR)/*.c) \
@@ -68,8 +69,11 @@ protocols-autogen:
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/staging/fractional-scale/fractional-scale-v1.xml $(WL_PROTO_DIR)/fractional-scale-v1.c
 	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml   $(WL_PROTO_DIR)/xdg-output.h
 	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/unstable/xdg-output/xdg-output-unstable-v1.xml   $(WL_PROTO_DIR)/xdg-output.c
+	$(WAYLAND_SCANNER) client-header $(WAYLAND_PROTOCOLS_DIR)/staging/alpha-modifier/alpha-modifier-v1.xml     $(WL_PROTO_DIR)/alpha-modifier-v1.h
+	$(WAYLAND_SCANNER) private-code  $(WAYLAND_PROTOCOLS_DIR)/staging/alpha-modifier/alpha-modifier-v1.xml     $(WL_PROTO_DIR)/alpha-modifier-v1.c
 	$(WAYLAND_SCANNER) client-header wlr-protocols/wlr-layer-shell-unstable-v1.xml                             $(WL_PROTO_DIR)/wlr-layer-shell.h
 	$(WAYLAND_SCANNER) private-code  wlr-protocols/wlr-layer-shell-unstable-v1.xml                             $(WL_PROTO_DIR)/wlr-layer-shell.c
+
 
 # Rule to build wayland-protocol sources
 $(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile

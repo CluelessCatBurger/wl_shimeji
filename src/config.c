@@ -68,6 +68,9 @@ struct config {
     int32_t allow_dragging_multihead;
     int32_t unified_outputs;
 
+    float mascot_opacity;
+    float mascot_scale;
+
     char* prototypes_location;
     char* plugins_location;
     char* socket_location;
@@ -143,7 +146,8 @@ bool config_parse(const char* path)
     config.allow_dragging_multihead = -1;
     config.allow_throwing_multihead = -1;
     config.unified_outputs = -1;
-
+    config.mascot_opacity = -1.0f;
+    config.mascot_scale = -1.0f;
 
     FILE* file = fopen(path, "r");
     if (!file) {
@@ -239,6 +243,10 @@ bool config_parse(const char* path)
                 free(config.socket_location);
             }
             config.socket_location = strdup(value);
+        } else if (strcasecmp(key, "mascot_opacity") == 0) {
+            config_set_opacity(atof(value));
+        } else if (strcasecmp(key, "mascot_scale") == 0) {
+            config_set_mascot_scale(atof(value));
         }
     }
     strncpy(config.config_location, path, PATH_MAX);
@@ -285,6 +293,8 @@ void config_write(const char* path)
     if (config.prototypes_location) fprintf(file, "prototypes_location=%s\n", config.prototypes_location);
     if (config.plugins_location) fprintf(file, "prototypes_location=%s\n", config.plugins_location);
     if (config.socket_location) fprintf(file, "prototypes_location=%s\n", config.socket_location);
+    if (config.mascot_scale != -1.0f) fprintf(file, "mascot_scale=%f\n", config.mascot_scale);
+    if (config.mascot_opacity != -1.0f) fprintf(file, "mascot_opacity=%f\n", config.mascot_opacity);
 
 
     fclose(file);
@@ -701,6 +711,32 @@ const char* config_get_socket_location()
     return config.socket_location;
 }
 
+bool config_set_opacity(float value)
+{
+    if (value < 0.0f && value != -1.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    config.mascot_opacity = value;
+    return true;
+}
+
+bool config_set_mascot_scale(float value)
+{
+    if (value < 0.25f && value != -1.0f) value = 0.25f;
+    if (value > 2.0f) value = 2.0f;
+    config.mascot_scale = value;
+    return true;
+}
+
+float config_get_opacity()
+{
+    return config.mascot_opacity == -1.0f ? 1.0f : config.mascot_opacity;
+}
+
+float config_get_mascot_scale()
+{
+    return config.mascot_scale == -1.0f ? 1.0f : config.mascot_scale;
+}
+
 bool config_get_by_key(const char* key, char* dest, uint8_t size)
 {
     if (!strcmp(key, CONFIG_PARAM_BREEDING)) {
@@ -828,20 +864,27 @@ bool config_get_by_key(const char* key, char* dest, uint8_t size)
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON3)) {
         snprintf(dest, size, "%d", config.on_tool_button3_value);
         return true;
+    } else if (!strcmp(key, CONFIG_PARAM_OPACITY)) {
+        snprintf(dest, size, "%f", config.mascot_opacity);
+        return true;
+    } else if (!strcmp(key, CONFIG_PARAM_MASCOT_SCALE)) {
+        snprintf(dest, size, "%f", config.mascot_scale);
+        return true;
     }
     return false;
 }
 
 bool config_set_by_key(const char* key, const char* value)
 {
+    bool res = false;
     if (!strcmp(key, CONFIG_PARAM_BREEDING)) {
-        return config_set_breeding(parse_bool(value));
+        res = config_set_breeding(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_DRAGGING)) {
-        return config_set_dragging(parse_bool(value));
+        res = config_set_dragging(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_IE_INTERACTIONS)) {
-        return config_set_ie_interactions(parse_bool(value));
+        res = config_set_ie_interactions(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_IE_THROWING)) {
-        return config_set_ie_throwing(parse_bool(value));
+        res = config_set_ie_throwing(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_IE_THROW_POLICY)) {
         int policy = 3; // Default to looping
         if (!strcasecmp(value, "none")) policy = 0;
@@ -851,61 +894,65 @@ bool config_set_by_key(const char* key, const char* value)
         else if (!strcasecmp(value, "close")) policy = 4;
         else if (!strcasecmp(value, "minimize")) policy = 5;
         else if (!strcasecmp(value, "keep_offscreen")) policy = 6;
-        return config_set_ie_throw_policy(policy);
+        res = config_set_ie_throw_policy(policy);
     } else if (!strcmp(key, CONFIG_PARAM_CURSOR_DATA)) {
-        return config_set_cursor_data(parse_bool(value));
+        res = config_set_cursor_data(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_MASCOT_LIMIT)) {
-        return config_set_mascot_limit(atoi(value));
+        res = config_set_mascot_limit(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ALLOW_THROWING_MULTIHEAD)) {
-        return config_set_allow_throwing_multihead(parse_bool(value));
+        res = config_set_allow_throwing_multihead(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_ALLOW_DRAGGING_MULTIHEAD)) {
-        return config_set_allow_dragging_multihead(parse_bool(value));
+        res = config_set_allow_dragging_multihead(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_UNIFIED_OUTPUTS)) {
-        return config_set_unified_outputs(parse_bool(value));
+        res = config_set_unified_outputs(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_ALLOW_DISMISS_ANIMATIONS)) {
-        return config_set_allow_dismiss_animations(parse_bool(value));
+        res = config_set_allow_dismiss_animations(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_PER_MASCOT_INTERACTIONS)) {
-        return config_set_per_mascot_interactions(parse_bool(value));
+        res = config_set_per_mascot_interactions(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_INTERPOLATION_FRAMERATE)) {
-        return config_set_interpolation_framerate(atoi(value));
+        res = config_set_interpolation_framerate(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_OVERLAY_LAYER)) {
         int layer = 3; // Default to overlay
         if (!strcasecmp(value, "background")) layer = 0;
         else if (!strcasecmp(value, "bottom")) layer = 1;
         else if (!strcasecmp(value, "top")) layer = 2;
         else if (!strcasecmp(value, "overlay")) layer = 3;
-        return config_set_overlay_layer(layer);
+        res = config_set_overlay_layer(layer);
     } else if (!strcmp(key, CONFIG_PARAM_TABLETS_ENABLED)) {
-        return config_set_tablets_enabled(parse_bool(value));
+        res = config_set_tablets_enabled(parse_bool(value));
     } else if (!strcmp(key, CONFIG_PARAM_POINTER_LEFT_BUTTON)) {
-        return config_set_pointer_left_button(atoi(value));
+        res = config_set_pointer_left_button(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_POINTER_RIGHT_BUTTON)) {
-        return config_set_pointer_right_button(atoi(value));
+        res = config_set_pointer_right_button(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_POINTER_MIDDLE_BUTTON)) {
-        return config_set_pointer_middle_button(atoi(value));
+        res = config_set_pointer_middle_button(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_PEN)) {
-        return config_set_on_tool_pen(atoi(value));
+        res = config_set_on_tool_pen(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_ERASER)) {
-        return config_set_on_tool_eraser(atoi(value));
+        res = config_set_on_tool_eraser(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BRUSH)) {
-        return config_set_on_tool_brush(atoi(value));
+        res = config_set_on_tool_brush(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_PENCIL)) {
-        return config_set_on_tool_pencil(atoi(value));
+        res = config_set_on_tool_pencil(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_AIRBRUSH)) {
-        return config_set_on_tool_airbrush(atoi(value));
+        res = config_set_on_tool_airbrush(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_FINGER)) {
-        return config_set_on_tool_finger(atoi(value));
+        res = config_set_on_tool_finger(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_LENS)) {
-        return config_set_on_tool_lens(atoi(value));
+        res = config_set_on_tool_lens(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_MOUSE)) {
-        return config_set_on_tool_mouse(atoi(value));
+        res = config_set_on_tool_mouse(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON1)) {
-        return config_set_on_tool_button1(atoi(value));
+        res = config_set_on_tool_button1(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON2)) {
-        return config_set_on_tool_button2(atoi(value));
+        res = config_set_on_tool_button2(atoi(value));
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON3)) {
-        return config_set_on_tool_button3(atoi(value));
+        res = config_set_on_tool_button3(atoi(value));
+    } else if (!strcmp(key, CONFIG_PARAM_MASCOT_SCALE)) {
+        res = config_set_mascot_scale(atof(value));
+    } else if (!strcmp(key, CONFIG_PARAM_OPACITY)) {
+        res = config_set_opacity(atof(value));
     }
-    config_write(config.config_location);
-    return false;
+    if (res) config_write(config.config_location);
+    return res;
 }

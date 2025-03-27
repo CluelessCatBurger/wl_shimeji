@@ -7,3 +7,4 @@
 #include <wayland-protocols/cursor-shape-v1.h>
 #include <wayland-protocols/viewporter.h>
 #include <wayland-protocols/xdg-output.h>
+#include <wayland-protocols/alpha-modifier-v1.h>
