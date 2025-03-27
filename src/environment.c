@@ -767,6 +767,16 @@ static void environment_dimensions_changed_callback(uint32_t width, uint32_t hei
     env->height = height;
     env->workarea_geometry.width = width;
     env->workarea_geometry.height = height;
+    pthread_mutex_lock(&env->mascot_manager.mutex);
+    for (uint32_t i = 0; i < list_size(env->mascot_manager.referenced_mascots); i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
+        if (mascot) {
+            if (mascot->Y->value.i == 0 || mascot->Y->value.i == env->advertised_geometry.height) {
+                mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            }
+        }
+    }
+    pthread_mutex_unlock(&env->mascot_manager.mutex);
     environment_recalculate_advertised_geometry(env);
 }
 
@@ -952,6 +962,18 @@ static void on_output_done(void* data, struct wl_output* output)
     UNUSED(output);
     UNUSED(data);
     environment_t* env = (environment_t*)data;
+
+    pthread_mutex_lock(&env->mascot_manager.mutex);
+    for (uint32_t i = 0; i < list_size(env->mascot_manager.referenced_mascots); i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
+        if (mascot) {
+            if (mascot->Y->value.i == 0 || mascot->Y->value.i == env->advertised_geometry.height) {
+                mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            }
+        }
+    }
+    pthread_mutex_unlock(&env->mascot_manager.mutex);
+
     environment_recalculate_advertised_geometry(env);
     for (uint32_t i = 0; i < list_size(env->neighbors); i++) {
         environment_t* neighbor = list_get(env->neighbors, i);
@@ -2116,6 +2138,18 @@ static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output)
 {
     UNUSED(xdg_output);
     environment_t* env = data;
+
+    pthread_mutex_lock(&env->mascot_manager.mutex);
+    for (uint32_t i = 0; i < list_size(env->mascot_manager.referenced_mascots); i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
+        if (mascot) {
+            if (mascot->Y->value.i == 0 || mascot->Y->value.i == env->advertised_geometry.height) {
+                mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            }
+        }
+    }
+    pthread_mutex_unlock(&env->mascot_manager.mutex);
+
     environment_recalculate_advertised_geometry(env);
     for (uint32_t i = 0; i < list_size(env->neighbors); i++) {
         environment_t* neighbor = list_get(env->neighbors, i);
@@ -2572,11 +2606,34 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
         &proposed_x, &proposed_y
     );
 
-    if (MOVE_OOB(collision) && (config_get_allow_throwing_multihead() || config_get_unified_outputs())) {
+    if ((MOVE_OOB(collision) || is_outside(&surface->env->workarea_geometry, current_x, current_y)) && (config_get_allow_throwing_multihead() || config_get_unified_outputs())) {
         int32_t global_x = dx, global_y = yconv(surface->env, dy);
         environment_to_global_coordinates(surface->env, &global_x, &global_y);
         environment_t* new_env = environment_by_global_coords(global_x, global_y);
-        if (new_env) {
+        if (new_env == surface->env) {
+            struct bounding_box *gbbx = &surface->env->global_geometry;
+            struct bounding_box *lbbx = &surface->env->workarea_geometry;
+
+            if (dy > gbbx->height) {
+                gbbx->y -= gbbx->height - lbbx->height;
+                gbbx->height -= gbbx->height - lbbx->height;
+            } else if (dy < 0) {
+                gbbx->y += gbbx->height - lbbx->height;
+                gbbx->height -= gbbx->height - lbbx->height;
+            }
+
+            if (dx > gbbx->width) {
+                gbbx->x -= gbbx->width - lbbx->width;
+                gbbx->width -= gbbx->width - lbbx->width;
+            } else if (dx < 0) {
+                gbbx->x += gbbx->width - lbbx->width;
+                gbbx->width -= gbbx->width - lbbx->width;
+            }
+
+            mascot_moved(surface->mascot, proposed_x, yconv(surface->env, proposed_y));
+            return environment_move_ok;
+        }
+        else if (new_env) {
             int32_t diff_x, diff_y;
             environment_global_coordinates_delta(surface->env, new_env, &diff_x, &diff_y);
             proposed_x = dx;
@@ -2593,11 +2650,25 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
             mascot_moved(surface->mascot, proposed_x, proposed_y);
             mascot_apply_environment_position_diff(surface->mascot, diff_x, diff_y, move_flags, new_env);
             mascot_environment_changed(surface->mascot, new_env);
+
+            if (is_outside(&new_env->workarea_geometry, surface->mascot->X->value.i, surface->mascot->Y->value.i)) {
+                if (surface->mascot->X->value.i < new_env->workarea_geometry.x) {
+                    surface->mascot->X->value.i = new_env->workarea_geometry.x;
+                } else if (surface->mascot->X->value.i > new_env->workarea_geometry.x + new_env->workarea_geometry.width) {
+                    surface->mascot->X->value.i = new_env->workarea_geometry.x + new_env->workarea_geometry.width;
+                }
+                if (surface->mascot->Y->value.i < new_env->workarea_geometry.y) {
+                    surface->mascot->Y->value.i = new_env->workarea_geometry.y;
+                } else if (surface->mascot->Y->value.i > new_env->workarea_geometry.y + new_env->workarea_geometry.height) {
+                    surface->mascot->Y->value.i = new_env->workarea_geometry.y + new_env->workarea_geometry.height;
+                }
+            }
+
             return environment_move_ok;
         }
     }
 
-    if (COLLIDED(collision) && !environment_neighbor_border(surface->env, proposed_x, proposed_y)) {
+    if (COLLIDED(collision) && !environment_neighbor_border(surface->env, proposed_x, proposed_y) && surface->mascot->state != mascot_state_jump) {
         dx = proposed_x;
         dy = yconv(surface->env, proposed_y);
         result = environment_move_clamped;
@@ -3205,7 +3276,7 @@ int32_t environment_workarea_width(environment_t* env)
 
 int32_t environment_workarea_height(environment_t* env)
 {
-    return env->advertised_geometry.height ? env->advertised_geometry.height : (int32_t)env->height;
+    return env->advertised_geometry.height ? env->advertised_geometry.height : (int32_t)env->workarea_geometry.height;
 
 }
 
