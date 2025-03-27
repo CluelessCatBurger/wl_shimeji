@@ -71,6 +71,7 @@ struct config {
     char* prototypes_location;
     char* plugins_location;
     char* socket_location;
+    char config_location[PATH_MAX];
 } config = {0};
 
 bool is_whitespace(char c)
@@ -240,7 +241,7 @@ bool config_parse(const char* path)
             config.socket_location = strdup(value);
         }
     }
-
+    strncpy(config.config_location, path, PATH_MAX);
     fclose(file);
     return true;
 }
@@ -905,5 +906,6 @@ bool config_set_by_key(const char* key, const char* value)
     } else if (!strcmp(key, CONFIG_PARAM_ON_TOOL_BUTTON3)) {
         return config_set_on_tool_button3(atoi(value));
     }
+    config_write(config.config_location);
     return false;
 }
