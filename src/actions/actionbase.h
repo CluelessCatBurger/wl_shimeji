@@ -34,4 +34,6 @@ typedef struct mascot_action_next (*mascot_action_next)(struct mascot *mascot, s
 typedef enum mascot_tick_result   (*mascot_action_tick)(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick);
 typedef void (*mascot_action_clean)(struct mascot *mascot);
 
+uint32_t mascot_duration_limit(struct mascot* mascot, struct mascot_expression* expr, uint32_t tick);
+
 #endif

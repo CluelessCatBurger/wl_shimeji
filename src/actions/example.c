@@ -74,20 +74,7 @@ enum mascot_tick_result example_action_init(struct mascot *mascot, struct mascot
 
     // Some subactions may be duration limited by their callers.
     // In this case we should execute duration limit expression and set action duration.
-    if (actionref->duration_limit) {
-        DEBUG("Executing duration limit for action \"%s\"", actionref->action->name);
-        float vmres = 0.0;
-        enum expression_execution_result res = expression_vm_execute(
-            actionref->duration_limit->body,
-            mascot,
-            &vmres
-        );
-        if (res == EXPRESSION_EXECUTION_ERROR) {
-            LOG("ERROR", RED, "<Mascot:%s:%u> Duration errored for init in action \"%s\"", mascot->prototype->name, mascot->id, actionref->action->name);
-        }
-        mascot->action_duration = tick + vmres;
-        DEBUG("Duration limit for action \"%s\" is %f", actionref->action->name, vmres);
-    }
+    mascot->action_duration = mascot_duration_limit(mascot, actionref->duration_limit, tick);
 
     // Reset commonly used things like action index, frame index, next frame tick, animation index
     // It best to do that in all non-transient actions.

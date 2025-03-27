@@ -50,18 +50,7 @@ enum mascot_tick_result walkwithie_action_init(struct mascot *mascot, struct mas
     mascot->current_condition.expression_prototype = (struct mascot_expression*)cond;
     mascot->current_condition.evaluated = cond ? cond->evaluate_once : 0;
 
-    if (actionref->duration_limit) {
-        float vmres = 0.0;
-        enum expression_execution_result res = expression_vm_execute(
-            actionref->duration_limit->body,
-            mascot,
-            &vmres
-        );
-        if (res == EXPRESSION_EXECUTION_ERROR) {
-            LOG("ERROR", RED, "<Mascot:%s:%u> Duration errored for init in action \"%s\"", mascot->prototype->name, mascot->id, actionref->action->name);
-        }
-        mascot->action_duration = tick + vmres;
-    }
+    mascot->action_duration = mascot_duration_limit(mascot, actionref->duration_limit, tick);
 
     // Reset action index, frame and animation index
     mascot->action_index = 0;
