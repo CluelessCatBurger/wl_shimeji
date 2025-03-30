@@ -357,6 +357,7 @@ enum expression_execution_result expression_vm_execute(struct expression_prototy
                 freg0 = state.stack[state.sp - 2];
                 freg1 = state.stack[state.sp - 1];
                 state.stack[state.sp - 2] = ((int)freg0) || ((int)freg1);
+                state.sp--;
                 break;
             case OP_LNOT:
                 if (state.sp < 2) FAIL("Stack underflow")
