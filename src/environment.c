@@ -350,7 +350,7 @@ static uint32_t yconv(environment_t* env, uint32_t y);
 static void environment_plugin_output_cursor_data(void* userdata, plugin_output_t* output, int32_t x, int32_t y);
 static void environment_plugin_output_new_window(void* userdata, plugin_output_t* output, plugin_window_t* window);
 
-static struct plugin_output_event environment_plugin_output_listener = {
+__attribute((unused)) static struct plugin_output_event environment_plugin_output_listener = {
     .cursor = environment_plugin_output_cursor_data,
     .window = environment_plugin_output_new_window
 };
