@@ -350,7 +350,7 @@ void* mascot_manager_thread(void* arg)
             environment_t* environment = list_get(server_state.environments, i);
             if (!environment) continue;
             c--;
-            environment_pre_tick(environment, tick);
+            // environment_pre_tick(environment, tick);
             environment_tick(environment, tick);
             environment_commit(environment);
         }

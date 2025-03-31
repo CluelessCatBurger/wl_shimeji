@@ -430,7 +430,7 @@ struct mascot {
     uint32_t id; // Mascot ID
     const struct mascot_prototype* prototype;
 
-    struct ie_object* associated_ie;
+    environment_ie_t* associated_ie;
 
     uint32_t next_frame_tick; // Frame when the next tick should be
     uint32_t action_duration; // Duration of the current action
@@ -569,5 +569,6 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
 
 // Set action, not recommended to use directly
 enum action_set_result mascot_set_action(struct mascot* mascot, struct mascot_action_reference* actionref, bool push_stack, uint32_t tick);
+environment_ie_t* mascot_get_active_ie(struct mascot* mascot);
 
 #endif

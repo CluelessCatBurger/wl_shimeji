@@ -20,6 +20,7 @@
 #include "throwie.h"
 #include "actionbase.h"
 #include "config.h"
+#include "mascot.h"
 
 enum mascot_tick_result throwie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
@@ -35,24 +36,24 @@ enum mascot_tick_result throwie_action_init(struct mascot *mascot, struct mascot
         return mascot_tick_error;
     }
 
-    struct ie_object* ie = environment_get_ie(mascot->environment);
+    environment_ie_t* ie = mascot_get_active_ie(mascot);
     if (!ie) {
         DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
         mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
         return mascot_tick_reenter;
     }
 
-    if (!ie->active) {
-        DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        return mascot_tick_reenter;
-    }
+    // if (!ie->active) {
+    //     DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     return mascot_tick_reenter;
+    // }
 
-    if (!environment_ie_allows_move(mascot->environment)) {
-        DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        return mascot_tick_reenter;
-    }
+    // if (!environment_ie_allows_move(mascot->environment)) {
+    //     DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     return mascot_tick_reenter;
+    // }
 
     DEBUG("<Mascot:%s:%u> Initializing simple action \"%s\"", mascot->prototype->name, mascot->id, actionref->action->name);
     DEBUG("<Mascot:%s:%u> Simple actionref info:", mascot->prototype->name, mascot->id);
@@ -102,7 +103,9 @@ enum mascot_tick_result throwie_action_init(struct mascot *mascot, struct mascot
 
     mascot->state = mascot_state_ie_throw;
 
-    bool throw_ie = environment_ie_throw(mascot->environment, mascot->InitialVelX->value.f * (mascot->LookingRight->value.i ? 1 : -1), mascot->InitialVelY->value.f, mascot->Gravity->value.f, tick);
+    // bool throw_ie = environment_ie_throw(mascot->environment, mascot->InitialVelX->value.f * (mascot->LookingRight->value.i ? 1 : -1), mascot->InitialVelY->value.f, mascot->Gravity->value.f, tick);
+
+    bool throw_ie = false;
 
     if (!throw_ie) {
         WARN("<Mascot:%s:%u> Failed to throw mascot in IE", mascot->prototype->name, mascot->id);
@@ -147,13 +150,13 @@ struct mascot_action_next throwie_action_next(struct mascot* mascot, struct masc
         return result;
     }
 
-    struct ie_object* ie = environment_get_ie(mascot->environment);
-    if (ie->state == IE_STATE_MOVED) {
-        INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
-        throwie_action_clean(mascot);
-        result.status = mascot_tick_next;
-        return result;
-    }
+    // struct ie_object* ie = environment_get_ie(mascot->environment);
+    // if (ie->state == IE_STATE_MOVED) {
+    //     INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
+    //     throwie_action_clean(mascot);
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
 
     const struct mascot_animation* current_animation = mascot->current_animation;
     const struct mascot_animation* new_animation = NULL;
@@ -257,6 +260,6 @@ void throwie_action_clean(struct mascot *mascot)
     mascot->InitialVelX->value.f = 0;
     mascot->InitialVelY->value.f = 0;
     mascot->Gravity->value.f = 0;
-    environment_ie_stop_movement(mascot->environment);
+    // environment_ie_stop_movement(mascot->environment);
     mascot_announce_affordance(mascot, NULL);
 }

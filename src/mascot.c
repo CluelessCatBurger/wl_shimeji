@@ -819,7 +819,7 @@ void mascot_unlink(struct mascot* mascot)
 
     mascot_announce_affordance(mascot, NULL);
     if (mascot->associated_ie) {
-        plugin_execute_ie_detach_mascot(mascot->associated_ie->parent_plugin, mascot->associated_ie, mascot);
+        // plugin_execute_ie_detach_mascot(mascot->associated_ie->parent_plugin, mascot->associated_ie, mascot);
     }
     mascot_detach_affordance_manager(mascot);
 
@@ -1336,4 +1336,10 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
 
     mascot_moved(mascot, new_x, yconvat(at_env, new_y));
 
+}
+
+environment_ie_t* mascot_get_active_ie(struct mascot* mascot) {
+    if (!mascot) ERROR("mascot_get_active_ie: mascot is NULL");
+    if (mascot->associated_ie) return mascot->associated_ie;
+    return environment_get_front_ie(mascot->environment);
 }

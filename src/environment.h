@@ -73,8 +73,20 @@ enum environment_init_status {
     ENV_NOT_INITIALIZED = -1
 };
 
-#include "mascot.h"
 #include "plugins.h"
+
+typedef struct {
+    environment_t *parent_env;
+    struct list   *attachments;
+    plugin_window_t     *window;
+    struct bounding_box geometry;
+    uint32_t refcounter;
+    int32_t z_index;
+    bool available;
+    bool visible;
+} environment_ie_t;
+
+#include "mascot.h"
 #include "mascot_config_parser.h"
 
 enum environment_init_status environment_init(int flags,
@@ -153,16 +165,7 @@ void enviroment_wait_until_ready(environment_t* env);
 bool environment_pre_tick(environment_t* env, uint32_t tick);
 
 void environment_set_public_cursor_position(environment_t* env, int32_t x, int32_t y);
-void environment_set_ie(environment_t* env, struct ie_object *ie);
-struct ie_object* environment_get_ie(environment_t* env);
 void environment_get_output_id_info(environment_t* env, const char** name, const char** make, const char** model, const char** desc, uint32_t *id);
-
-// IE's
-enum environment_move_result environment_ie_move(environment_t* env, int32_t dx, int32_t dy);
-bool environment_ie_allows_move(environment_t* env);
-bool environment_ie_throw(environment_t* env, float x_velocity, float y_velocity, float gravity, uint32_t tick);
-bool environment_ie_stop_movement(environment_t* env);
-bool environment_ie_restore(environment_t* env);
 
 // Misc
 void environment_set_broadcast_input_enabled_listener(void(*listener)(bool));
@@ -245,5 +248,16 @@ void environment_popup_attach(environment_popup_t* popup, environment_buffer_t* 
 void environment_popup_commit(environment_popup_t* popup);
 void environment_popup_dismiss(environment_popup_t* popup);
 void environment_popup_add_listener(environment_popup_t* popup, struct environment_popup_listener listener, void* data);
+
+// Windows
+environment_ie_t* environment_get_front_ie(environment_t* environment);
+environment_ie_t* environment_create_ie(environment_t* environment, plugin_window_t* window);
+environment_ie_t* environment_ie_ref(environment_ie_t* ie);
+bool environment_ie_get_control(environment_ie_t* ie);
+bool environment_ie_move(environment_ie_t* ie, int32_t x, int32_t y);
+bool environment_ie_attach(environment_ie_t* ie, struct mascot* mascot);
+bool environment_ie_detach(environment_ie_t* ie, struct mascot* mascot);
+void environment_ie_destroy(environment_ie_t* ie);
+void environment_ie_unref(environment_ie_t* ie);
 
 #endif

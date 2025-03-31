@@ -20,132 +20,63 @@
 #ifndef PLUGINS_H
 #define PLUGINS_H
 
-struct plugin;
-struct ie_object;
+#include "master_header.h"
+#include "physics.h"
 
-#include "mascot.h"
-#include "environment.h"
+typedef struct plugin_output plugin_output_t;
+typedef struct plugin_window plugin_window_t;
+typedef struct plugin plugin_t;
 
-#include <unistd.h>
-
-#define PLUGIN_PROVIDES_CURSOR_POSITION 1
-#define PLUGIN_PROVIDES_IE_POSITION 2
-#define PLUGIN_PROVIDES_IE_MOVE 4
-
-#define PLUGIN_IE_THROW_POLICY_NONE 0
-#define PLUGIN_IE_THROW_POLICY_STOP_AT_BORDERS 1
-#define PLUGIN_IE_THROW_POLICY_BOUNCE_AT_BORDERS 2
-#define PLUGIN_IE_THROW_POLICY_LOOP 3
-#define PLUGIN_IE_THROW_POLICY_CLOSE 4
-#define PLUGIN_IE_THROW_POLICY_MINIMIZE 5
-#define PLUGIN_IE_KEEP_OFFSCREEN 6
-
-enum plugin_initialization_result {
-    PLUGIN_INIT_OK,
-    PLUGIN_INIT_BAD_ENVIRONMENT,
-    PLUGIN_INIT_BAD_VERSION,
-    PLUGIN_INIT_BAD_DESCRIPTION,
-    PLUGIN_INIT_SEGFAULT,
-    PLUGIN_INIT_UNKNOWN_ERROR,
-    PLUGIN_INIT_NULLPTR
+struct plugin_output_event {
+    void (*cursor)(void* userdata, plugin_output_t* output, int32_t x, int32_t y);
+    void (*window)(void* userdata, plugin_output_t* output, plugin_window_t* window);
 };
 
-enum plugin_execution_result {
+enum plugin_window_control_state {
+    PLUGIN_WINDOW_CONTROL_STATE_UNKNOWN,
+    PLUGIN_WINDOW_CONTROL_STATE_SYSTEM,
+    PLUGIN_WINDOW_CONTROL_STATE_MASCOT,
+    PLUGIN_WINDOW_CONTROL_STATE_UNAVAILABLE,
+};
+
+enum plugin_exec_error {
     PLUGIN_EXEC_OK,
-    PLUGIN_EXEC_ERROR,
-    PLUGIN_EXEC_SEGFAULT,
-    PLUGIN_EXEC_UNKNOWN_ERROR,
-    PLUGIN_EXEC_NULLPTR
+    PLUGIN_EXEC_ENOENT,
+    PLUGIN_EXEC_SEGV,
+    PLUGIN_EXEC_EINVAL,
+    PLUGIN_EXEC_ABORT
 };
 
-
-struct ie_object {
-    enum {
-        IE_TYPE_WINDOW
-    } type;
-
-    enum {
-        IE_STATE_IDLE,
-        IE_STATE_MOVED,
-        IE_STATE_THROWN
-    } state;
-
-    int32_t x;
-    int32_t y;
-    int32_t width;
-    int32_t height;
-
-    uint32_t reference_tick;
-
-    float x_velocity;
-    float y_velocity;
-    float gravity;
-
-    bool active;
-    bool fullscreen;
-
-    struct mascot* held_by;
-
-    environment_t* environment;
-    struct plugin* parent_plugin;
-    void* data;
+struct plugin_window_event {
+    void (*geometry)(void* userdata, plugin_window_t* window, struct bounding_box geometry);
+    void (*ordering)(void* userdata, plugin_window_t* window, int32_t order_index);
+    void (*control)(void* userdata, plugin_window_t* window, enum plugin_window_control_state state);
+    void (*destroy)(void* userdata, plugin_window_t* window);
 };
 
-struct plugin {
-    const char* name;
-    const char* description;
-    const char* author;
-    const char* version;
-    const char* website;
-    const char* license;
-    const char* filename;
+plugin_t* plugin_load(int32_t at_fd, const char* path, enum plugin_exec_error* error);
+plugin_t* plugin_ref(plugin_t* plugin);
+void plugin_unref(plugin_t* plugin);
+void plugin_unload(plugin_t* plugin);
+int32_t plugin_get_caps(plugin_t* plugin, enum plugin_exec_error* error);
+enum plugin_exec_error* plugin_set_caps(plugin_t* plugin, int32_t caps);
+enum plugin_exec_error* plugin_tick(plugin_t* plugin);
 
-    enum plugin_initialization_result (*init)(uint32_t, const char**); // capabilities, error_message
-    void (*deinit)(void);
+plugin_output_t* plugins_request_output(struct bounding_box* geometry);
+plugin_output_t* plugins_output_ref(plugin_output_t* output);
+void plugins_output_unref(plugin_output_t* output);
+void plugin_output_set_listener(plugin_output_t* output, struct plugin_output_event* listener, void* userdata);
+void plugin_output_commit(plugin_output_t* output);
+void plugin_output_destroy(plugin_output_t* output); // Calls plugin_output_unref(output) internally
 
-    uint32_t provides;
-    uint32_t effective_caps;
-
-    enum plugin_execution_result (*execute)(struct ie_object*, int32_t*, int32_t*, uint32_t); // ie, mouse_x, mouse_y, tick
-    enum plugin_execution_result (*execute_ie_move)(struct ie_object* ie, int32_t x, int32_t y); // ie, x, y
-    enum plugin_execution_result (*execute_ie_attach_mascot)(struct ie_object* ie, struct mascot* mascot); // ie, mascot
-    enum plugin_execution_result (*execute_ie_detach_mascot)(struct ie_object* ie, struct mascot* mascot); // ie, mascot
-    enum plugin_execution_result (*execute_throw_ie)(struct ie_object* ie, float x_velocity, float y_velocity, float gravity, uint32_t start_tick);
-    enum plugin_execution_result (*execute_stop_ie)(struct ie_object* ie); // ie
-    enum plugin_execution_result (*execute_ie_throw_policy)(int policy);
-
-    // Deactivate current IE and restore offscreen windows
-    enum plugin_execution_result (*execute_deactivate_ie)(struct ie_object* ie);
-    enum plugin_execution_result (*execute_restore_ies)(void);
-
-    enum plugin_execution_result (*initialize_ie)(struct ie_object* ie, const char*, uint32_t id);
-    enum plugin_execution_result (*deinitialize_ie)(struct ie_object* ie);
-
-    void* handle;
-    void* data;
-};
-
-struct plugin* plugin_open(const char* filename);
-void plugin_close(struct plugin* plugin);
-
-enum plugin_initialization_result plugin_init(struct plugin* plugin, uint32_t allowed_capabilities, const char** error_message);
-void plugin_deinit(struct plugin* plugin);
-
-enum plugin_execution_result plugin_execute(struct plugin* plugin, struct ie_object* ie, int32_t* pointer_x, int32_t* pointer_y, uint32_t tick);
-enum plugin_execution_result plugin_execute_ie_move(struct plugin* plugin, struct ie_object* ie, int32_t x, int32_t y);
-enum plugin_execution_result plugin_execute_ie_attach_mascot(struct plugin* plugin, struct ie_object* ie, struct mascot* mascot);
-enum plugin_execution_result plugin_execute_ie_detach_mascot(struct plugin* plugin, struct ie_object* ie, struct mascot* mascot);
-enum plugin_execution_result plugin_execute_throw_ie(struct plugin* plugin, struct ie_object* ie, float x_velocity, float y_velocity, float gravity, uint32_t start_tick);
-enum plugin_execution_result plugin_execute_stop_ie(struct plugin* plugin, struct ie_object* ie);
-enum plugin_execution_result plugin_execute_ie_throw_policy(struct plugin* plugin, int policy);
-
-enum plugin_execution_result plugin_change_capabilities(struct plugin* plugin, uint32_t capabilities);
-
-enum plugin_execution_result plugin_execute_deactivate_ie(struct plugin* plugin, struct ie_object* ie);
-enum plugin_execution_result plugin_execute_restore_ies(struct plugin* plugin);
-
-enum plugin_execution_result plugin_get_ie_for_environment(struct plugin* plugin, environment_t* env, struct ie_object** ie);
-enum plugin_execution_result plugin_free_ie(struct plugin* plugin, struct ie_object* ie);
+plugin_window_t* plugin_window_ref(plugin_window_t* window);
+void plugin_window_unref(plugin_window_t* window);
+void plugin_window_set_listener(plugin_window_t* window, struct plugin_window_event* listener, void* userdata);
+bool plugin_window_grab_control(plugin_window_t* window);
+bool plugin_window_move(plugin_window_t* window, int32_t x, int32_t y);
+bool plugin_window_drop_control(plugin_window_t* window);
+bool plugin_window_restore_position(plugin_window_t* window);
+struct bounding_box* plugin_window_geometry(plugin_window_t* window);
 
 
 #endif

@@ -21,6 +21,7 @@
 #include "actionbase.h"
 #include "config.h"
 #include "environment.h"
+#include "mascot.h"
 
 enum mascot_tick_result fallwithie_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
@@ -36,24 +37,24 @@ enum mascot_tick_result fallwithie_action_init(struct mascot *mascot, struct mas
         return mascot_tick_error;
     }
 
-    struct ie_object* ie = environment_get_ie(mascot->environment);
+    environment_ie_t* ie = mascot_get_active_ie(mascot);
     if (!ie) {
         DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
         mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
         return mascot_tick_reenter;
     }
 
-    if (!ie->active) {
-        DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        return mascot_tick_reenter;
-    }
+    // if (!ie->active) {
+    //     DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     return mascot_tick_reenter;
+    // }
 
-    if (!environment_ie_allows_move(mascot->environment)) {
-        DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        return mascot_tick_reenter;
-    }
+    // if (!environment_ie_allows_move(mascot->environment)) {
+    //     DEBUG("<Mascot:%s:%u> IE object does not allow movement, skipping action", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     return mascot_tick_reenter;
+    // }
 
     enum mascot_tick_result actionref_cond = mascot_check_condition(mascot, actionref->condition);
     enum mascot_tick_result action_cond = mascot_check_condition(mascot, actionref->action->condition);
@@ -137,8 +138,8 @@ enum mascot_tick_result fallwithie_action_tick(struct mascot *mascot, struct mas
     float gravity = mascot->Gravity->value.f;
     int32_t posx = mascot->X->value.i;
     int32_t posy = mascot->Y->value.i;
-    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
-    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
+    // int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
+    // int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
 
     bool looking_right = mascot->LookingRight->value.i;
 
@@ -178,21 +179,21 @@ enum mascot_tick_result fallwithie_action_tick(struct mascot *mascot, struct mas
             return mascot_tick_reenter;
         }
         mascot->action_duration = tick + 5;
-        struct ie_object* ie = environment_get_ie(mascot->environment);
-        if (ie) {
-            if (ie->active) {
-                enum environment_move_result move_res = environment_move_ok;
-                if (looking_right) {
-                    move_res = environment_ie_move(mascot->environment, posx - ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
-                } else {
-                    move_res = environment_ie_move(mascot->environment, posx + ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
-                }
-                if (move_res == environment_move_invalid) {
-                    mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
-                    return mascot_tick_reenter;
-                }
-            }
-        }
+        // struct ie_object* ie = environment_get_ie(mascot->environment);
+        // if (ie) {
+        //     // if (ie->active) {
+        //     //     enum environment_move_result move_res = environment_move_ok;
+        //     //     if (looking_right) {
+        //     //         move_res = environment_ie_move(mascot->environment, posx - ie_offt_x, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+        //     //     } else {
+        //     //         move_res = environment_ie_move(mascot->environment, posx + ie_offt_x - ie->width, mascot_screen_y_to_mascot_y(mascot, posy) + ie_offt_y - ie->height);
+        //     //     }
+        //     //     if (move_res == environment_move_invalid) {
+        //     //         mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
+        //     //         return mascot_tick_reenter;
+        //     //     }
+        //     // }
+        // }
     }
 
     return mascot_tick_ok;
@@ -200,6 +201,7 @@ enum mascot_tick_result fallwithie_action_tick(struct mascot *mascot, struct mas
 
 struct mascot_action_next fallwithie_action_next(struct mascot* mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {
+    UNUSED(tick);
     struct mascot_action_next result = {0};
     result.next_action = *actionref;
 
@@ -210,125 +212,125 @@ struct mascot_action_next fallwithie_action_next(struct mascot* mascot, struct m
         return result;
     }
 
-    struct ie_object* ie = environment_get_ie(mascot->environment);
-    if (!ie) {
-        WARN("<Mascot:%s:%u> Attached environment lost IE", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        fallwithie_action_clean(mascot);
-        result.status = mascot_tick_next;
-        return result;
-    }
-    if (!ie->active) {
-        INFO("<Mascot:%s:%u> IE is no longer active", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        fallwithie_action_clean(mascot);
-        result.status = mascot_tick_next;
-        return result;
-    }
-    if (ie->state == IE_STATE_MOVED) {
-        INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        fallwithie_action_clean(mascot);
-        result.status = mascot_tick_next;
-        return result;
-    }
+    // struct ie_object* ie = environment_get_ie(mascot->environment);
+    // if (!ie) {
+    //     WARN("<Mascot:%s:%u> Attached environment lost IE", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     fallwithie_action_clean(mascot);
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
+    // if (!ie->active) {
+    //     INFO("<Mascot:%s:%u> IE is no longer active", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     fallwithie_action_clean(mascot);
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
+    // if (ie->state == IE_STATE_MOVED) {
+    //     INFO("<Mascot:%s:%u> IE is moved", mascot->prototype->name, mascot->id);
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     fallwithie_action_clean(mascot);
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
 
 
-    int32_t mascot_x = mascot->X->value.i;
-    int32_t mascot_y = mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i);
-    int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
-    int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
+    // int32_t mascot_x = mascot->X->value.i;
+    // int32_t mascot_y = mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i);
+    // int32_t ie_offt_x = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETX_ID) / environment_screen_scale(mascot->environment);
+    // int32_t ie_offt_y = mascot_get_variable_i(mascot, MASCOT_LOCAL_VARIABLE_IEOFFSETY_ID) / environment_screen_scale(mascot->environment);
 
-    int32_t ie_corner_x = mascot->LookingRight->value.i ? ie->x : ie->x + ie->width;
-    int32_t distance_x = abs((mascot_x + (mascot->LookingRight->value.i ? ie_offt_x : -ie_offt_x)) - ie_corner_x);
-    int32_t distance_y = abs((mascot_y + ie_offt_y) - (ie->y + ie->height));
+    // int32_t ie_corner_x = mascot->LookingRight->value.i ? ie->x : ie->x + ie->width;
+    // int32_t distance_x = abs((mascot_x + (mascot->LookingRight->value.i ? ie_offt_x : -ie_offt_x)) - ie_corner_x);
+    // int32_t distance_y = abs((mascot_y + ie_offt_y) - (ie->y + ie->height));
 
-    if (distance_x > 50 || distance_y > 50) {
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        fallwithie_action_clean(mascot);
-        result.status = mascot_tick_next;
-        return result;
-    }
+    // if (distance_x > 50 || distance_y > 50) {
+    //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    //     fallwithie_action_clean(mascot);
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
 
-    if (mascot->VelocityY->value.f != 0.0) {
-        if (btype == environment_border_type_ceiling && mascot->VelocityY->value.f < 0.0) {
-            result.status = mascot_tick_next;
-            return result;
-        } else if (btype == environment_border_type_floor && mascot->VelocityY->value.f > 0.0) {
-            result.status = mascot_tick_next;
-            return result;
-        }
-    } else {
-        if (btype != environment_border_type_none) {
-            result.status = mascot_tick_next;
-            return result;
-        }
-    }
+    // if (mascot->VelocityY->value.f != 0.0) {
+    //     if (btype == environment_border_type_ceiling && mascot->VelocityY->value.f < 0.0) {
+    //         result.status = mascot_tick_next;
+    //         return result;
+    //     } else if (btype == environment_border_type_floor && mascot->VelocityY->value.f > 0.0) {
+    //         result.status = mascot_tick_next;
+    //         return result;
+    //     }
+    // } else {
+    //     if (btype != environment_border_type_none) {
+    //         result.status = mascot_tick_next;
+    //         return result;
+    //     }
+    // }
 
 
-    if (mascot->action_duration <= tick) {
-        result.status = mascot_tick_next;
-        return result;
-    }
+    // if (mascot->action_duration <= tick) {
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
 
-    // Check conditions
-    enum mascot_tick_result actionref_cond = mascot_recheck_condition(mascot, actionref->condition);
-    enum mascot_tick_result action_cond = mascot_recheck_condition(mascot, actionref->action->condition);
+    // // Check conditions
+    // enum mascot_tick_result actionref_cond = mascot_recheck_condition(mascot, actionref->condition);
+    // enum mascot_tick_result action_cond = mascot_recheck_condition(mascot, actionref->action->condition);
 
-    if (actionref_cond == mascot_tick_next || action_cond == mascot_tick_next) {
-        result.status = mascot_tick_next;
-        return result;
-    }
+    // if (actionref_cond == mascot_tick_next || action_cond == mascot_tick_next) {
+    //     result.status = mascot_tick_next;
+    //     return result;
+    // }
 
-    if (actionref_cond == mascot_tick_error || action_cond == mascot_tick_error) {
-        result.status = mascot_tick_error;
-        return result;
-    }
+    // if (actionref_cond == mascot_tick_error || action_cond == mascot_tick_error) {
+    //     result.status = mascot_tick_error;
+    //     return result;
+    // }
 
-    const struct mascot_animation* current_animation = mascot->current_animation;
-    const struct mascot_animation* new_animation = NULL;
+    // const struct mascot_animation* current_animation = mascot->current_animation;
+    // const struct mascot_animation* new_animation = NULL;
 
-    for (uint16_t i = 0; i < actionref->action->length; i++) {
-        if (actionref->action->content[i].kind != mascot_action_content_type_animation) {
-            LOG("ERROR", RED, "<Mascot:%s:%u> Action content is not an animation", mascot->prototype->name, mascot->id);
-            result.status = mascot_tick_error;
-            return result;
-        }
+    // for (uint16_t i = 0; i < actionref->action->length; i++) {
+    //     if (actionref->action->content[i].kind != mascot_action_content_type_animation) {
+    //         LOG("ERROR", RED, "<Mascot:%s:%u> Action content is not an animation", mascot->prototype->name, mascot->id);
+    //         result.status = mascot_tick_error;
+    //         return result;
+    //     }
 
-        enum mascot_tick_result animcond = mascot_check_condition(mascot, actionref->action->content[i].value.animation->condition);
+    //     enum mascot_tick_result animcond = mascot_check_condition(mascot, actionref->action->content[i].value.animation->condition);
 
-        if (animcond == mascot_tick_error) {
-            result.status = mascot_tick_error;
-            return result;
-        }
+    //     if (animcond == mascot_tick_error) {
+    //         result.status = mascot_tick_error;
+    //         return result;
+    //     }
 
-        if (animcond == mascot_tick_next) {
-            continue;
-        }
+    //     if (animcond == mascot_tick_next) {
+    //         continue;
+    //     }
 
-        new_animation = actionref->action->content[i].value.animation;
-        mascot->animation_index = i;
-        break;
-    }
+    //     new_animation = actionref->action->content[i].value.animation;
+    //     mascot->animation_index = i;
+    //     break;
+    // }
 
-    if (new_animation != current_animation) {
-        result.next_animation = new_animation;
-        mascot->next_frame_tick = tick;
-        result.status = mascot_tick_reenter;
-        mascot->frame_index = 0;
-        return result;
-    }
+    // if (new_animation != current_animation) {
+    //     result.next_animation = new_animation;
+    //     mascot->next_frame_tick = tick;
+    //     result.status = mascot_tick_reenter;
+    //     mascot->frame_index = 0;
+    //     return result;
+    // }
 
-    if (mascot->next_frame_tick <= tick) {
-        if (mascot->current_animation) {
-            if (mascot->frame_index >= mascot->current_animation->frame_count) {
-                mascot->frame_index = 0;
-            }
-            result.next_pose = mascot->current_animation->frames[mascot->frame_index++];
-        }
-    }
+    // if (mascot->next_frame_tick <= tick) {
+    //     if (mascot->current_animation) {
+    //         if (mascot->frame_index >= mascot->current_animation->frame_count) {
+    //             mascot->frame_index = 0;
+    //         }
+    //         result.next_pose = mascot->current_animation->frames[mascot->frame_index++];
+    //     }
+    // }
 
-    result.status = mascot_tick_ok;
+    // result.status = mascot_tick_ok;
     return result;
 }
 
