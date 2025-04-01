@@ -212,7 +212,7 @@ class Client:
                 logger.info("Overlay is already running")
                 raise SystemExit(1)
         except (ConnectionRefusedError, FileNotFoundError) as e:
-            if not (self.startup_options.get("start", False)):
+            if not (self.startup_options.get("start", True)):
                 if not self.startup_options.get("is_config_req", False):
                     logger.info("Overlay is not running")
                 raise SystemExit(1)
