@@ -213,7 +213,8 @@ class Client:
                 raise SystemExit(1)
         except (ConnectionRefusedError, FileNotFoundError) as e:
             if not (self.startup_options.get("start", False)):
-                logger.info("Overlay is not running")
+                if not self.startup_options.get("is_config_req", False):
+                    logger.info("Overlay is not running")
                 raise SystemExit(1)
             logger.debug(f"Failed to connect to overlay at \"{self.address}\": {e}")
             logger.debug(f"Starting overlay with args {self.startup_options.get('cmdline', [])}")
@@ -1114,6 +1115,96 @@ def config_handler(arguments: argparse.Namespace, client: Client, parser):
             parser.print_help()
             exit(1)
 
+def local_config_handler(arguments: argparse.Namespace, parser):
+    name_cast = {
+        "BREEDING": "breeding",
+        "DRAGGING": "dragging",
+        "WINDOW_INTERACTIONS": "ie_interactions",
+        "WINDOW_THROWING": "ie_throwing",
+        "WINDOW_THROW_POLICY": "ie_throw_policy",
+        "CURSOR_POSITION": "cursor_data",
+        "MASCOT_LIMIT": "mascot_limit",
+        "ALLOW_THROWING_MULTIHEAD": "allow_throwing_multihead",
+        "ALLOW_DRAGGING_MULTIHEAD": "allow_dragging_multihead",
+        "UNIFIED_OUTPUTS": "unified_outputs",
+        "DISMISS_ANIMATIONS": "allow_dismiss_animations",
+        "AFFORDANCES": "per_mascot_interactions",
+        "INTERPOLATION_FRAMERATE": "interpolation_framerate",
+        "WLR_SHELL_LAYER": "overlay_layer",
+        "TABLETS_ENABLED": "tablets_enabled",
+        "POINTER_LEFT_BUTTON": "pointer_left_value",
+        "POINTER_RIGHT_BUTTON": "pointer_right_value",
+        "POINTER_MIDDLE_BUTTON": "pointer_middle_value",
+        "ON_TOOL_PEN": "on_tool_pen_value",
+        "ON_TOOL_ERASER": "on_tool_eraser_value",
+        "ON_TOOL_BRUSH": "on_tool_brush_value",
+        "ON_TOOL_PENCIL": "on_tool_pencil_value",
+        "ON_TOOL_AIRBRUSH": "on_tool_airbrush_value",
+        "ON_TOOL_FINGER": "on_tool_finger_value",
+        "ON_TOOL_LENS": "on_tool_lens_value",
+        "ON_TOOL_MOUSE": "on_tool_mouse_value",
+        "ON_TOOL_BUTTON1": "on_tool_button1_value",
+        "ON_TOOL_BUTTON2": "on_tool_button2_value",
+        "ON_TOOL_BUTTON3": "on_tool_button3_value",
+        "OPACITY": "mascot_opacity",
+        "MASCOT_SCALE": "mascot_scale",
+        "PROTOTYPES_LOCATION": "prototypes_location",
+        "PLUGINS_LOCATION": "plugins_location",
+        "SOCKET_LOCATION": "socket_location",
+    }
+
+    backmap = { v: k for k, v in name_cast.items() }
+
+    config_file_loc = arguments.config
+    if config_file_loc is None:
+        basedir = os.path.expanduser("~/.local/share/wl_shimeji")
+        config_file_loc = os.path.join(basedir, "shimeji-overlayd.conf")
+
+    if not os.path.exists(config_file_loc):
+        print(f"Config file not found at {config_file_loc}! Please start wl_shimeji at least once before editing it.")
+        exit(1)
+
+    def parse_boolean(value):
+        if value.lower() in ["true", "yes", "on", "1"]:
+            return True
+        elif value.lower() in ["false", "no", "off", "0"]:
+            return False
+        return True
+
+    config = {}
+    with open(config_file_loc, "r") as f:
+        for line in f.readlines():
+            key, value = line.strip().split("=")
+            if key in backmap:
+                config[backmap[key]] = value.strip()
+
+
+    match arguments.subcommand:
+        case "get":
+            if arguments.key not in name_cast:
+                print(f"Unknown key: {arguments.key}\nAvailable keys:")
+                for key in name_cast:
+                    print(f"  - {key}")
+                exit(1)
+            print(config.get(arguments.key, "Key not found"))
+        case "set":
+            if arguments.key not in name_cast:
+                print(f"Unknown key: {arguments.key}\nAvailable keys:")
+                for key in name_cast:
+                    print(f"  - {key}")
+                exit(1)
+            config[arguments.key] = arguments.value
+            with open(config_file_loc, "w") as f:
+                for key, value in config.items():
+                    f.write(f"{name_cast[key]}={value}\n")
+        case "list":
+            print("Config:")
+            for key, value in config.items():
+                print(f"{key}: {value}")
+        case _:
+            parser.print_help()
+            exit(1)
+
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="CLI client for the wl_shimeji overlay")
     argparser.add_argument("-s", "--socket", help="Path to the shimeji-overlayd socket")
@@ -1302,10 +1393,19 @@ if __name__ == "__main__":
         startopts["start"] = True
         startopts["verbose"] = True
 
+    if arguments.category == "config":
+        startopts["start"] = False
+        startopts["is_config_req"] = True
+
     try:
         client = Client(socket_path, startopts)
     except KeyboardInterrupt:
         logging.info("Interrupted.")
+    except SystemExit as e:
+        if arguments.category == "config":
+            local_config_handler(arguments, config_category)
+            exit(0)
+        raise e
     except Exception as e:
         logging.error(f"Failed to start client: {e}")
         exit(1)
