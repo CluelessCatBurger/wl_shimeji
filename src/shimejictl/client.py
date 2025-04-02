@@ -24,7 +24,7 @@ import random
 import logging
 
 from ipc_protocol import Packet,\
-ServerHello, ClientHello, Notice, StartSession, EnvironmentAnnouncement, EnvironmentChanged, EnvironmentMascot, EnvironmentWithdrawn, StartPrototype, PrototypeName, PrototypeDisplayName, PrototypePath, PrototypeFD, PrototypeAddAction, PrototypeAddBehavior, PrototypeIcon, PrototypeAuthor, PrototypeVersion, CommitPrototypes, MascotMigrated, MascotDisposed, MascotInfo, MascotClicked, SelectionDone, SelectionCancelled, ImportFailed, ImportStarted, ImportFinished, ImportProgress, ExportFailed, ExportFinished, ConfigKey, ClickEventExpired, PrototypeWithdraw, ReloadPrototype, Spawn, MascotGetInfo, MascotInfo, ApplyBehavior, Stop, GetConfigKey, ListConfigKeys, SetConfigKey, ConfigKey,\
+ServerHello, ClientHello, Notice, StartSession, EnvironmentAnnouncement, EnvironmentChanged, EnvironmentMascot, EnvironmentWithdrawn, StartPrototype, PrototypeName, PrototypeDisplayName, PrototypePath, PrototypeFD, PrototypeAddAction, PrototypeAddBehavior, PrototypeIcon, PrototypeAuthor, PrototypeVersion, CommitPrototypes, MascotMigrated, MascotDisposed, MascotInfo, MascotClicked, SelectionDone, SelectionCancelled, ImportFailed, ImportStarted, ImportFinished, ImportProgress, ExportFailed, ExportFinished, ConfigKey, ClickEventExpired, PrototypeWithdraw, ReloadPrototype, Spawn, MascotGetInfo, MascotInfo, ApplyBehavior, Stop, GetConfigKey, ListConfigKeys, SetConfigKey, ConfigKey, Disconnect,\
 Prototype, Environment, Mascot, Selection, Import, Export,\
 objects, prototypes, environments, mascots, active_selection, imports, exports
 
@@ -166,6 +166,11 @@ class Client:
         if selection:
             selection.cancelled(packet)
 
+    def Disconnect(self, packet: Disconnect):
+        logging.info("Disconnected by overlay.")
+        self.socket.close()
+        exit(0)
+
     def Notice(self, packet: Notice):
 
         strings = {
@@ -203,6 +208,7 @@ class Client:
             SelectionDone: Client.SelectionDone,
             SelectionCancelled: Client.SelectionCancelled,
             Notice: Client.Notice,
+            Disconnect: Client.Disconnect,
         }
 
         logger.debug(f"Connecting to overlay at \"{self.address}\"")
@@ -1415,6 +1421,11 @@ if __name__ == "__main__":
             client.dispatch_events()
         except KeyboardInterrupt:
             logging.info("Interrupted.")
+            stopcommand = Stop()
+            client.queue_packet(stopcommand)
+        except Exception as e:
+            logging.error(f"Failed to dispatch events: {e}")
+            exit(1)
         exit(0)
 
     try:
