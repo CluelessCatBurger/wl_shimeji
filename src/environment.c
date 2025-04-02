@@ -2757,42 +2757,23 @@ void environment_subsurface_release(environment_subsurface_t* surface) {
     drag_pointer->above_environment = NULL;
     environment_pointer_apply_cursor(drag_pointer, -2);
 
-    // int32_t mascot_x = surface->mascot->X->value.i;
-    // int32_t mascot_y = yconv(surface->env, surface->mascot->Y->value.i);
+    if (!config_get_unified_outputs() && config_get_allow_dragging_multihead()) {
+        int32_t x = surface->mascot->X->value.i;
+        int32_t y = yconv(surface->env, surface->mascot->Y->value.i);
+        int32_t global_x = x, global_y = y;
+        if (is_outside(&surface->env->workarea_geometry, global_x, global_y)) {
+            environment_to_global_coordinates(surface->env, &global_x, &global_y);
+            environment_t* new_env = environment_by_global_coords(global_x, global_y);
+            if (new_env) {
+                int32_t diff_x, diff_y;
+                environment_global_coordinates_delta(surface->env, new_env, &diff_x, &diff_y);
 
-    // INFO("Is outside %d, (box %ux%ux%ux%u, pos is %d, %d)", is_outside(&surface->env->workarea_geometry, mascot_x, mascot_y), surface->env->workarea_geometry.x, surface->env->workarea_geometry.y, surface->env->workarea_geometry.width, surface->env->workarea_geometry.height, mascot_x, mascot_y);
-    // INFO("Is inside %d, (box %ux%ux%ux%u, pos is %d, %d)", is_inside(&surface->env->workarea_geometry,  mascot_x, mascot_y), surface->env->workarea_geometry.x, surface->env->workarea_geometry.y, surface->env->workarea_geometry.width, surface->env->workarea_geometry.height,  mascot_x, mascot_y);
-
-
-    // if (is_outside(&surface->env->workarea_geometry,  mascot_x, mascot_y)) {
-    //     INFO("Is outside, at %d, %d",  mascot_x, mascot_y);
-    //     int32_t global_x = mascot_x, global_y = mascot_y;
-    //     environment_to_global_coordinates(surface->env, &global_x, &global_y);
-    //     environment_t* new_env = environment_by_global_coords(global_x, global_y);
-    //     if (new_env) {
-    //         int32_t diff_x, diff_y;
-    //         environment_global_coordinates_delta(surface->env, new_env, &diff_x, &diff_y);
-    //         int32_t proposed_x = drag_pointer->x + diff_x;
-    //         int32_t proposed_y = drag_pointer->y - diff_y;
-    //         if (surface->mascot) {
-    //             surface->mascot->X->value.i = proposed_x;
-    //             surface->mascot->Y->value.i = yconv(new_env, proposed_y);
-    //         }
-    //         INFO("Mascot moved to new environment %d, new position: (%d, %d)", new_env->id, proposed_x, proposed_y);
-    //         mascot_moved(surface->mascot, proposed_x, yconv(surface->env, proposed_y));
-    //         mascot_environment_changed(surface->mascot, new_env);
-    //         environment_subsurface_set_position(surface, proposed_x, proposed_y);
-    //     } else {
-    //         int32_t x = drag_pointer->x;
-    //         int32_t y = drag_pointer->y;
-    //         int32_t proposed_x = x;
-    //         int32_t proposed_y = y;
-    //         project_coords_to_border(&surface->env->workarea_geometry, x, y, BORDER_TYPE_ANY, &proposed_x, &proposed_y);
-    //         mascot_moved(surface->mascot, proposed_x, yconv(surface->env, proposed_y));
-    //         environment_subsurface_set_position(surface, proposed_x, proposed_y);
-    //         environment_subsurface_reset_interpolation(surface);
-    //     }
-    // }
+                mascot_moved(surface->mascot, x, yconv(surface->env, y));
+                mascot_apply_environment_position_diff(surface->mascot, diff_x, diff_y, DIFF_HORIZONTAL_MOVE | DIFF_VERTICAL_MOVE, new_env);
+                mascot_environment_changed(surface->mascot, new_env);
+            }
+        }
+    }
 
     surface->env->pending_commit = true;
     surface->drag_pointer = NULL;
