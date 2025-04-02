@@ -8,6 +8,7 @@
 #include "protocol/server.h"
 #include <master_header.h>
 #include "config.h"
+#include <pthread.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -1193,6 +1194,16 @@ bool protocol_handler_stop(struct protocol_client* client, ipc_packet_t* packet)
     UNUSED(client);
     UNUSED(packet);
     struct protocol_server_state* state = protocol_get_server_state();
+
+    pthread_mutex_lock(&state->clients_mutex);
+    for (uint32_t i = 0; i < list_size(state->clients); i++) {
+        struct protocol_client* client = list_get(state->clients, i);
+        if (client) {
+            ipc_packet_t* packet = protocol_builder_disconnect();
+            ipc_connector_send(client->connector, packet);
+        }
+    }
+    pthread_mutex_unlock(&state->clients_mutex);
 
     state->stop = true;
 
