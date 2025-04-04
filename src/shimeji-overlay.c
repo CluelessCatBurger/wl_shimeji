@@ -377,7 +377,7 @@ int main(int argc, const char** argv)
     int env_init_flags = 0;
     bool disable_plugins = false;
 
-    char socket_path[PATH_MAX];
+    char socket_path[PATH_MAX] = {0};
 
     protocol_init();
     protocol_set_server_state(&server_state);

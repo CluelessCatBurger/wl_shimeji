@@ -147,9 +147,6 @@ enum mascot_tick_result fall_action_tick(struct mascot *mascot, struct mascot_ac
     mascot->ModX->value.f = fmod(mod_x, 1.0);
     mascot->ModY->value.f = fmod(mod_y, 1.0);
 
-    int32_t dev = (int32_t)fmax(abs(new_x), abs(new_y));
-    if (dev < 1) dev = 1;
-
     posx += new_x;
     posy -= new_y;
 
