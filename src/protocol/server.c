@@ -1084,7 +1084,7 @@ protocol_export_t* protocol_server_export(struct protocol_client* client, int32_
 {
     if (!client || fd < 0 || !id || !prototype) return NULL;
 
-    protocol_export_t* export = calloc(1,sizeof(protocol_import_t));
+    protocol_export_t* export = calloc(1,sizeof(protocol_export_t));
     if (!export) ERROR("Failed to allocate memory for export");
 
     int32_t dupfd = dup(fd);
@@ -1185,7 +1185,7 @@ protocol_popup_t* protocol_server_ephermal_popup(int32_t id)
 
 protocol_shm_pool_t* protocol_server_ephermal_shm_pool(int32_t id)
 {
-    protocol_shm_pool_t* pool = malloc(sizeof(protocol_popup_t));
+    protocol_shm_pool_t* pool = malloc(sizeof(protocol_shm_pool_t));
     if (!pool) {
         return NULL;
     }
