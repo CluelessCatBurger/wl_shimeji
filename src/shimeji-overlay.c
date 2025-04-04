@@ -580,8 +580,9 @@ int main(int argc, const char** argv)
     srand48(time(NULL));
 
     bool own_socket = false;
-    if (getenv("LISTEN_FDS")) {
-        int listen_fds = atoi(getenv("LISTEN_FDS"));
+    const char* listen_fds_env = getenv("LISTEN_FDS");
+    if (listen_fds_env) {
+        int listen_fds = atoi(listen_fds_env);
         if (listen_fds > 1) {
             ERROR("wl_shimeji doesn't support multiple listen sockets");
         }
