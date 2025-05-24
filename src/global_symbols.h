@@ -374,7 +374,7 @@ bool mascot_anchor(struct expression_vm_state* state)
 {
     if (state->sp + 2 >= 255) return false;
     state->stack[state->sp] = state->ref_mascot->X->value.i;
-    state->stack[state->sp + 1] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->Y->value.i;
+    state->stack[state->sp + 1] = environment_workarea_height(state->ref_mascot->environment) - state->ref_mascot->Y->value.i;
     state->sp += 2;
     return true;
 }
@@ -391,7 +391,7 @@ bool mascot_anchor_x(struct expression_vm_state* state)
 bool mascot_anchor_y(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    state->stack[state->sp++] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->Y->value.i;
+    state->stack[state->sp++] = environment_workarea_height(state->ref_mascot->environment) - state->ref_mascot->Y->value.i;
     return true;
 }
 #define GLOBAL_SYM_MASCOT_ANCHOR_Y { "mascot.anchor.y", mascot_anchor_y }
@@ -912,7 +912,7 @@ bool target_anchor(struct expression_vm_state* state)
     if (state->ref_mascot->target_mascot) {
         state->stack[state->sp] = state->ref_mascot->target_mascot->X->value.i + diff_x;
         state->sp++;
-        state->stack[state->sp] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i + diff_y;
+        state->stack[state->sp] = environment_workarea_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i + diff_y;
         state->sp++;
     } else {
         state->stack[state->sp] = 0.0;
@@ -950,7 +950,7 @@ bool target_anchor_y(struct expression_vm_state* state)
         environment_global_coordinates_delta(state->ref_mascot->environment, state->ref_mascot->target_mascot->environment, &diff_x, &diff_y);
     }
     if (state->ref_mascot->target_mascot) {
-        state->stack[state->sp++] = environment_screen_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i + diff_y;
+        state->stack[state->sp++] = environment_workarea_height(state->ref_mascot->environment) - state->ref_mascot->target_mascot->Y->value.i + diff_y;
     } else {
         state->stack[state->sp++] = 0.0;
     }
