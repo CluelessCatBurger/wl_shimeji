@@ -147,7 +147,7 @@ class AbstractSyntaxTree:
 
     def parse_unary(self) -> ASTNode:
         token = self.current_token()
-        if token.subtype in (OperatorType.NOT, OperatorType.SUBTRACT, OperatorType.BITWISE_NOT):
+        if token.subtype in (OperatorType.NOT, OperatorType.SUBTRACT, OperatorType.BITWISE_NOT, OperatorType.ADD):
             operator = self.eat(TokenType.OPERATOR)
             operand = self.parse_unary()
             return UnaryOpNode(operator, operand)
@@ -188,5 +188,8 @@ class AbstractSyntaxTree:
             self.eat(TokenType.OPENING_BRACKET)
             node = self.parse_expression()
             self.eat(TokenType.CLOSING_BRACKET)
+            return node
+        if token.type == TokenType.OPERATOR and token.subtype in (OperatorType.ADD, OperatorType.SUBTRACT):
+            node = self.parse_unary()
             return node
         raise SyntaxError(f"Unexpected token: {token}")

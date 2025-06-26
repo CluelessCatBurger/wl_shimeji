@@ -1,7 +1,7 @@
 
 
 from tokenizer import Tokenizer
-from astnode import AbstractSyntaxTree
+from astnode import AbstractSyntaxTree, LiteralNode
 from bytecode import Program, OP
 import os
 import pathlib
@@ -60,6 +60,12 @@ def char_to_hex(c: int) -> str:
     bytes = struct.pack('<B', c)
     return bytes_to_hex(bytes)
 
+def remove_extra_spaces(string: str) -> str:
+    resstr = string
+    while "  " in resstr:
+        resstr = resstr.replace("  ", " ")
+    return resstr
+
 class Compiler:
     @staticmethod
     def emit(program: Program, json_kwargs: dict = {}) -> dict:
@@ -111,7 +117,11 @@ class Compiler:
     @staticmethod
     def compile(expression: str, locals: list = [], globals: list = [], funcs: list = []) -> Program:
         tokens = Tokenizer.tokenize(expression)
-        root_node = AbstractSyntaxTree(tokens).parse()
+        try:
+            root_node = AbstractSyntaxTree(tokens).parse()
+        except SyntaxError as e:
+            print(f"WARNING: Unable to compile expression \"{remove_extra_spaces(expression)}\": {e}!\nAssuming that expression always return 0")
+            root_node = LiteralNode(0)
         program = Program.from_ast(root_node, locals, globals, funcs)
         if expression.startswith("#{"):
             program.evaluate_once = False

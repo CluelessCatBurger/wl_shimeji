@@ -38,7 +38,8 @@ EMBEDDED_TYPE = enum.Enum("EmbeddedType", [
     "Interact",
     "Transform",
     "Scanjump",
-    "Dispose"
+    "Dispose",
+    "Mute"
 ])
 
 ACTION_CONTENT_TYPE = enum.Enum("ActionContentType", [
@@ -363,7 +364,7 @@ def parse_behavior(behavior: ElementTree.Element, behavior_definitions: dict, ac
                     else:
                         raise SyntaxError("Invalid XML format")
         if behavior.get("Action") is not None:
-            behavior_object["action"] = action_definitions[behavior.get("Action")]
+            behavior_object["action"] = behavior.get("Action")
         else:
             behavior_object["action"] = behavior_object["name"]
         if behavior_object["action"] not in action_definitions:

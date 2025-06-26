@@ -93,6 +93,9 @@ class Tokenizer:
             for arg in args:
                 setattr(self, x.pop(0), arg)
 
+        def __repr__(self) -> str:
+            return f"<Token:{self.type}:{self.subtype} `{self.value}` at {self.start}>"
+
     @staticmethod
     def __prepare_string(js_string: str) -> str:
         if (js_string.startswith("${") or js_string.startswith("#{") ):
