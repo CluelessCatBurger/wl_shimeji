@@ -190,8 +190,9 @@ bool mascot_prototype_store_add(mascot_prototype_store* store, const struct masc
     }
 
     if (store->count >= store->size) {
+        store->prototypes = (struct mascot_prototype**)realloc(store->prototypes, store->size * 2 * sizeof(struct mascot_prototype*));
+        memset(store->prototypes + store->size, 0, store->size * sizeof(struct mascot_prototype*));
         store->size *= 2;
-        store->prototypes = (struct mascot_prototype**)realloc(store->prototypes, store->size * sizeof(struct mascot_prototype*));
     }
 
     // Ensure the prototype is not already in the store or name is not already in the store
