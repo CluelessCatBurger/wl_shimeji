@@ -1679,7 +1679,7 @@ static void on_tool_proximity_out(void* data, struct zwp_tablet_tool_v2* tool)
         return;
     }
 
-    if (env_pointer->grabbed_subsurface && why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
+    if (env_pointer->grabbed_subsurface) {
         env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
         env_pointer->frame.buttons_released |= EVENT_FRAME_PRIMARY_BUTTON;
     }
@@ -1823,48 +1823,48 @@ static void on_tool_motion(void* data, struct zwp_tablet_tool_v2* tool, wl_fixed
     env_pointer->frame.surface_local_x = x;
     env_pointer->frame.surface_local_y = y;
 
-    if (why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
-        if (!env_pointer->grabbed_subsurface) {
-            // Now our coordinates is in global space, we to map them back to surface space
-            int32_t global_x = wl_fixed_to_int(x);
-            int32_t global_y = wl_fixed_to_int(y);
+    // if (why_tablet_v2_proximity_in_events_received_by_parent_question_mark) {
+    //     if (!env_pointer->grabbed_subsurface) {
+    //         // Now our coordinates is in global space, we to map them back to surface space
+    //         int32_t global_x = wl_fixed_to_int(x);
+    //         int32_t global_y = wl_fixed_to_int(y);
 
-            int32_t local_x;
-            int32_t local_y;
+    //         int32_t local_x;
+    //         int32_t local_y;
 
-            environment_t* env = environment_from_surface(env_pointer->above_surface);
-            if (!env) return;
+    //         environment_t* env = environment_from_surface(env_pointer->above_surface);
+    //         if (!env) return;
 
-            struct environment_subsurface* env_subsurface = environment_subsurface_from_surface(env_pointer->above_surface);
-            if (!env_subsurface) return;
+    //         struct environment_subsurface* env_subsurface = environment_subsurface_from_surface(env_pointer->above_surface);
+    //         if (!env_subsurface) return;
 
-            struct mascot* mascot = env_subsurface->mascot;
-            if (!mascot) return;
+    //         struct mascot* mascot = env_subsurface->mascot;
+    //         if (!mascot) return;
 
-            int32_t anchor_x = 0;
-            int32_t anchor_y = 0;
+    //         int32_t anchor_x = 0;
+    //         int32_t anchor_y = 0;
 
-            if (env_subsurface->pose) {
-                anchor_x = env_subsurface->pose->anchor_x;
-                anchor_y = env_subsurface->pose->anchor_y;
-            }
+    //         if (env_subsurface->pose) {
+    //             anchor_x = env_subsurface->pose->anchor_x;
+    //             anchor_y = env_subsurface->pose->anchor_y;
+    //         }
 
-            // Transform global coordinates to surface_local coordinates
-            local_x = global_x - anchor_x * (config_get_mascot_scale() * env->scale) - mascot->X->value.i;
-            local_y = global_y - anchor_y * (config_get_mascot_scale() * env->scale) - yconv(env, mascot->Y->value.i);
+    //         // Transform global coordinates to surface_local coordinates
+    //         local_x = global_x - anchor_x * (config_get_mascot_scale() * env->scale) - mascot->X->value.i;
+    //         local_y = global_y - anchor_y * (config_get_mascot_scale() * env->scale) - yconv(env, mascot->Y->value.i);
 
-            env_pointer->frame.surface_local_x = wl_fixed_from_int(local_x);
-            env_pointer->frame.surface_local_y = wl_fixed_from_int(local_y);
-        } else {
-            environment_t* env = environment_from_surface(env_pointer->above_surface);
-            if (!env) return;
-            if (env_pointer->above_surface == env_pointer->grabbed_subsurface->surface) {
-                env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
-                env_pointer->frame.surface_changed = env->root_surface->surface;
-                env_pointer->frame.enter_serial = env_pointer->enter_serial;
-            }
-        }
-    }
+    //         env_pointer->frame.surface_local_x = wl_fixed_from_int(local_x);
+    //         env_pointer->frame.surface_local_y = wl_fixed_from_int(local_y);
+    //     } else {
+    //         environment_t* env = environment_from_surface(env_pointer->above_surface);
+    //         if (!env) return;
+    //         if (env_pointer->above_surface == env_pointer->grabbed_subsurface->surface) {
+    //             env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
+    //             env_pointer->frame.surface_changed = env->root_surface->surface;
+    //             env_pointer->frame.enter_serial = env_pointer->enter_serial;
+    //         }
+    //     }
+    // }
 
 }
 
@@ -1912,10 +1912,10 @@ static void on_tool_frame(void* data, struct zwp_tablet_tool_v2* tool, uint32_t 
             struct wl_surface* surface = env_pointer->frame.surface_changed;
 
             if (!env->select_active && is_root_surface(surface)) {
-                if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && !disable_tablet_workarounds) {
-                    why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
-                    WARN("WORKAROUND: zwp_tablet_v2 proximity_in events are received by parent in KDE, not by subsurface. Applying stupid workaround.");
-                }
+                // if (!why_tablet_v2_proximity_in_events_received_by_parent_question_mark && !disable_tablet_workarounds) {
+                //     why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
+                //     WARN("WORKAROUND: zwp_tablet_v2 proximity_in events are received by parent in KDE, not by subsurface. Applying stupid workaround.");
+                // }
                 struct mascot* mascot = environment_mascot_by_coordinates(env, wl_fixed_to_int(env_pointer->frame.surface_local_x), wl_fixed_to_int(env_pointer->frame.surface_local_y));
                 if (mascot) {
                     env_pointer->frame.surface_changed = mascot->subsurface->surface;
