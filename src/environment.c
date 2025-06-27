@@ -3560,12 +3560,9 @@ struct mascot* environment_mascot_by_coordinates(environment_t* environment, int
     struct mascot* mascot = NULL;
     uint32_t mascot_score = 0;
     pthread_mutex_lock(&environment->mascot_manager.mutex);
-    INFO("Size, count %d %d", list_size(mascots), list_count(mascots));
     for (size_t i = 0, c = 0; i < list_size(mascots) && c < list_count(mascots); i++) {
         struct mascot* mascot_ = list_get(mascots, i);
-        INFO("Checking mascot: %p index %d", mascot_, i);
         if (!mascot_) continue;
-        INFO("Checking mascot: score %d", mascot_score);
         c++;
         if (mascot_->dragged) continue;
         if (mascot_->subsurface) {
