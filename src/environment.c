@@ -51,7 +51,6 @@ void pthread_scope_unlock(pthread_mutex_t **lockptr) {
 
 // Workarounds section (SMH my head hyprland)
 bool we_on_hyprland = false;
-bool we_on_kde = false;
 
 // Disable workarounds
 bool disable_tablet_workarounds = false;
@@ -157,10 +156,6 @@ struct environment {
     bool xdg_output_done;
     int32_t lwidth, lheight;
     int32_t lx, ly;
-
-    plugin_output_t* ie_output;
-    struct list* managed_ies;
-    pthread_mutex_t ie_interaction_mutex;
 
     struct {
         struct list* referenced_mascots;
@@ -344,28 +339,6 @@ environment_pointer_t* active_pointer = &default_active_pointer;
 #define ACTIVATE_POINTER(pointer) active_pointer = pointer
 
 static uint32_t yconv(environment_t* env, uint32_t y);
-
-// Plugins callbacks
-
-static void environment_plugin_output_cursor_data(void* userdata, plugin_output_t* output, int32_t x, int32_t y);
-static void environment_plugin_output_new_window(void* userdata, plugin_output_t* output, plugin_window_t* window);
-
-__attribute((unused)) static struct plugin_output_event environment_plugin_output_listener = {
-    .cursor = environment_plugin_output_cursor_data,
-    .window = environment_plugin_output_new_window
-};
-
-static void environment_plugin_window_geometry(void* userdata, plugin_window_t* window, struct bounding_box geometry);
-static void environment_plugin_window_ordered(void *userdata, plugin_window_t* window, int32_t order_index);
-static void environment_plugin_window_control(void *userdata, plugin_window_t* window, enum plugin_window_control_state state);
-static void environment_plugin_window_destroy(void *userdata, plugin_window_t* window);
-
-static struct plugin_window_event environment_plugin_window_listener = {
-    .geometry = environment_plugin_window_geometry,
-    .ordering = environment_plugin_window_ordered,
-    .control = environment_plugin_window_control,
-    .destroy = environment_plugin_window_destroy,
-};
 
 // Helper structs -----------------------------------------------------------
 
@@ -895,20 +868,6 @@ static void on_output_done(void* data, struct wl_output* output)
     }
     protocol_server_environment_changed(env);
 
-    pthread_mutex_lock(&env->ie_interaction_mutex);
-    for (uint32_t i = 0; i < list_size(env->managed_ies); i++) {
-        environment_ie_t* window = list_get(env->managed_ies, i);
-        if (window) {
-            environment_ie_destroy(window);
-            list_remove(env->managed_ies, i);
-        }
-    }
-    if (env->ie_output) plugin_output_destroy(env->ie_output);
-    env->ie_output = plugins_request_output(&env->advertised_geometry);
-    plugin_output_set_listener(env->ie_output, &environment_plugin_output_listener, env);
-    plugin_output_commit(env->ie_output);
-    pthread_mutex_unlock(&env->ie_interaction_mutex);
-
     env->xdg_output_done = true;
 }
 
@@ -1021,6 +980,8 @@ static void on_pointer_button(void* data, struct wl_pointer* pointer, uint32_t s
         env_pointer->frame.buttons_released |= btn_mask;
         env_pointer->frame.buttons_pressed &= ~btn_mask;
     }
+
+    env_pointer->frame.enter_serial = serial;
 }
 
 static void on_pointer_axis_source(void* data, struct wl_pointer* pointer, uint32_t axis_source)
@@ -1161,6 +1122,7 @@ static void on_pointer_frame(void* data, struct wl_pointer* pointer)
 
 
     if (env_pointer->frame.mask & EVENT_FRAME_BUTTONS) {
+        env_pointer->enter_serial = env_pointer->frame.enter_serial;
         if (!env_pointer->above_surface && env_pointer->grabbed_subsurface) {
             // Impossible situation, but in case we somehow got button release after leave(), we should handle it
             surface_pointer_callbacks = wl_surface_get_callbacks(env_pointer->grabbed_subsurface->surface);
@@ -2086,20 +2048,6 @@ static void xdg_output_done(void* data, struct zxdg_output_v1* xdg_output)
     }
     protocol_server_environment_changed(env);
 
-    pthread_mutex_lock(&env->ie_interaction_mutex);
-    for (uint32_t i = 0; i < list_size(env->managed_ies); i++) {
-        environment_ie_t* window = list_get(env->managed_ies, i);
-        if (window) {
-            environment_ie_destroy(window);
-            list_remove(env->managed_ies, i);
-        }
-    }
-    if (env->ie_output) plugin_output_destroy(env->ie_output);
-    env->ie_output = plugins_request_output(&env->advertised_geometry);
-    plugin_output_set_listener(env->ie_output, NULL, NULL);
-    plugin_output_commit(env->ie_output);
-    pthread_mutex_unlock(&env->ie_interaction_mutex);
-
     env->xdg_output_done = true;
 }
 
@@ -2169,9 +2117,7 @@ static void handle_output(void* data, uint32_t id, uint32_t version)
         env->output.id = display_id++;
         env->mascot_manager.referenced_mascots = list_init(256);
         env->neighbors = list_init(4);
-        env->managed_ies = list_init(16);
         pthread_mutex_init(&env->mascot_manager.mutex, &attrs);
-        pthread_mutex_init(&env->ie_interaction_mutex, &attrs);
         wl_output_add_listener(output, &wl_output_listener, (void*)env);
         wl_output_set_user_data(output, (void*)env);
         new_environment(env);
@@ -2269,11 +2215,6 @@ enum environment_init_status environment_init(int flags,
 
     const char* session = getenv("XDG_CURRENT_DESKTOP");
     if (session) {
-        if (!strcmp(session, "KDE") && !disable_tablet_workarounds) {
-            WARN("KDE session detected, applying workaround for tablet proximity_in events");
-            why_tablet_v2_proximity_in_events_received_by_parent_question_mark = true;
-            we_on_kde = true;
-        }
         if (!strcmp(session, "Hyprland")) {
             WARN("Hyprland session detected, applying workaround for mascot dragging");
             we_on_hyprland = true;
@@ -2371,18 +2312,6 @@ void environment_unlink(environment_t *env)
     }
     list_free(env->mascot_manager.referenced_mascots);
     pthread_mutex_unlock(&env->mascot_manager.mutex);
-
-    pthread_mutex_lock(&env->ie_interaction_mutex);
-    for (uint32_t i = 0; i < list_size(env->managed_ies); i++) {
-        environment_ie_t* ie = list_get(env->managed_ies, i);
-        if (ie) {
-            environment_ie_destroy(ie);
-        }
-    }
-    list_free(env->managed_ies);
-    plugin_output_destroy(env->ie_output);
-    pthread_mutex_unlock(&env->ie_interaction_mutex);
-    pthread_mutex_destroy(&env->ie_interaction_mutex);
 
     protocol_server_environment_widthdraw(env);
 
@@ -2590,23 +2519,6 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
         &proposed_x, &proposed_y
     );
 
-    if (!collision) {
-        pthread_scoped_lock(ielock, &surface->env->ie_interaction_mutex);
-        for (uint32_t i = 0; i < list_size(surface->env->managed_ies); i++) {
-            environment_ie_t* ie = list_get(surface->env->managed_ies, i);
-            if (ie) {
-                collision = check_movement_collision(
-                    &ie->geometry,
-                    current_x, current_y,
-                    dx, yconv(surface->env, dy),
-                    BORDER_TYPE_FLOOR,
-                    &proposed_x, &proposed_y
-                );
-                if (collision) break;
-            }
-        }
-    }
-
     if ((MOVE_OOB(collision) || is_outside(&surface->env->workarea_geometry, current_x, current_y)) && (config_get_allow_throwing_multihead() || config_get_unified_outputs())) {
         int32_t global_x = dx, global_y = yconv(surface->env, dy);
         environment_to_global_coordinates(surface->env, &global_x, &global_y);
@@ -2740,6 +2652,7 @@ void environment_subsurface_drag(environment_subsurface_t* surface, environment_
 
     surface->env->pending_commit = true;
 }
+
 void environment_subsurface_release(environment_subsurface_t* surface) {
     if (!surface) return;
     if (!surface->surface) return;
@@ -3166,7 +3079,7 @@ bool environment_logical_size(environment_t *env, int32_t *lw, int32_t *lh)
     return true;
 }
 
-static enum environment_border_type environment_get_border_type_rect(environment_t *env, int32_t x, int32_t y, struct bounding_box* rect, int32_t border_mask)
+enum environment_border_type environment_get_border_type_rect(environment_t *env, int32_t x, int32_t y, struct bounding_box* rect, int32_t border_mask)
 {
     int32_t border_type = BORDER_TYPE(check_collision_at(rect, x, y, 0));
     int32_t masked_border = APPLY_MASK(border_type, border_mask);
@@ -3975,166 +3888,4 @@ int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignmen
         retval = env->advertised_geometry.height;
     }
     return retval;
-}
-
-environment_ie_t* environment_get_front_ie(environment_t* environment)
-{
-    if (!environment) return NULL;
-    if (!environment->is_ready) return NULL;
-
-    pthread_scoped_lock(ielock, &environment->ie_interaction_mutex);
-
-    if (!environment->ie_output) return NULL;
-    if (!list_count(environment->managed_ies)) return NULL;
-
-    environment_ie_t* front_ie = NULL;
-    int32_t index = -1;
-
-    for (uint32_t i = 0; i < list_size(environment->managed_ies); i++) {
-        environment_ie_t* ie = list_get(environment->managed_ies, i);
-        if (!ie) continue;
-        if (!ie->available) continue;
-        if (ie->z_index > index) {
-            front_ie = ie;
-            index = ie->z_index;
-        }
-    }
-
-    return front_ie;
-}
-
-environment_ie_t* environment_create_ie(environment_t* environment, plugin_window_t* window) {
-    if (!environment) return NULL;
-    if (!environment->ie_output) return NULL;
-    if (!window) return NULL;
-
-    environment_ie_t* ie = calloc(1, sizeof(environment_ie_t));
-    if (!ie) return NULL;
-
-    pthread_scoped_lock(ielock, &environment->ie_interaction_mutex);
-
-    ie->parent_env = environment;
-    ie->attachments = list_init(8);
-    ie->window = plugin_window_ref(window);
-    ie->refcounter = 1;
-
-    list_add(environment->managed_ies, ie);
-    plugin_window_set_listener(window, &environment_plugin_window_listener, ie);
-    return ie;
-}
-
-environment_ie_t* environment_ie_ref(environment_ie_t* ie)
-{
-    if (!ie) return NULL;
-    ie->refcounter++;
-    return ie;
-}
-
-bool environment_ie_move(environment_ie_t* ie, int32_t x, int32_t y)
-{
-    if (!ie) return false;
-    return plugin_window_move(ie->window, x, y);
-}
-
-bool environment_ie_get_control(environment_ie_t* ie)
-{
-    if (!ie) return false;
-    return plugin_window_grab_control(ie->window);
-}
-
-bool environment_ie_attach(environment_ie_t* ie, struct mascot* mascot)
-{
-    if (!ie || !mascot) return false;
-    if (list_find(ie->attachments, mascot) != UINT32_MAX) return true;
-    list_add(ie->attachments, mascot);
-    return true;
-}
-
-bool environment_ie_detach(environment_ie_t* ie, struct mascot* mascot)
-{
-    if (!ie || !mascot) return false;
-    if (list_find(ie->attachments, mascot) == UINT32_MAX) return false;
-    list_remove(ie->attachments, list_find(ie->attachments, mascot));
-    return true;
-}
-
-void environment_ie_destroy(environment_ie_t* ie) {
-    if (!ie) return;
-    pthread_scoped_lock(ielock, &ie->parent_env->ie_interaction_mutex);
-    ie->available = false;
-    for (uint32_t i = 0; i < list_size(ie->attachments); i++) {
-        struct mascot* mascot = list_get(ie->attachments, i);
-        if (!mascot) continue;
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-    }
-    list_remove(ie->parent_env->managed_ies, list_find(ie->parent_env->managed_ies, ie));
-    environment_ie_unref(ie);
-}
-void environment_ie_unref(environment_ie_t* ie)
-{
-    if (!ie) return;
-    ie->refcounter--;
-    if (ie->refcounter == 0) {
-        list_free(ie->attachments);
-        plugin_window_unref(ie->window);
-        free(ie);
-    }
-}
-
-static void environment_plugin_output_cursor_data(void* userdata, plugin_output_t* output, int32_t x, int32_t y)
-{
-    UNUSED(userdata);
-    if (!output) ERROR("environment_plugin_output_cursor_data called without valid output");
-    active_pointer->public_x = x;
-    active_pointer->public_y = y;
-}
-
-static void environment_plugin_output_new_window(void* userdata, plugin_output_t* output, plugin_window_t* window)
-{
-    if (!output || !window) ERROR("environment_plugin_output_new_window called without valid output or window");
-    environment_t* environment = userdata;
-    if (!environment) ERROR("environment_plugin_output_new_window called without valid environment");
-    pthread_scoped_lock(ielock, &environment->ie_interaction_mutex);
-    if (list_find(environment->managed_ies, window) != UINT32_MAX) return;
-    environment_create_ie(environment, window);
-}
-
-static void environment_plugin_window_geometry(void* userdata, plugin_window_t* window, struct bounding_box geometry)
-{
-    if (!window) ERROR("environment_plugin_window_geometry called without valid window");
-    environment_ie_t* ie = userdata;
-    if (!ie) ERROR("environment_plugin_window_geometry called without valid ie");
-    ie->geometry = geometry;
-
-    // TODO: Implement logic to move mascots when window is moved/geometry changes
-}
-
-static void environment_plugin_window_ordered(void *userdata, plugin_window_t* window, int32_t order_index)
-{
-    if (!window) ERROR("environment_plugin_window_ordered called without valid window");
-    environment_ie_t* ie = userdata;
-    if (!ie) ERROR("environment_plugin_window_ordered called without valid ie");
-    ie->z_index = order_index;
-
-    // TODO: Checks if mascot is now under another window to set fall behavior
-}
-
-static void environment_plugin_window_control(void *userdata, plugin_window_t* window, enum plugin_window_control_state state)
-{
-    if (!window) ERROR("environment_plugin_window_control called without valid window");
-    environment_ie_t* ie = userdata;
-    if (!ie) ERROR("environment_plugin_window_control called without valid ie");
-    ie->available = state == PLUGIN_WINDOW_CONTROL_STATE_MASCOT;
-    ie->visible = (state == PLUGIN_WINDOW_CONTROL_STATE_SYSTEM || state == PLUGIN_WINDOW_CONTROL_STATE_MASCOT);
-}
-
-static void environment_plugin_window_destroy(void *userdata, plugin_window_t* window)
-{
-    if (!window) ERROR("environment_plugin_window_destroy called without valid window");
-    environment_ie_t* ie = userdata;
-    if (!ie) ERROR("environment_plugin_window_destroy called without valid ie");
-
-    list_remove(ie->parent_env->managed_ies, list_find(ie->parent_env->managed_ies, ie));
-
-    environment_ie_destroy(ie);
 }

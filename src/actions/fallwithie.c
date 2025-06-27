@@ -37,13 +37,6 @@ enum mascot_tick_result fallwithie_action_init(struct mascot *mascot, struct mas
         return mascot_tick_error;
     }
 
-    environment_ie_t* ie = mascot_get_active_ie(mascot);
-    if (!ie) {
-        DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        return mascot_tick_reenter;
-    }
-
     // if (!ie->active) {
     //     DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
     //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);

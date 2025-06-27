@@ -549,14 +549,10 @@ bool mascot_environment_left_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
     if (border == environment_border_type_wall) {
         int32_t anchor_x = state->stack[state->sp-2];
-        int32_t anchor_y = state->stack[state->sp-1];
+        // int32_t anchor_y = state->stack[state->sp-1];
         int32_t collision = 0;
-        if (ie) {
-            collision = check_collision_at(&ie->geometry, anchor_x, anchor_y, BORDER_TYPE_RIGHT | BORDER_TYPE_FLOOR | BORDER_TYPE_RIGHT);
-        }
         state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_left(state->ref_mascot->environment) || !!collision;
     } else state->stack[state->sp-2] = 0;
     state->sp--;
@@ -568,14 +564,10 @@ bool mascot_environment_right_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
     enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
     if (border == environment_border_type_wall) {
         int32_t anchor_x = state->stack[state->sp-2];
-        int32_t anchor_y = state->stack[state->sp-1];
+        // int32_t anchor_y = state->stack[state->sp-1];
         int32_t collision = 0;
-        if (ie) {
-            collision = check_collision_at(&ie->geometry, anchor_x, anchor_y, BORDER_TYPE_RIGHT | BORDER_TYPE_FLOOR | BORDER_TYPE_RIGHT);
-        }
         state->stack[state->sp-2] = anchor_x == (int32_t)environment_workarea_right(state->ref_mascot->environment) || !!collision;
     } else state->stack[state->sp-2] = 0;
     state->sp--;
@@ -647,16 +639,7 @@ bool mascot_environment_active_ie_right(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        if (ie->visible) {
-            state->stack[state->sp] = ie->geometry.x + ie->geometry.width;
-        } else {
-            state->stack[state->sp] = 0;
-        }
-    } else {
-        state->stack[state->sp] = 0;
-    }
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -667,16 +650,8 @@ bool mascot_environment_active_ie_left(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        if (ie->visible) {
-            state->stack[state->sp] = ie->geometry.x;
-        } else {
-            state->stack[state->sp] = 0;
-        }
-    } else {
-        state->stack[state->sp] = 0;
-    }
+
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -687,16 +662,8 @@ bool mascot_environment_active_ie_top(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        if (ie->visible) {
-            state->stack[state->sp] = ie->geometry.y;
-        } else {
-            state->stack[state->sp] = 0;
-        }
-    } else {
-        state->stack[state->sp] = 0;
-    }
+
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -707,16 +674,7 @@ bool mascot_environment_active_ie_bottom(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        if (ie->visible) {
-            state->stack[state->sp] = ie->geometry.y + ie->geometry.height;
-        } else {
-            state->stack[state->sp] = 0;
-        }
-    } else {
-        state->stack[state->sp] = 0;
-    }
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -727,16 +685,8 @@ bool mascot_environment_active_ie_width(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        if (ie->visible) {
-            state->stack[state->sp] = ie->geometry.width;
-        } else {
-            state->stack[state->sp] = 0;
-        }
-    } else {
-        state->stack[state->sp] = 0;
-    }
+
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -747,16 +697,8 @@ bool mascot_environment_active_ie_height(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        if (ie->visible) {
-            state->stack[state->sp] = ie->geometry.height;
-        } else {
-            state->stack[state->sp] = 0;
-        }
-    } else {
-        state->stack[state->sp] = 0;
-    }
+
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -767,12 +709,7 @@ bool mascot_environment_active_ie_visible(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        state->stack[state->sp] = ie->visible;
-    } else {
-        state->stack[state->sp] = 0;
-    }
+    state->stack[state->sp] = 0;
 
     state->sp++;
     return true;
@@ -783,15 +720,7 @@ bool mascot_environment_active_ie_top_border_ison(struct expression_vm_state* st
 {
     if (state->sp - 2 <= 0) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        int32_t anchor_x = state->stack[state->sp-2];
-        int32_t anchor_y = state->stack[state->sp-1];
-        int32_t collision = check_collision_at(&ie->geometry, anchor_x, anchor_y, BORDER_TYPE_LEFT | BORDER_TYPE_RIGHT | BORDER_TYPE_FLOOR);
-        state->stack[state->sp-2] = !!collision;
-    } else {
-        state->stack[state->sp-2] = 0;
-    }
+    state->stack[state->sp-2] = 0;
 
     state->sp--;
     return true;
@@ -802,15 +731,7 @@ bool mascot_environment_active_ie_bottom_border_ison(struct expression_vm_state*
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        int32_t anchor_x = state->stack[state->sp-2];
-        int32_t anchor_y = state->stack[state->sp-1];
-        int32_t collision = check_collision_at(&ie->geometry, anchor_x, anchor_y, BORDER_TYPE_LEFT | BORDER_TYPE_RIGHT | BORDER_TYPE_CEILING);
-        state->stack[state->sp-2] = !!collision;
-    } else {
-        state->stack[state->sp-2] = 0;
-    }
+    state->stack[state->sp-2] = 0;
 
     state->sp--;
 
@@ -822,15 +743,8 @@ bool mascot_environment_active_ie_left_border_ison(struct expression_vm_state* s
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        int32_t anchor_x = state->stack[state->sp-2];
-        int32_t anchor_y = state->stack[state->sp-1];
-        int32_t collision = check_collision_at(&ie->geometry, anchor_x, anchor_y, BORDER_TYPE_FLOOR | BORDER_TYPE_RIGHT | BORDER_TYPE_CEILING);
-        state->stack[state->sp-2] = !!collision;
-    } else {
-        state->stack[state->sp-2] = 0;
-    }
+
+    state->stack[state->sp-2] = 0;
 
     state->sp--;
     return true;
@@ -841,15 +755,8 @@ bool mascot_environment_active_ie_right_border_ison(struct expression_vm_state* 
 {
     if (state->sp + 1 >= 255) return false;
 
-    environment_ie_t* ie = mascot_get_active_ie(state->ref_mascot);
-    if (ie) {
-        int32_t anchor_x = state->stack[state->sp-2];
-        int32_t anchor_y = state->stack[state->sp-1];
-        int32_t collision = check_collision_at(&ie->geometry, anchor_x, anchor_y, BORDER_TYPE_FLOOR | BORDER_TYPE_LEFT | BORDER_TYPE_CEILING);
-        state->stack[state->sp-2] = !!collision;
-    } else {
-        state->stack[state->sp-2] = 0;
-    }
+
+    state->stack[state->sp-2] = 0;
 
     state->sp--;
 

@@ -51,6 +51,7 @@ uint32_t list_add_(struct list* list, void* entry)
         list->entries = realloc(list->entries, sizeof(void*) * new_size);
         list->entry_used = realloc(list->entry_used, new_size);
         memset(list->entry_used + list->entry_count, 0, new_size - list->entry_count);
+        memset(list->entries + list->entry_count, 0, (new_size - list->entry_count) * sizeof(void*));
         list->entry_count = new_size;
     }
     for (uint32_t i = 0; i < list->entry_count; i++) {

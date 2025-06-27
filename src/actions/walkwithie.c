@@ -18,13 +18,6 @@ enum mascot_tick_result walkwithie_action_init(struct mascot *mascot, struct mas
         return mascot_tick_error;
     }
 
-    environment_ie_t* ie = mascot_get_active_ie(mascot);
-    if (!ie) {
-        DEBUG("<Mascot:%s:%u> No IE object found, skipping action", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        return mascot_tick_reenter;
-    }
-
     // if (!ie->active) {
     //     DEBUG("<Mascot:%s:%u> IE object is inactive, skipping action", mascot->prototype->name, mascot->id);
     //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
@@ -130,14 +123,6 @@ struct mascot_action_next walkwithie_action_next(struct mascot *mascot, struct m
         }
     }
 
-    environment_ie_t* ie = mascot_get_active_ie(mascot);
-    if (!ie) {
-        WARN("<Mascot:%s:%u> Attached environment lost IE", mascot->prototype->name, mascot->id);
-        mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-        walkwithie_action_clean(mascot);
-        result.status = mascot_tick_next;
-        return result;
-    }
     // if (!ie->active) {
     //     INFO("<Mascot:%s:%u> IE is no longer active", mascot->prototype->name, mascot->id);
     //     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);

@@ -40,7 +40,7 @@ size_t write_time(char* prefix) {
 
 void log_print(const char* prefix, const char* fmt, va_list args)
 {
-    char buffer[256] = {0};
+    char buffer[4096] = {0};
     size_t pos = rvvm_strlcpy(buffer, prefix, sizeof(buffer));
     size_t vsp_size = sizeof(buffer) - EVAL_MIN(pos + 6, sizeof(buffer));
     if (vsp_size > 1) {

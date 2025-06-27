@@ -73,20 +73,20 @@ int32_t check_movement_collision(
     }
 
     // Check for intersection with the box borders
-    if (target_x < box->x && starting_x != target_x) {
+    if ((starting_inside ? (target_x < box->x) : (target_x > box->x)) && starting_x != target_x) {
         result = BORDER_TYPE_LEFT;
         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_x = box->x;
-    } else if (target_x > box->x + box->width && starting_x != target_x) {
+    } else if ((starting_inside ? (target_x > box->x + box->width) : (target_x < box->x + box->width)) && starting_x != target_x) {
         result = BORDER_TYPE_RIGHT;
         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_x = box->x + box->width;
     } else {
         *out_x = target_x;
     }
 
-    if (target_y < box->y && starting_y != target_y) {
+    if ((starting_inside ? (target_y < box->y) : (target_y > box->y)) && starting_y != target_y) {
         result = BORDER_TYPE_CEILING;
         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_y = box->y;
-    } else if (target_y > box->y + box->height && starting_y != target_y) {
+    } else if ((starting_inside ? (target_y > box->y + box->height) : (target_y < box->y + box->height)) && starting_y != target_y) {
         result = BORDER_TYPE_FLOOR;
         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_y = box->y + box->height;
     } else {

@@ -17,6 +17,7 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
+#include <linux/limits.h>
 #define _GNU_SOURCE
 #include <sys/mman.h>
 #include "mascot_config_parser.h"
@@ -41,6 +42,7 @@
 #include "config.h"
 #include "physics.h"
 #include "list.h"
+#include "io.h"
 #include <errno.h>
 
 #include "protocol/server.h"
@@ -64,7 +66,7 @@
 #endif
 
 #ifndef DEFAULT_PLUGINS_PATH
-#define DEFAULT_PLUGINS_PATH "%s/plugins"
+#define DEFAULT_PLUGINS_PATH "/usr/lib/wl_shimeji/plugins"
 #endif
 
 #ifndef DEFAULT_CONFIG_FILE_PATH
@@ -74,8 +76,6 @@
 #ifndef DEFAULT_SOCK_PATH
 #define DEFAULT_SOCK_PATH "%s/shimeji-overlayd.sock"
 #endif
-
-struct plugin* plugins[256] = {0};
 
 jmp_buf recovery_point;
 bool should_exit = false;
@@ -113,6 +113,8 @@ static void env_new(environment_t* environment)
     protocol_server_announce_new_environment(environment, NULL);
     environment_set_user_data(environment, data);
     environment_set_affordance_manager(environment, &server_state.affordance_manager);
+
+    // for (size_t i = 0; i < plugin_count; i++) environment_announce_plugin(environment, plugins[i]);
 
     pthread_create(&data->interpolation_thread, NULL, env_interpolation_thread, environment);
     pthread_mutex_unlock(&server_state.environment_mutex);
@@ -255,11 +257,6 @@ size_t default_prototypes_location(const char* configuration_root, char* pathbuf
     return snprintf(pathbuf, pathbuf_len, DEFAULT_PROTOS_PATH, configuration_root);
 }
 
-size_t default_plugins_location(const char* configuration_root, char* pathbuf, size_t pathbuf_len)
-{
-    return snprintf(pathbuf, pathbuf_len, DEFAULT_PLUGINS_PATH, configuration_root);
-}
-
 size_t default_socket_path(char* pathbuf, size_t pathbuf_len)
 {
     const char *prefix = secure_getenv("XDG_RUNTIME_DIR");
@@ -355,6 +352,10 @@ void* mascot_manager_thread(void* arg)
             environment_commit(environment);
         }
         pthread_mutex_unlock(&server_state.environment_mutex);
+        // for (int32_t i = 0; i < 32; i++) {
+        //     if (!plugins[i]) break;
+        //     plugin_tick(plugins[i]);
+        // }
         usleep(40000);
         if (should_exit) {
             break;
@@ -527,7 +528,7 @@ int main(int argc, const char** argv)
 
     if (!plugins_location[0]) {
         if (!config_get_plugins_location()) {
-            default_plugins_location(configuration_root, plugins_location, PATH_MAX-1);
+            strncpy(plugins_location, DEFAULT_PLUGINS_PATH, PATH_MAX-1);
         } else {
             strncpy(plugins_location, config_get_plugins_location(), PATH_MAX-1);
         }
@@ -574,7 +575,8 @@ int main(int argc, const char** argv)
         mkdir(server_state.plugins_location, 0700);
     }
     if (stat(server_state.plugins_location, &st) == -1) {
-        ERROR("Failed to create plugins storage at %s", server_state.plugins_location);
+        WARN("Failed to create plugins storage at %s, disabling plugins", server_state.plugins_location);
+        disable_plugins = true;
     }
 
     srand48(time(NULL));
@@ -624,67 +626,7 @@ int main(int argc, const char** argv)
 
     environment_set_broadcast_input_enabled_listener(broadcast_input_enabled_listener);
 
-    size_t plugin_count = 0;
-    UNUSED(plugin_count);
     UNUSED(disable_plugins);
-
-    // // Load plugins
-    // if (!disable_plugins){
-    //     DIR *plugins_dir = opendir(plugins_path);
-    //     if (plugins_dir) {
-    //         struct dirent *ent;
-    //         while ((ent = readdir(plugins_dir)) != NULL) {
-    //             if (ent->d_type == DT_REG) {
-    //                 char plugin_path[256];
-    //                 int slen = snprintf(plugin_path, 255, "%s/%s", plugins_path, ent->d_name);
-    //                 if (slen < 0 || slen >= 255) {
-    //                     WARN("Plugin path is too long! Skipping...");
-    //                     continue;
-    //                 }
-    //                 struct plugin* plugin = plugin_open(plugin_path);
-    //                 if (!plugin) {
-    //                     WARN("Failed to load plugin %s", plugin_path);
-    //                     continue;
-    //                 }
-    //                 const char* error = NULL;
-    //                 int init_flags = 0;
-    //                 init_flags |= config_get_cursor_data() ? PLUGIN_PROVIDES_CURSOR_POSITION : 0;
-    //                 init_flags |= config_get_ie_interactions() ? PLUGIN_PROVIDES_IE_POSITION : 0;
-    //                 init_flags |= (config_get_ie_interactions() && config_get_ie_throwing() && config_get_ie_throw_policy()) ? PLUGIN_PROVIDES_IE_MOVE : 0;
-    //                 enum plugin_initialization_result init_status = plugin_init(plugin, init_flags, &error);
-    //                 if (init_status != PLUGIN_INIT_OK) {
-    //                     WARN("Failed to initialize plugin %s: %s", plugin_path, error);
-    //                     plugin_deinit(plugin);
-    //                     plugin_close(plugin);
-    //                     continue;
-    //                 }
-    //                 if (plugin->provides & PLUGIN_PROVIDES_IE_MOVE) plugin_execute_ie_throw_policy(plugin, config_get_ie_throw_policy());
-    //                 plugins[plugin_count++] = plugin;
-    //             }
-    //         }
-    //         closedir(plugins_dir);
-    //     }
-
-    //     // Assign plugins to environments
-    //     for (size_t i = 0; i < environment_store.entry_count; i++) {
-    //         if (environment_store.entry_states[i]) {
-    //             environment_t* env = environment_store.entries[i];
-    //             for (size_t j = 0; j < plugin_count; j++) {
-    //                 struct plugin* plugin = plugins[j];
-    //                 struct ie_object* ie = NULL;
-    //                 enum plugin_execution_result exec_res = plugin_get_ie_for_environment(plugin, env, &ie);
-    //                 if (exec_res == PLUGIN_EXEC_SEGFAULT) {
-    //                     WARN("Plugin %s segfaulted while getting IE for environment %d", plugin->name, i);
-    //                 } else if (exec_res == PLUGIN_EXEC_ERROR) {
-    //                     WARN("Plugin %s returned an error while getting IE for environment %d", plugin->name, i);
-    //                 } else if (exec_res == PLUGIN_EXEC_OK) {
-    //                     environment_set_ie(env, ie);
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 
     // Load mascot prototypes
     mascot_prototype_store_set_location(server_state.prototypes, server_state.prototypes_location);

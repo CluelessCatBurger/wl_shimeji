@@ -20,6 +20,7 @@
 #include "move.h"
 #include "actionbase.h"
 #include "environment.h"
+#include "mascot.h"
 
 enum mascot_tick_result move_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
 {

@@ -24,6 +24,7 @@
 #include "config.h"
 #include "physics.h"
 #include "plugins.h"
+#include <bits/pthreadtypes.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -775,11 +776,16 @@ struct mascot* mascot_new
         }
     }
 
+    pthread_mutexattr_t init_attrs = {0};
+    pthread_mutexattr_init(&init_attrs);
+    pthread_mutexattr_settype(&init_attrs, PTHREAD_MUTEX_RECURSIVE);
+
     mascot->subsurface = environment_create_subsurface(env); // Get opaque surface from env
     environment_subsurface_associate_mascot(mascot->subsurface, mascot);
     environment_subsurface_set_position(mascot->subsurface, posx, environment_screen_height(env) - posy);
     mascot_total_count++;
-    pthread_mutex_init(&mascot->tick_lock, NULL);
+
+    pthread_mutex_init(&mascot->tick_lock, &init_attrs);
     INFO("<Mascot:%s:%u> Created new mascot of type \"%s\" at (%d,%d)", prototype->name, mascot->id, prototype->display_name, posx, posy);
     return mascot;
 
@@ -818,9 +824,7 @@ void mascot_unlink(struct mascot* mascot)
     }
 
     mascot_announce_affordance(mascot, NULL);
-    if (mascot->associated_ie) {
-        // plugin_execute_ie_detach_mascot(mascot->associated_ie->parent_plugin, mascot->associated_ie, mascot);
-    }
+
     mascot_detach_affordance_manager(mascot);
 
     free(mascot->action_data);
@@ -920,8 +924,6 @@ static void mascot_init_(struct mascot* mascot, const struct mascot_prototype* p
 
     mascot->hotspot_active = false;
     mascot->hotspot_behavior = NULL;
-
-    mascot->associated_ie = NULL;
 
     free(mascot->action_data);
     mascot->action_data = NULL;
@@ -1199,6 +1201,7 @@ enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot
 {
     // Check if action border requirements are met
     enum environment_border_type border_type = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+
     if (actionref->action->border_type != environment_border_type_any) {
         if (
             border_type
@@ -1336,10 +1339,4 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
 
     mascot_moved(mascot, new_x, yconvat(at_env, new_y));
 
-}
-
-environment_ie_t* mascot_get_active_ie(struct mascot* mascot) {
-    if (!mascot) ERROR("mascot_get_active_ie: mascot is NULL");
-    if (mascot->associated_ie) return mascot->associated_ie;
-    return environment_get_front_ie(mascot->environment);
 }

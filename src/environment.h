@@ -73,19 +73,6 @@ enum environment_init_status {
     ENV_NOT_INITIALIZED = -1
 };
 
-#include "plugins.h"
-
-typedef struct {
-    environment_t *parent_env;
-    struct list   *attachments;
-    plugin_window_t     *window;
-    struct bounding_box geometry;
-    uint32_t refcounter;
-    int32_t z_index;
-    bool available;
-    bool visible;
-} environment_ie_t;
-
 #include "mascot.h"
 #include "mascot_config_parser.h"
 
@@ -105,6 +92,7 @@ int environment_get_display_fd();
 void environment_unlink(environment_t* env);
 
 enum environment_border_type environment_get_border_type(environment_t* env, int32_t x, int32_t y);
+enum environment_border_type environment_get_border_type_rect(environment_t* env, int32_t x, int32_t y, struct bounding_box* rect, int32_t mask);
 
 environment_subsurface_t* environment_create_subsurface(environment_t* env);
 void environment_destroy_subsurface(environment_subsurface_t* surface);
@@ -248,16 +236,5 @@ void environment_popup_attach(environment_popup_t* popup, environment_buffer_t* 
 void environment_popup_commit(environment_popup_t* popup);
 void environment_popup_dismiss(environment_popup_t* popup);
 void environment_popup_add_listener(environment_popup_t* popup, struct environment_popup_listener listener, void* data);
-
-// Windows
-environment_ie_t* environment_get_front_ie(environment_t* environment);
-environment_ie_t* environment_create_ie(environment_t* environment, plugin_window_t* window);
-environment_ie_t* environment_ie_ref(environment_ie_t* ie);
-bool environment_ie_get_control(environment_ie_t* ie);
-bool environment_ie_move(environment_ie_t* ie, int32_t x, int32_t y);
-bool environment_ie_attach(environment_ie_t* ie, struct mascot* mascot);
-bool environment_ie_detach(environment_ie_t* ie, struct mascot* mascot);
-void environment_ie_destroy(environment_ie_t* ie);
-void environment_ie_unref(environment_ie_t* ie);
 
 #endif
