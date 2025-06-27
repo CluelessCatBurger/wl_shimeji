@@ -1679,10 +1679,10 @@ static void on_tool_proximity_out(void* data, struct zwp_tablet_tool_v2* tool)
         return;
     }
 
-    if (env_pointer->grabbed_subsurface) {
-        env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
-        env_pointer->frame.buttons_released |= EVENT_FRAME_PRIMARY_BUTTON;
-    }
+    // if (env_pointer->grabbed_subsurface) {
+    //     env_pointer->frame.mask |= EVENT_FRAME_BUTTONS;
+    //     env_pointer->frame.buttons_released |= EVENT_FRAME_PRIMARY_BUTTON;
+    // }
 
     env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
     env_pointer->frame.surface_changed = NULL;
