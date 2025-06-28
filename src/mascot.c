@@ -1212,7 +1212,7 @@ enum mascot_tick_result mascot_out_of_bounds_check(struct mascot* mascot)
 enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot_action_reference* actionref, void (*clean_func)(struct mascot*))
 {
     // Check if action border requirements are met
-    enum environment_border_type border_type = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+    enum environment_border_type border_type =  mascot_get_border_type(mascot);
 
     // if (border_type == environment_border_type_none && mascot_is_on_ie(mascot)) {
     //     struct bounding_box bb = environment_get_active_ie(mascot->environment);
@@ -1224,7 +1224,7 @@ enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot
             border_type
             != actionref->action->border_type
         ) {
-            if (border_type != environment_border_type_floor && !mascot_is_on_ie(mascot)) {
+            if (border_type != environment_border_type_floor) {
                 mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
                 clean_func(mascot);
                 return mascot_tick_reenter;

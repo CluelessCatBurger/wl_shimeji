@@ -518,12 +518,8 @@ bool mascot_environment_work_area_bottom(struct expression_vm_state* state)
 bool mascot_environment_floor_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_none && environment_ie_is_active()) {
-        struct bounding_box bb = environment_get_active_ie(state->ref_mascot->environment);
-        border = environment_get_border_type_rect(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, &bb, 0);
-        state->stack[state->sp-2] = border == environment_border_type_ceiling;
-    } else state->stack[state->sp-2] = border == environment_border_type_floor;
+    enum environment_border_type border = mascot_get_border_type(state->ref_mascot);
+    state->stack[state->sp-2] = border == environment_border_type_floor;
     state->sp--;
     return true;
 }
@@ -532,12 +528,8 @@ bool mascot_environment_floor_ison(struct expression_vm_state* state)
 bool mascot_environment_ceiling_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_none && environment_ie_is_active()) {
-        struct bounding_box bb = environment_get_active_ie(state->ref_mascot->environment);
-        border = environment_get_border_type_rect(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, &bb, 0);
-        state->stack[state->sp-2] = border == environment_border_type_floor;
-    } else state->stack[state->sp-2] = border == environment_border_type_ceiling;
+    enum environment_border_type border = mascot_get_border_type(state->ref_mascot);
+    state->stack[state->sp-2] = border == environment_border_type_ceiling;
     state->sp--;
     return true;
 }
@@ -546,11 +538,7 @@ bool mascot_environment_ceiling_ison(struct expression_vm_state* state)
 bool mascot_environment_wall_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
-    if (border == environment_border_type_none && environment_ie_is_active()) {
-        struct bounding_box bb = environment_get_active_ie(state->ref_mascot->environment);
-        border = environment_get_border_type_rect(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i, &bb, 0);
-    }
+    enum environment_border_type border = mascot_get_border_type(state->ref_mascot);
     state->stack[state->sp-2] = border == environment_border_type_wall;
     state->sp--;
     return true;
@@ -560,7 +548,7 @@ bool mascot_environment_wall_ison(struct expression_vm_state* state)
 bool mascot_environment_left_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
+    enum environment_border_type border = mascot_get_border_type(state->ref_mascot);
     if (border == environment_border_type_wall) {
         int32_t anchor_x = state->stack[state->sp-2];
         int32_t anchor_y = state->stack[state->sp-1];
@@ -580,7 +568,7 @@ bool mascot_environment_left_ison(struct expression_vm_state* state)
 bool mascot_environment_right_ison(struct expression_vm_state* state)
 {
     if (state->sp + 1 >= 255) return false;
-    enum environment_border_type border = environment_get_border_type(state->ref_mascot->environment, state->ref_mascot->X->value.i, state->ref_mascot->Y->value.i);
+    enum environment_border_type border = mascot_get_border_type(state->ref_mascot);
     if (border == environment_border_type_wall) {
         int32_t anchor_x = state->stack[state->sp-2];
         int32_t anchor_y = state->stack[state->sp-1];
