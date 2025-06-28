@@ -149,23 +149,22 @@ int32_t check_movement_collision(
         }
     }
 
-    if (hit_all == 0) {
-        // no intersection at all
-        return 0;
-    }
-
     // clamp output unless NOCLAMP
     if (!no_clamp) {
         *out_x = (int32_t)lround(ix);
         *out_y = (int32_t)lround(iy);
     }
 
-    if (result) {
+    if (hit_all) {
         if (box->type == INNER_COLLISION) result |= COLLISION_RESULT_OOB;
     }
     // strip out the excluded borders before returning
     int hit_visible = hit_all & ~exclude;
     result |= hit_visible;
+
+    if (box->type == INNER_COLLISION) {
+        if (start_in && !target_in) result |= COLLISION_RESULT_OOB;
+    }
 
     // for INNER_COLLISION, always add the OOB flag if we crossed any side
     return result;
