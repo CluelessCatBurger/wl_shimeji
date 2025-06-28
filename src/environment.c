@@ -2747,7 +2747,8 @@ int32_t environment_cursor_x(struct mascot* mascot, environment_t* env) {
     environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
     if (!pointer) pointer = active_pointer;
     if (!pointer) return 0;
-    return pointer->grabbed_subsurface ? pointer->x : pointer->public_x;
+
+    return pointer->grabbed_subsurface ? pointer->x : pointer->public_x - env->global_geometry.x;
 }
 
 int32_t environment_cursor_y(struct mascot* mascot, environment_t* env) {
@@ -2755,7 +2756,8 @@ int32_t environment_cursor_y(struct mascot* mascot, environment_t* env) {
     environment_pointer_t* pointer = mascot ? mascot->subsurface->drag_pointer : active_pointer;
     if (!pointer) pointer = active_pointer;
     if (!pointer) return 0;
-    return pointer->grabbed_subsurface ? pointer->y : pointer->public_y;
+
+    return pointer->grabbed_subsurface ? pointer->y : pointer->public_y - env->global_geometry.y;
 }
 
 int32_t environment_cursor_dx(struct mascot* mascot, environment_t* env) {
