@@ -118,4 +118,4 @@ install: $(UTILS_DIR)/shimejictl
 # Handle header dependency rebuild
 sinclude $(DEPS)
 
-.DEFAULT_GOAL := $(TARGET)
+.DEFAULT_GOAL := all
