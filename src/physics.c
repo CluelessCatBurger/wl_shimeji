@@ -41,6 +41,9 @@ int32_t check_movement_collision(
     int32_t* out_x, int32_t* out_y
 )
 {
+
+    int result = 0;
+
     // default: no clamp → keep target
     *out_x = tx;
     *out_y = ty;
@@ -157,15 +160,14 @@ int32_t check_movement_collision(
         *out_y = (int32_t)lround(iy);
     }
 
-    // strip out the excluded borders before returning
-    int hit_visible = hit_all & ~exclude;
-    int result = hit_visible;
-
-    // for INNER_COLLISION, always add the OOB flag if we crossed any side
     if (result) {
         if (box->type == INNER_COLLISION) result |= COLLISION_RESULT_OOB;
     }
+    // strip out the excluded borders before returning
+    int hit_visible = hit_all & ~exclude;
+    result |= hit_visible;
 
+    // for INNER_COLLISION, always add the OOB flag if we crossed any side
     return result;
 }
 //     int32_t result = 0x0;
