@@ -114,7 +114,7 @@ struct mascot_action_next walkwithie_action_next(struct mascot *mascot, struct m
     // Ensure border conditions are still met
     if (actionref->action->border_type != environment_border_type_any) {
         if (
-            environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i)
+            mascot_get_border_type(mascot)
             != actionref->action->border_type
         ) {
             DEBUG("<Mascot:%s:%u> Move action next, Border type not met", mascot->prototype->name, mascot->id);

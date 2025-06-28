@@ -1126,9 +1126,21 @@ void mascot_build_behavior_pool(struct mascot* mascot, const struct mascot_behav
             continue;
         }
         if (behavior_ref->frequency == 0) continue;
-        if (behavior_ref->behavior->action->border_type != environment_border_type_any) {
-            if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) != behavior_ref->behavior->action->border_type) {
-                continue;
+        if (behavior_ref->behavior->action->type == mascot_action_type_sequence) {
+            if (behavior_ref->behavior->action->content[0].kind == mascot_action_content_type_action) {
+                if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->content[0].value.action->border_type && behavior_ref->behavior->action->content[0].value.action->border_type != environment_border_type_any) {
+                    continue;
+                }
+            } else if (behavior_ref->behavior->action->content[0].kind == mascot_action_content_type_action_reference) {
+                if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->content[0].value.action_reference->action->border_type && behavior_ref->behavior->action->content[0].value.action_reference->action->border_type != environment_border_type_any) {
+                    continue;
+                }
+            }
+        } else {
+            if (behavior_ref->behavior->action->border_type != environment_border_type_any) {
+                if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->border_type) {
+                    continue;
+                }
             }
         }
         enum mascot_tick_result cond_res = mascot_check_condition(mascot, behavior_ref->behavior->condition);
@@ -1202,12 +1214,17 @@ enum mascot_tick_result mascot_ground_check(struct mascot* mascot, struct mascot
     // Check if action border requirements are met
     enum environment_border_type border_type = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
 
+    // if (border_type == environment_border_type_none && mascot_is_on_ie(mascot)) {
+    //     struct bounding_box bb = environment_get_active_ie(mascot->environment);
+    //     border_type = environment_get_border_type_rect(mascot->environment, mascot->X->value.i, mascot_screen_y_to_mascot_y(mascot, mascot->Y->value.i), &bb, 0);
+    // }
+
     if (actionref->action->border_type != environment_border_type_any) {
         if (
             border_type
             != actionref->action->border_type
         ) {
-            if (border_type != environment_border_type_floor) {
+            if (border_type != environment_border_type_floor && !mascot_is_on_ie(mascot)) {
                 mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
                 clean_func(mascot);
                 return mascot_tick_reenter;
@@ -1339,4 +1356,55 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
 
     mascot_moved(mascot, new_x, yconvat(at_env, new_y));
 
+}
+
+bool mascot_is_on_ie(struct mascot* mascot)
+{
+    if (!environment_ie_is_active()) return false;
+    struct bounding_box bb = environment_get_active_ie(mascot->environment);
+    int collision = check_collision_at(&bb, mascot->X->value.i, yconvat(mascot->environment, mascot->Y->value.i), 0);
+    return !!collision;
+}
+
+bool mascot_is_on_ie_top(struct mascot* mascot)
+{
+    if (!environment_ie_is_active()) return false;
+    struct bounding_box bb = environment_get_active_ie(mascot->environment);
+    int collision = check_collision_at(&bb, mascot->X->value.i, yconvat(mascot->environment, mascot->Y->value.i), BORDER_TYPE_FLOOR | BORDER_TYPE_LEFT | BORDER_TYPE_RIGHT);
+    return !!collision;
+}
+bool mascot_is_on_ie_bottom(struct mascot* mascot)
+{
+    if (!environment_ie_is_active()) return false;
+    struct bounding_box bb = environment_get_active_ie(mascot->environment);
+    int collision = check_collision_at(&bb, mascot->X->value.i, yconvat(mascot->environment, mascot->Y->value.i), BORDER_TYPE_CEILING | BORDER_TYPE_LEFT | BORDER_TYPE_RIGHT);
+    return !!collision;
+}
+bool mascot_is_on_ie_left(struct mascot* mascot)
+{
+    if (!environment_ie_is_active()) return false;
+    struct bounding_box bb = environment_get_active_ie(mascot->environment);
+    int collision = check_collision_at(&bb, mascot->X->value.i, yconvat(mascot->environment, mascot->Y->value.i), BORDER_TYPE_RIGHT | BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR);
+    return !!collision;
+}
+bool mascot_is_on_ie_right(struct mascot* mascot)
+{
+    if (!environment_ie_is_active()) return false;
+    struct bounding_box bb = environment_get_active_ie(mascot->environment);
+    int collision = check_collision_at(&bb, mascot->X->value.i, yconvat(mascot->environment, mascot->Y->value.i), BORDER_TYPE_LEFT | BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR);
+    return !!collision;
+}
+
+enum environment_border_type mascot_get_border_type(struct mascot* mascot)
+{
+    if (!mascot) return environment_border_type_none;
+    struct bounding_box bb = environment_get_active_ie(mascot->environment);
+
+    enum environment_border_type border = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+
+    if (border == environment_border_type_none && environment_ie_is_active()) {
+        border = environment_get_border_type_rect(mascot->environment, mascot->X->value.i, yconvat(mascot->environment, mascot->Y->value.i), &bb, 0);
+    }
+
+    return border;
 }

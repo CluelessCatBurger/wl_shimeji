@@ -568,4 +568,12 @@ void mascot_apply_environment_position_diff(struct mascot* mascot, int32_t dx, i
 // Set action, not recommended to use directly
 enum action_set_result mascot_set_action(struct mascot* mascot, struct mascot_action_reference* actionref, bool push_stack, uint32_t tick);
 
+bool mascot_is_on_ie(struct mascot* mascot);
+bool mascot_is_on_ie_top(struct mascot* mascot);
+bool mascot_is_on_ie_bottom(struct mascot* mascot);
+bool mascot_is_on_ie_left(struct mascot* mascot);
+bool mascot_is_on_ie_right(struct mascot* mascot);
+
+enum environment_border_type mascot_get_border_type(struct mascot* mascot);
+
 #endif

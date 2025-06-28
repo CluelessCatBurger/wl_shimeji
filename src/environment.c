@@ -349,6 +349,15 @@ struct envs_queue {
     bool post_init;
 };
 
+struct active_ie {
+    bool is_active;
+    struct bounding_box geometry;
+};
+
+struct active_ie active_ie = {
+    .is_active = false
+};
+
 // Helper functions ---------------------------------------------------------
 
 void environment_recalculate_advertised_geometry(environment_t* env);
@@ -2587,6 +2596,21 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
         result = environment_move_clamped;
     }
 
+    // Now try collision with IE
+    if (environment_ie_is_active() && !COLLIDED(collision)){
+        int32_t proposed_x = dx;
+        int32_t proposed_y = dy;
+
+        struct bounding_box bb = environment_get_active_ie(surface->env);
+
+        collision = check_movement_collision(&bb, current_x, current_y, dx, yconv(surface->env, dy), BORDER_TYPE_FLOOR, &proposed_x, &proposed_y);
+
+        if (COLLIDED(collision)) {
+            mascot_moved(surface->mascot, proposed_x, yconv(surface->env, proposed_y));
+            return environment_move_clamped;
+        }
+    }
+
     dy = yconv(surface->env, dy);
 
     if (!use_interpolation) {
@@ -3084,15 +3108,15 @@ enum environment_border_type environment_get_border_type_rect(environment_t *env
     int32_t border_type = BORDER_TYPE(check_collision_at(rect, x, y, 0));
     int32_t masked_border = APPLY_MASK(border_type, border_mask);
 
-    if (masked_border & BORDER_TYPE_CEILING) return environment_border_type_ceiling;
+    if (masked_border & BORDER_TYPE_CEILING) return (rect->type == INNER_COLLISION ? environment_border_type_ceiling : environment_border_type_floor);
     if (BORDER_IS_WALL(masked_border)) return environment_border_type_wall;
-    if (masked_border & BORDER_TYPE_FLOOR) return environment_border_type_floor;
+    if (masked_border & BORDER_TYPE_FLOOR) return (rect->type == INNER_COLLISION ? environment_border_type_floor : environment_border_type_ceiling);
 
     if (environment_neighbor_border(env, x, y)) return environment_border_type_none;
 
-    if (border_type & BORDER_TYPE_CEILING) return environment_border_type_ceiling;
+    if (border_type & BORDER_TYPE_CEILING) return (rect->type == INNER_COLLISION ? environment_border_type_ceiling : environment_border_type_floor);
     if (BORDER_IS_WALL(border_type)) return environment_border_type_wall;
-    if (border_type & BORDER_TYPE_FLOOR) return environment_border_type_floor;
+    if (border_type & BORDER_TYPE_FLOOR) return (rect->type == INNER_COLLISION ? environment_border_type_floor : environment_border_type_ceiling);
 
     return environment_border_type_none;
 }
@@ -3885,4 +3909,100 @@ int32_t environment_workarea_height_aligned(environment_t* env, int32_t alignmen
         retval = env->advertised_geometry.height;
     }
     return retval;
+}
+
+void environment_recalculate_ie_attachement(environment_t* env, bool is_active, struct bounding_box new_geometry) {
+    if (!env || !env->is_ready) return;
+    pthread_scoped_lock(mascot_lock, &env->mascot_manager.mutex);
+
+    for (uint32_t i = 0; i < env->mascot_manager.referenced_mascots->entry_count; i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
+        if (!mascot) continue;
+        if (!mascot_is_on_ie(mascot)) continue;
+        if (!is_active) {
+            mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            continue;
+        }
+
+        int32_t x = mascot->X->value.i;
+        int32_t y = yconv(env, mascot->Y->value.i);
+        int32_t new_x = x;
+        int32_t new_y = y;
+
+        if (mascot_is_on_ie_left(mascot) && (active_ie.geometry.x != environment_workarea_left(env))) {
+            if (x != new_geometry.x) {
+                new_x = new_geometry.x;
+            }
+            if (active_ie.geometry.y != new_geometry.y) {
+                new_y += (new_geometry.y - active_ie.geometry.y);
+            }
+        } else if (mascot_is_on_ie_right(mascot) && (active_ie.geometry.x + active_ie.geometry.width != environment_workarea_right(env))) {
+            if (x != new_geometry.x + new_geometry.width) {
+                new_x = new_geometry.x + new_geometry.width;
+            }
+            if (active_ie.geometry.y != new_geometry.y) {
+                new_y += (new_geometry.y - active_ie.geometry.y);
+            }
+        } else if (mascot_is_on_ie_top(mascot) && (active_ie.geometry.y != environment_workarea_top(env))) {
+            if (y != new_geometry.y) {
+                new_y = new_geometry.y;
+            }
+            if (active_ie.geometry.x != new_geometry.x) {
+                new_x += (new_geometry.x - active_ie.geometry.x);
+            }
+        } else if (mascot_is_on_ie_bottom(mascot) && (active_ie.geometry.y+active_ie.geometry.height != environment_workarea_bottom(env))) {
+            if (y != new_geometry.y + new_geometry.height) {
+                new_y = new_geometry.y + new_geometry.height;
+            }
+            if (active_ie.geometry.x != new_geometry.x) {
+                new_x += (new_geometry.x - active_ie.geometry.x);
+            }
+        }
+
+        if (abs(new_x - x) > 25 || abs(new_y - y) > 25) {
+            mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            continue;
+        }
+
+        mascot_moved(mascot, new_x, yconv(env, new_y));
+        mascot->TargetX->value.i += new_x - x;
+        mascot->TargetY->value.i += yconv(env, new_y) - yconv(env, y);
+
+        mascot->subsurface->interpolation_data.new_x = new_x;
+        mascot->subsurface->interpolation_data.new_y = new_y;
+        mascot->subsurface->interpolation_data.prev_x = x;
+        mascot->subsurface->interpolation_data.prev_y = y;
+        mascot->subsurface->interpolation_data.x = x;
+        mascot->subsurface->interpolation_data.y = y;
+    }
+}
+
+void environment_set_active_ie(bool is_active, struct bounding_box geometry)
+{
+    active_ie.is_active = is_active;
+    active_ie.geometry = geometry;
+    active_ie.geometry.type = OUTER_COLLISION;
+}
+
+struct bounding_box environment_get_active_ie(environment_t *environment)
+{
+    if (!environment) return (struct bounding_box){0};
+    if (!environment->is_ready) return (struct bounding_box){0};
+    if (!active_ie.is_active) return (struct bounding_box){0};
+
+    if (!config_get_unified_outputs()) {
+        if (!bounding_boxes_intersect(&environment->global_geometry, &active_ie.geometry, NULL)) return (struct bounding_box){0};
+    }
+    return (struct bounding_box){
+        .type = OUTER_COLLISION,
+        .x = active_ie.geometry.x - environment->global_geometry.x,
+        .y = active_ie.geometry.y - environment->global_geometry.y,
+        .width = active_ie.geometry.width,
+        .height = active_ie.geometry.height
+    };
+}
+
+bool environment_ie_is_active()
+{
+    return active_ie.is_active;
 }

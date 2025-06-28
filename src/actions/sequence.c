@@ -30,7 +30,7 @@ enum mascot_tick_result sequence_action_init(struct mascot *mascot, struct masco
     DEBUG("<Mascot:%s:%u> Sequence action \"%s\" init", mascot->prototype->name, mascot->id, actionref->action->name);
 
     // Check if action border requirements are met
-    enum environment_border_type border_type = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+    enum environment_border_type border_type = mascot_get_border_type(mascot);
     if (actionref->action->border_type != environment_border_type_any) {
         if (
             border_type

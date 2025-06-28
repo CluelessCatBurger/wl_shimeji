@@ -198,7 +198,7 @@ struct mascot_action_next fallwithie_action_next(struct mascot* mascot, struct m
     struct mascot_action_next result = {0};
     result.next_action = *actionref;
 
-    enum environment_border_type btype = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+    enum environment_border_type btype = mascot_get_border_type(mascot);
 
     if (btype == environment_border_type_wall) {
         result.status = mascot_tick_next;

@@ -19,6 +19,7 @@
 
 #include "fall.h"
 #include "actionbase.h"
+#include "mascot.h"
 #include <stdint.h>
 
 enum mascot_tick_result fall_action_init(struct mascot *mascot, struct mascot_action_reference *actionref, uint32_t tick)
@@ -81,14 +82,14 @@ enum mascot_tick_result fall_action_init(struct mascot *mascot, struct mascot_ac
             return mascot_tick_next;
         }
     } else {
-        if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) != environment_border_type_none) {
+        if (mascot_get_border_type(mascot) != environment_border_type_none) {
             fall_action_clean(mascot);
             return mascot_tick_next;
         }
     }
 
     if (mascot->InitialVelX->value.f == 0.0) {
-        if (environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i) == environment_border_type_wall) {
+        if (mascot_get_border_type(mascot) == environment_border_type_wall) {
             fall_action_clean(mascot);
             return mascot_tick_next;
         }
@@ -176,7 +177,7 @@ struct mascot_action_next fall_action_next(struct mascot* mascot, struct mascot_
     struct mascot_action_next result = {0};
     result.next_action = *actionref;
 
-    enum environment_border_type btype = environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i);
+    enum environment_border_type btype = mascot_get_border_type(mascot);
 
     if (btype == environment_border_type_wall) {
         result.status = mascot_tick_next;

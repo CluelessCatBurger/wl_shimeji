@@ -148,6 +148,29 @@ static void env_delete(environment_t* environment)
     environment_unlink(environment);
 }
 
+static void set_cursor_pos(int32_t x, int32_t y)
+{
+    environment_set_public_cursor_position(NULL, x, y);
+}
+
+static void set_active_ie(bool is_active, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+    struct bounding_box bb = {
+        .type = OUTER_COLLISION,
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height
+    };
+    pthread_mutex_lock(&server_state.environment_mutex);
+    for (uint32_t i = 0; i < list_size(server_state.environments); i++) {
+        environment_t* environment = list_get(server_state.environments, i);
+        if (!environment) continue;
+        environment_recalculate_ie_attachement(environment, is_active, bb);
+    }
+    pthread_mutex_unlock(&server_state.environment_mutex);
+    environment_set_active_ie(is_active, bb);
+}
 
 static environment_t* find_env_by_coords(int32_t x, int32_t y)
 {
@@ -352,6 +375,7 @@ void* mascot_manager_thread(void* arg)
             environment_commit(environment);
         }
         pthread_mutex_unlock(&server_state.environment_mutex);
+        plugins_tick();
         // for (int32_t i = 0; i < 32; i++) {
         //     if (!plugins[i]) break;
         //     plugin_tick(plugins[i]);
@@ -626,7 +650,11 @@ int main(int argc, const char** argv)
 
     environment_set_broadcast_input_enabled_listener(broadcast_input_enabled_listener);
 
-    UNUSED(disable_plugins);
+    // UNUSED(disable_plugins);
+    if (!disable_plugins) {
+        plugins_init(plugins_location, set_cursor_pos, set_active_ie);
+    }
+    else INFO("Plugins are disabled");
 
     // Load mascot prototypes
     mascot_prototype_store_set_location(server_state.prototypes, server_state.prototypes_location);
@@ -805,8 +833,9 @@ int main(int argc, const char** argv)
         if (!fds_count && !mascot_total_count) {
             break;
         }
-
     }
+
+    plugins_deinit();
     close(listen_fd);
     close(inhereted_fd);
     close(epfd);

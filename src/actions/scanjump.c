@@ -80,7 +80,7 @@ struct mascot_action_next scanjump_action_next(struct mascot* mascot, struct mas
     // Ensure border conditions are still met
     if (actionref->action->border_type != environment_border_type_any) {
         if (
-            environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i)
+            mascot_get_border_type(mascot)
             != actionref->action->border_type
         ) {
             result.status = mascot_tick_next;

@@ -31,7 +31,7 @@ enum mascot_tick_result selector_action_init(struct mascot *mascot, struct masco
     // Check if action border requirements are met
     if (actionref->action->border_type != environment_border_type_any) {
         if (
-            environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i)
+            mascot_get_border_type(mascot)
             != actionref->action->border_type
         ) return mascot_tick_next;
     }
@@ -99,7 +99,7 @@ struct mascot_action_next selector_action_next(struct mascot *mascot, struct mas
         // Check borders first
         if (subactionref.action->border_type != environment_border_type_any) {
             if (
-                environment_get_border_type(mascot->environment, mascot->X->value.i, mascot->Y->value.i)
+                mascot_get_border_type(mascot)
                 != subactionref.action->border_type
             ) continue;
         }
