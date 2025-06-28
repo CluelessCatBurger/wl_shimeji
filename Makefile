@@ -4,7 +4,7 @@ override BUILDDIR := build
 override UTILS_DIR := utils
 override ASSETS_DIR := assets
 override TARGET = $(BUILDDIR)/shimeji-overlayd
-override PLUGINS_TARGET = $(BUILDDIR)/libpluginsupport.so
+override PLUGINS_TARGET = $(BUILDDIR)/libwayland-shimeji-plugins.so
 
 override PYTHON3 := $(shell which python3)
 
@@ -48,8 +48,7 @@ override OBJS := $(OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 override DEPS := $(OBJS:.o=.d)
 override DIRS := $(sort $(BUILDDIR) $(dir $(OBJS)))
 
-override PLUGINS_SRC := src/environment.c src/mascot.c src/expressions.c src/utils.c src/plugins.c src/config.c \
-	$(WL_HEADERS:.h=.c)
+override PLUGINS_SRC := src/plugins.c src/utils.c
 override PLUGINS_OBJS := $(PLUGINS_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 override PLUGINS_OBJS := $(PLUGINS_OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 
@@ -84,7 +83,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
 $(PLUGINS_TARGET): $(PLUGINS_OBJS)
-	$(CC) $(CFLAGS) $(PLUGINS_SRC) -DPLUGINSUPPORT_IMPLEMENTATION -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
+	$(CC) $(CFLAGS) $(PLUGINS_SRC) -DBUILD_PLUGIN_SUPPORT -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
@@ -105,11 +104,6 @@ all: $(TARGET) $(PLUGINS_TARGET) $(UTILS_DIR)/shimejictl
 clean:
 	@-rm -rf $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR) $(UTILS_DIR)/shimejictl $(UTILS_DIR)
 
-.PHONY: install_plugins
-install_plugins:
-	install -d $(DESTDIR)$(PREFIX)/lib/
-	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
-
 .PHONY: install
 install: $(UTILS_DIR)/shimejictl
 	install -d $(DESTDIR)$(PREFIX)/bin/
@@ -118,6 +112,8 @@ install: $(UTILS_DIR)/shimejictl
 	install -d $(DESTDIR)$(PREFIX)/share/systemd/user/
 	install -m644 systemd/wl_shimeji.socket $(DESTDIR)$(PREFIX)/share/systemd/user/
 	install -m644 systemd/wl_shimeji.service $(DESTDIR)$(PREFIX)/share/systemd/user/
+	install -d $(DESTDIR)$(PREFIX)/lib/
+	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
