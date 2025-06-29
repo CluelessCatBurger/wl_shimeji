@@ -9,7 +9,6 @@ override PLUGINS_DIR := $(SRCDIR)/plugins
 override PLUGINS_OUT_DIR := $(BUILDDIR)/plugins
 
 override PLUGINS_SUBDIRS := $(notdir $(wildcard $(PLUGINS_DIR)/*))
-
 override PYTHON3 := $(shell which python3)
 
 PREFIX ?= /usr/local
@@ -88,12 +87,12 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
 $(PLUGINS_LIB): $(PLUGINS_LIB_OBJS)
 	$(CC) $(CFLAGS) $(PLUGINS_LIB_SRC) -DBUILD_PLUGIN_SUPPORT -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_LIB)
 
-$(PLUGINS_SUBDIRS):
+$(PLUGINS_SUBDIRS): $(PLUGINS_LIB)
 	@echo "-> Building plugin $@..."
-	@$(MAKE) -C $(PLUGINS_DIR)/$@ BUILDDIR="$(BUILDDIR)" PLUGINS_OUT_DIR="$(PLUGINS_OUT_DIR)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)"
+	$(MAKE) -s -C $(PLUGINS_DIR)/$@ BUILDDIR="$(BUILDDIR)" PLUGINS_OUT_DIR="$(PLUGINS_OUT_DIR)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS) -L$(BUILDDIR)"
 
-.PHONY: plugins
-plugins: $(PLUGINS_SUBDIRS)
+.PHONY: build_plugins
+build_plugins: $(PLUGINS_SUBDIRS)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
@@ -101,20 +100,20 @@ $(TARGET): $(OBJS)
 
 # Rule to build shimejictl
 $(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/client.py
-	mkdir utils
+	@mkdir utils
 	$(PYTHON3) scripts/py-compose.py -s $< -o $@
 
 $(SRC): protocols-autogen
 
 .PHONY: all
-all: $(TARGET) $(PLUGINS_LIB) $(UTILS_DIR)/shimejictl plugins
+all: $(TARGET) $(PLUGINS_LIB) $(UTILS_DIR)/shimejictl
 
 .PHONY: clean
 clean:
 	@-rm -rf $(TARGET) $(PLUGINS_LIB) $(BUILDDIR) $(UTILS_DIR)/shimejictl $(UTILS_DIR)
 
 .PHONY: install
-install: $(UTILS_DIR)/shimejictl
+install: all
 	install -d $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/
 	install -m755 $(UTILS_DIR)/shimejictl $(DESTDIR)$(PREFIX)/bin/shimejictl
@@ -123,6 +122,9 @@ install: $(UTILS_DIR)/shimejictl
 	install -m644 systemd/wl_shimeji.service $(DESTDIR)$(PREFIX)/share/systemd/user/
 	install -d $(DESTDIR)$(PREFIX)/lib/
 	install -m755 $(PLUGINS_LIB) $(DESTDIR)$(PREFIX)/lib/
+
+.PHONY: install-plugins
+install_plugins: build_plugins
 	install -d $(DESTDIR)$(PREFIX)/lib/wl_shimeji/
 	install -m 0755 "$(PLUGINS_OUT_DIR)/"*.so "$(DESTDIR)$(PREFIX)/lib/wl_shimeji/"
 
