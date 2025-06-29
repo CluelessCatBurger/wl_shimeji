@@ -66,7 +66,7 @@
 #endif
 
 #ifndef DEFAULT_PLUGINS_PATH
-#define DEFAULT_PLUGINS_PATH "/usr/lib/wl_shimeji/plugins"
+#define DEFAULT_PLUGINS_PATH "/usr/lib/wl_shimeji/"
 #endif
 
 #ifndef DEFAULT_CONFIG_FILE_PATH

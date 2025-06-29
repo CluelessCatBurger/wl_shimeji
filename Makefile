@@ -1,10 +1,14 @@
 
-override SRCDIR := src
-override BUILDDIR := build
-override UTILS_DIR := utils
-override ASSETS_DIR := assets
+override SRCDIR := $(abspath src)
+override BUILDDIR := $(abspath build)
+override UTILS_DIR := $(abspath utils)
 override TARGET = $(BUILDDIR)/shimeji-overlayd
-override PLUGINS_TARGET = $(BUILDDIR)/libwayland-shimeji-plugins.so
+override PLUGINS_LIB = $(BUILDDIR)/libwayland-shimeji-plugins.so
+
+override PLUGINS_DIR := $(SRCDIR)/plugins
+override PLUGINS_OUT_DIR := $(BUILDDIR)/plugins
+
+override PLUGINS_SUBDIRS := $(notdir $(wildcard $(PLUGINS_DIR)/*))
 
 override PYTHON3 := $(shell which python3)
 
@@ -48,9 +52,8 @@ override OBJS := $(OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
 override DEPS := $(OBJS:.o=.d)
 override DIRS := $(sort $(BUILDDIR) $(dir $(OBJS)))
 
-override PLUGINS_SRC := src/plugins.c src/utils.c
-override PLUGINS_OBJS := $(PLUGINS_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
-override PLUGINS_OBJS := $(PLUGINS_OBJS:$(WL_PROTO_DIR)/%.c=$(WL_PROTO_DIR)/%.o)
+override PLUGINS_LIB_SRC := src/plugins.c src/utils.c
+override PLUGINS_LIB_OBJS := $(PLUGINS_LIB_SRC:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 
 override _ := $(shell mkdir -p $(DIRS))
 
@@ -82,8 +85,15 @@ $(WL_PROTO_DIR)/%.o: $(WL_PROTO_DIR)/%.c Makefile
 $(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
-$(PLUGINS_TARGET): $(PLUGINS_OBJS)
-	$(CC) $(CFLAGS) $(PLUGINS_SRC) -DBUILD_PLUGIN_SUPPORT -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_TARGET)
+$(PLUGINS_LIB): $(PLUGINS_LIB_OBJS)
+	$(CC) $(CFLAGS) $(PLUGINS_LIB_SRC) -DBUILD_PLUGIN_SUPPORT -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_LIB)
+
+$(PLUGINS_SUBDIRS):
+	@echo "-> Building plugin $@..."
+	@$(MAKE) -C $(PLUGINS_DIR)/$@ BUILDDIR="$(BUILDDIR)" PLUGINS_OUT_DIR="$(PLUGINS_OUT_DIR)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)"
+
+.PHONY: plugins
+plugins: $(PLUGINS_SUBDIRS)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
@@ -95,14 +105,13 @@ $(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/client.py
 	$(PYTHON3) scripts/py-compose.py -s $< -o $@
 
 $(SRC): protocols-autogen
-$(PLUGINS_SRC): protocols-autogen
 
 .PHONY: all
-all: $(TARGET) $(PLUGINS_TARGET) $(UTILS_DIR)/shimejictl
+all: $(TARGET) $(PLUGINS_LIB) $(UTILS_DIR)/shimejictl plugins
 
 .PHONY: clean
 clean:
-	@-rm -rf $(TARGET) $(PLUGINS_TARGET) $(BUILDDIR) $(UTILS_DIR)/shimejictl $(UTILS_DIR)
+	@-rm -rf $(TARGET) $(PLUGINS_LIB) $(BUILDDIR) $(UTILS_DIR)/shimejictl $(UTILS_DIR)
 
 .PHONY: install
 install: $(UTILS_DIR)/shimejictl
@@ -113,7 +122,9 @@ install: $(UTILS_DIR)/shimejictl
 	install -m644 systemd/wl_shimeji.socket $(DESTDIR)$(PREFIX)/share/systemd/user/
 	install -m644 systemd/wl_shimeji.service $(DESTDIR)$(PREFIX)/share/systemd/user/
 	install -d $(DESTDIR)$(PREFIX)/lib/
-	install -m755 $(PLUGINS_TARGET) $(DESTDIR)$(PREFIX)/lib/
+	install -m755 $(PLUGINS_LIB) $(DESTDIR)$(PREFIX)/lib/
+	install -d $(DESTDIR)$(PREFIX)/lib/wl_shimeji/
+	install -m 0755 "$(PLUGINS_OUT_DIR)/"*.so "$(DESTDIR)$(PREFIX)/lib/wl_shimeji/"
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
