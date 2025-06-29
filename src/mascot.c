@@ -1126,21 +1126,9 @@ void mascot_build_behavior_pool(struct mascot* mascot, const struct mascot_behav
             continue;
         }
         if (behavior_ref->frequency == 0) continue;
-        if (behavior_ref->behavior->action->type == mascot_action_type_sequence) {
-            if (behavior_ref->behavior->action->content[0].kind == mascot_action_content_type_action) {
-                if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->content[0].value.action->border_type && behavior_ref->behavior->action->content[0].value.action->border_type != environment_border_type_any) {
-                    continue;
-                }
-            } else if (behavior_ref->behavior->action->content[0].kind == mascot_action_content_type_action_reference) {
-                if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->content[0].value.action_reference->action->border_type && behavior_ref->behavior->action->content[0].value.action_reference->action->border_type != environment_border_type_any) {
-                    continue;
-                }
-            }
-        } else {
-            if (behavior_ref->behavior->action->border_type != environment_border_type_any) {
-                if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->border_type) {
-                    continue;
-                }
+        if (behavior_ref->behavior->action->border_type != environment_border_type_any) {
+            if (mascot_get_border_type(mascot) != behavior_ref->behavior->action->border_type) {
+                continue;
             }
         }
         enum mascot_tick_result cond_res = mascot_check_condition(mascot, behavior_ref->behavior->condition);
