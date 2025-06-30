@@ -3931,6 +3931,8 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
         int32_t new_x = x;
         int32_t new_y = y;
 
+        if (check_collision_at(&env->workarea_geometry, x, y, 0)) continue;
+
         if (mascot_is_on_ie_left(mascot) && (active_ie.geometry.x != environment_workarea_left(env))) {
             if (x != new_geometry.x) {
                 new_x = new_geometry.x;
@@ -3961,7 +3963,7 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
             }
         }
 
-        if (abs(new_x - x) > 25 || abs(new_y - y) > 25) {
+        if (abs(new_x - x) > 50 || abs(new_y - y) > 50) {
             mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
             continue;
         }
@@ -3970,12 +3972,12 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
         mascot->TargetX->value.i += new_x - x;
         mascot->TargetY->value.i += yconv(env, new_y) - yconv(env, y);
 
-        mascot->subsurface->interpolation_data.new_x = new_x;
-        mascot->subsurface->interpolation_data.new_y = new_y;
-        mascot->subsurface->interpolation_data.prev_x = x;
-        mascot->subsurface->interpolation_data.prev_y = y;
-        mascot->subsurface->interpolation_data.x = x;
-        mascot->subsurface->interpolation_data.y = y;
+        // mascot->subsurface->interpolation_data.new_x = new_x;
+        // mascot->subsurface->interpolation_data.new_y = new_y;
+        // mascot->subsurface->interpolation_data.prev_x = x;
+        // mascot->subsurface->interpolation_data.prev_y = y;
+        // mascot->subsurface->interpolation_data.x = x;
+        // mascot->subsurface->interpolation_data.y = y;
     }
 }
 
