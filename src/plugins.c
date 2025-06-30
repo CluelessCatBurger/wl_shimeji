@@ -179,6 +179,8 @@ int plugins_tick()
 {
     plugin_t** p;
 
+    if (!plugins) return 0;
+
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
         p=(plugin_t**)utarray_next(plugins, p))
@@ -215,6 +217,8 @@ int plugins_tick()
 int plugins_deinit()
 {
     plugin_t** p;
+
+    if (!plugins) return 0;
 
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
