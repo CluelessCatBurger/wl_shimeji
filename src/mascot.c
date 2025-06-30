@@ -307,6 +307,11 @@ enum action_set_result mascot_set_action_internal(struct mascot* mascot, struct 
         mascot->action_index_stack[mascot->as_p++] = action_index;
     }
 
+    int32_t wall_direction = mascot_get_wall_direction(mascot);
+    if (wall_direction != -1) {
+        mascot->LookingRight->value.i = wall_direction;
+    }
+
     enum mascot_tick_result res = init(mascot, actionref, tick);
 
     if (res == mascot_tick_error) return ACTION_SET_ERROR;
@@ -1395,4 +1400,29 @@ enum environment_border_type mascot_get_border_type(struct mascot* mascot)
     }
 
     return border;
+}
+
+/*
+ * If mascot is on wall, return the facing direction of the wall
+ * Possible return values:
+ * -1 - direction should remain unchanged (mascot not on the wall)
+ * 0 - direction is LEFT
+ * 1 - direction is RIGHT
+ */
+int32_t mascot_get_wall_direction(struct mascot* mascot)
+{
+    if (!mascot) return -1;
+    enum environment_border_type border = mascot_get_border_type(mascot);
+    if (border != environment_border_type_wall) return -1;
+
+    struct bounding_box ie_bb = environment_get_active_ie(mascot->environment);
+    struct bounding_box* env_bb = environment_local_geometry(mascot->environment);
+
+    if (mascot->X->value.i == env_bb->x) return 0;
+    if (mascot->X->value.i == env_bb->x + env_bb->width) return 1;
+    if (environment_ie_is_active()) {
+        if (mascot->X->value.i == ie_bb.x) return 1;
+        if (mascot->X->value.i == ie_bb.x + ie_bb.width) return 0;
+    }
+    return -1;
 }

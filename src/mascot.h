@@ -575,5 +575,6 @@ bool mascot_is_on_ie_left(struct mascot* mascot);
 bool mascot_is_on_ie_right(struct mascot* mascot);
 
 enum environment_border_type mascot_get_border_type(struct mascot* mascot);
+int32_t mascot_get_wall_direction(struct mascot* mascot);
 
 #endif
