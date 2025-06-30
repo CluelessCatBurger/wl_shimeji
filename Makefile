@@ -1,7 +1,7 @@
 
-override SRCDIR := $(abspath src)
-override BUILDDIR := $(abspath build)
-override UTILS_DIR := $(abspath utils)
+override SRCDIR := src
+override BUILDDIR := build
+override UTILS_DIR := utils
 override TARGET = $(BUILDDIR)/shimeji-overlayd
 override PLUGINS_LIB = $(BUILDDIR)/libwayland-shimeji-plugins.so
 
@@ -13,7 +13,7 @@ override PYTHON3 := $(shell which python3)
 
 PREFIX ?= /usr/local
 
-override CFLAGS  += -I$(SRCDIR) -I$(BUILDDIR) -Wall -Wextra -fno-strict-aliasing
+override CFLAGS  += -I$(abspath $(SRCDIR)) -I$(abspath $(BUILDDIR)) -Wall -Wextra -fno-strict-aliasing
 override CFLAGS  += $(shell pkg-config --cflags wayland-client)
 override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor libarchive --libs) -lm
 
@@ -89,7 +89,7 @@ $(PLUGINS_LIB): $(PLUGINS_LIB_OBJS)
 
 $(PLUGINS_SUBDIRS): $(PLUGINS_LIB)
 	@echo "-> Building plugin $@..."
-	$(MAKE) -s -C $(PLUGINS_DIR)/$@ BUILDDIR="$(BUILDDIR)" PLUGINS_OUT_DIR="$(PLUGINS_OUT_DIR)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS) -L$(BUILDDIR)"
+	$(MAKE) -s -C $(PLUGINS_DIR)/$@ BUILDDIR="$(abspath $(BUILDDIR))" PLUGINS_OUT_DIR="$(abspath $(PLUGINS_OUT_DIR))" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS) -L$(abspath $(BUILDDIR))"
 
 .PHONY: build_plugins
 build_plugins: $(PLUGINS_SUBDIRS)
