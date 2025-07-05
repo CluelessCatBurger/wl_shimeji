@@ -21,7 +21,6 @@
 #define PLUGINS_H
 
 #include "master_header.h"
-#include "utils.h"
 
 typedef struct plugin plugin_t;
 
