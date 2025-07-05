@@ -3920,18 +3920,20 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
     for (uint32_t i = 0; i < env->mascot_manager.referenced_mascots->entry_count; i++) {
         struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
         if (!mascot) continue;
-        if (!mascot_is_on_ie(mascot)) continue;
-        if (!is_active) {
-            mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
-            continue;
-        }
 
         int32_t x = mascot->X->value.i;
         int32_t y = yconv(env, mascot->Y->value.i);
         int32_t new_x = x;
         int32_t new_y = y;
 
-        if (check_collision_at(&env->workarea_geometry, x, y, 0)) continue;
+        if (!mascot_is_on_ie(mascot)) continue;
+        if (check_collision_at(&env->workarea_geometry, x, y, 0)) {
+            continue;
+        }
+        if (!is_active) {
+            mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+            continue;
+        }
 
         if (mascot_is_on_ie_left(mascot) && (active_ie.geometry.x != environment_workarea_left(env))) {
             if (x != new_geometry.x) {
@@ -3963,7 +3965,7 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
             }
         }
 
-        if (abs(new_x - x) > 50 || abs(new_y - y) > 50) {
+        if (abs(new_x - x) > 25 || abs(new_y - y) > 25) {
             mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
             continue;
         }
@@ -3972,12 +3974,17 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
         mascot->TargetX->value.i += new_x - x;
         mascot->TargetY->value.i += yconv(env, new_y) - yconv(env, y);
 
-        // mascot->subsurface->interpolation_data.new_x = new_x;
-        // mascot->subsurface->interpolation_data.new_y = new_y;
-        // mascot->subsurface->interpolation_data.prev_x = x;
-        // mascot->subsurface->interpolation_data.prev_y = y;
-        // mascot->subsurface->interpolation_data.x = x;
-        // mascot->subsurface->interpolation_data.y = y;
+        if (!config_get_interpolation_framerate()) {
+            environment_subsurface_reset_interpolation(mascot->subsurface);
+            environment_subsurface_set_position(mascot->subsurface, new_x, new_y);
+        } else {
+            mascot->subsurface->interpolation_data.new_x = new_x;
+            mascot->subsurface->interpolation_data.new_y = new_y;
+            mascot->subsurface->interpolation_data.prev_x = x;
+            mascot->subsurface->interpolation_data.prev_y = y;
+            mascot->subsurface->interpolation_data.x = x;
+            mascot->subsurface->interpolation_data.y = y;
+        }
     }
 }
 
