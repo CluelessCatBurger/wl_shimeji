@@ -13,10 +13,16 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
 ## Build requirements
 - libwayland-client:
   - Arch: `pacman -S wayland`
+  - Debian: `apt-get install libwayland-dev libwayland-bin`
 - wayland-protocols:
   - Arch: `pacman -S wayland-protocols`
+  - Debian: ??? You can manually clone wayland-protocols and then specify it path by setting WAYLAND_PROTOCOLS_DIR to wayland-protocols' absolute path
 - libarchive:
   - Arch: `pacman -S libarchive`
+  - Debian: `apt-get install libarchive-dev`
+- uthash:
+  - Arch: `pacman -S uthash`
+  - Debian: `apt-get install libuthash-dev`
 
 
 ## Runtime requirements

@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo DEBIAN_FRONTEND=noninteractive apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install libwayland-dev libwayland-bin libarchive-dev
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install libwayland-dev libwayland-bin libarchive-dev uthash-dev
       - name: Clone wayland-protocols from gitlab
         run: |
           git clone https://gitlab.freedesktop.org/wayland/wayland-protocols --branch 1.40
