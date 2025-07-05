@@ -50,6 +50,42 @@ make -j$(nproc)
 make install
 ```
 
+# Plugins
+
+You can also build plugins (everything in src/plugins subdirectories).
+Plugins are optional, but can provide such features as:
+- Interactions with other applications' windows
+- Get global mouse position
+
+Currently mascots can't move windows as it is not supported by wl_shimeji.
+
+Currently we have following plugins:
+- src/plugins/kwinsupport - KDE integration using it's scripting API
+
+## Dependencies for plugins
+
+- KwinSupport:
+  - libsystemd (for dbus):
+    - Arch: `pacman -S libsystemd`
+    - Debian: `apt-get install libsystemd-dev`
+  - uthash:
+    - Arch: `pacman -S uthash`
+    - Debian: `apt-get install libuthash-dev`
+  - libwayland-shimeji-plugins (supplied by wl_shimeji)
+  - wl_shimeji should run under with XDG_CURRENT_DESKTOP set to "KDE" and org.kde.KWin must be present on session bus
+
+## Building plugins
+
+```sh
+make build-plugins -j$(nproc)
+```
+
+## Installing plugins
+
+```sh
+make install-plugins
+```
+
 # How to use
 
 ## Converting to wl_shimeji format
@@ -229,23 +265,6 @@ All parameters except max number and IE Throw Policy is booleans.
 IE Throw Policy and max number is integers.
 
 I will not explain possible values for IE Throw Policy for now.
-
-## Plugins
-
-Plugins is a way to provide non-portable ways to interact with the environment.
-It can be used for:
-- Getting cursor position
-- Informations about active window
-- Moving windows
-
-Currently I have 1 experimental plugin that implements all of the above for kwin_wayland compositor, I don't recommend to use it though.
-If you want to risk, you can compile it with following command:
-
-  ```sh
-    gcc -I./build src/plugins/kwinsupport.c -shared -fPIC -lpluginsupport -lsystemd -o kwinsupport.so
-  ```
-
-Compiled plugins should be placed in the plugins/ directory (relative to the configuration directory).
 
 ## TODO LIST:
 

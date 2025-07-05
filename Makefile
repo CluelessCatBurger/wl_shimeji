@@ -91,8 +91,8 @@ $(PLUGINS_SUBDIRS): $(PLUGINS_LIB)
 	@echo "-> Building plugin $@..."
 	$(MAKE) -s -C $(PLUGINS_DIR)/$@ BUILDDIR="$(abspath $(BUILDDIR))" PLUGINS_OUT_DIR="$(abspath $(PLUGINS_OUT_DIR))" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS) -L$(abspath $(BUILDDIR))"
 
-.PHONY: build_plugins
-build_plugins: $(PLUGINS_SUBDIRS)
+.PHONY: build-plugins
+build-plugins: $(PLUGINS_SUBDIRS)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
@@ -124,7 +124,7 @@ install: all
 	install -m755 $(PLUGINS_LIB) $(DESTDIR)$(PREFIX)/lib/
 
 .PHONY: install-plugins
-install_plugins: build_plugins
+install-plugins: build-plugins
 	install -d $(DESTDIR)$(PREFIX)/lib/wl_shimeji/
 	install -m 0755 "$(PLUGINS_OUT_DIR)/"*.so "$(DESTDIR)$(PREFIX)/lib/wl_shimeji/"
 
