@@ -72,7 +72,7 @@ Currently we have following plugins:
     - Arch: `pacman -S uthash`
     - Debian: `apt-get install libuthash-dev`
   - libwayland-shimeji-plugins (supplied by wl_shimeji)
-  - wl_shimeji should run under with XDG_CURRENT_DESKTOP set to "KDE" and org.kde.KWin must be present on session bus
+  - wl_shimeji should run with XDG_CURRENT_DESKTOP set to "KDE" and org.kde.KWin must be present on session bus
 
 ## Building plugins
 
