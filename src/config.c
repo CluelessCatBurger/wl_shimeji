@@ -291,8 +291,8 @@ void config_write(const char* path)
     if (config.allow_dragging_multihead != -1) fprintf(file, "allow_dragging_multihead=%s\n", config.allow_dragging_multihead ? "true" : "false");
     if (config.unified_outputs != -1) fprintf(file, "unified_outputs=%s\n", config.unified_outputs ? "true" : "false");
     if (config.prototypes_location) fprintf(file, "prototypes_location=%s\n", config.prototypes_location);
-    if (config.plugins_location) fprintf(file, "prototypes_location=%s\n", config.plugins_location);
-    if (config.socket_location) fprintf(file, "prototypes_location=%s\n", config.socket_location);
+    if (config.plugins_location) fprintf(file, "plugins_location=%s\n", config.plugins_location);
+    if (config.socket_location) fprintf(file, "socket_location=%s\n", config.socket_location);
     if (config.mascot_scale != -1.0f) fprintf(file, "mascot_scale=%f\n", config.mascot_scale);
     if (config.mascot_opacity != -1.0f) fprintf(file, "mascot_opacity=%f\n", config.mascot_opacity);
 

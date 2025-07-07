@@ -582,7 +582,7 @@ int main(int argc, const char** argv)
         strncpy(server_state.configuration_root, configuration_root, PATH_MAX);
         strncpy(server_state.plugins_location, plugins_location, PATH_MAX);
         strncpy(server_state.prototypes_location, prototypes_location, PATH_MAX);
-        strncpy(server_state.configuration_file, plugins_location, PATH_MAX);
+        strncpy(server_state.configuration_file, configuration_file, PATH_MAX);
         pthread_mutex_init(&server_state.environment_mutex, &init_attrs);
         pthread_mutex_init(&server_state.prototypes_mutex, &init_attrs);
         pthread_mutex_init(&server_state.clients_mutex, &init_attrs);
