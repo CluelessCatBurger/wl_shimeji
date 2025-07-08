@@ -139,6 +139,7 @@ void protocol_init()
     common_requests[0x51] = protocol_handler_get_config_key;
     common_requests[0x52] = protocol_handler_set_config_key;
     common_requests[0x53] = protocol_handler_list_config_keys;
+    common_requests[0x2F] = protocol_handler_plugin_restore_windows;
 }
 
 struct protocol_client* protocol_accept_connection(ipc_connector_t *connector)

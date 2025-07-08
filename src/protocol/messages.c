@@ -4,6 +4,7 @@
 #include "mascot.h"
 #include "mascot_config_parser.h"
 #include "physics.h"
+#include "plugins.h"
 #include "protocol/connector.h"
 #include "protocol/server.h"
 #include <master_header.h>
@@ -856,7 +857,15 @@ bool protocol_handler_environment_close(struct protocol_client* client, ipc_pack
 }
 
 // bool protocol_handler_plugin_set_policy(struct protocol_client* client, ipc_packet_t* packet);
-// bool protocol_handler_plugin_restore_windows(struct protocol_client* client, ipc_packet_t* packet);
+bool protocol_handler_plugin_restore_windows(struct protocol_client* client, ipc_packet_t* packet)
+{
+    UNUSED(packet);
+    UNUSED(client);
+
+    plugins_restore_ies();
+
+    return true;
+}
 // bool protocol_handler_plugin_deactivate(struct protocol_client* client, ipc_packet_t* packet);
 // bool protocol_handler_plugin_activate(struct protocol_client* client, ipc_packet_t* packet);
 bool protocol_handler_selection_cancel(struct protocol_client* client, ipc_packet_t* packet)
