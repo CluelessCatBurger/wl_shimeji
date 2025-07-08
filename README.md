@@ -14,16 +14,19 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
 - libwayland-client:
   - Arch: `pacman -S wayland`
   - Debian: `apt-get install libwayland-dev libwayland-bin`
+  - Fedora: `dnf install libwayland-client wayland-devel`
 - wayland-protocols:
   - Arch: `pacman -S wayland-protocols`
   - Debian: ??? You can manually clone wayland-protocols and then specify it path by setting WAYLAND_PROTOCOLS_DIR to wayland-protocols' absolute path
+  - Fedora: `dnf install wayland-protocols-devel` 
 - libarchive:
   - Arch: `pacman -S libarchive`
   - Debian: `apt-get install libarchive-dev`
+  - Fedora: `dnf install libarchive-devel` 
 - uthash:
   - Arch: `pacman -S uthash`
   - Debian: `apt-get install libuthash-dev`
-
+  - Fedora: `dnf install uthash-devel`
 
 ## Runtime requirements
 Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, and provide wl_subcompositor interface.
@@ -31,6 +34,7 @@ Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, 
 ## Shimejictl requirements
 - python-pillow
   - Arch: `pacman -S python-pillow`
+  - Fedora: `dnf install python3-pillow`
 - python >= 3.10
 
 # Installing
@@ -68,9 +72,11 @@ Currently we have following plugins:
   - libsystemd (for dbus):
     - Arch: `pacman -S libsystemd`
     - Debian: `apt-get install libsystemd-dev`
+    - Fedora: `dnf install systemd-devel`
   - uthash:
     - Arch: `pacman -S uthash`
     - Debian: `apt-get install libuthash-dev`
+    - Fedora: `dnf install uthash-devel` 
   - libwayland-shimeji-plugins (supplied by wl_shimeji)
   - wl_shimeji should run with XDG_CURRENT_DESKTOP set to "KDE" and org.kde.KWin must be present on session bus
 
