@@ -726,3 +726,9 @@ class Stop(Packet):
         Packet.__init__(self, self.type, 0, 0, b'')
 
 class PrototypeWithdraw(Packet): ...
+
+class PluginRestoreWindows(Packet):
+    type: int = 0x2F
+
+    def __init__(self):
+        Packet.__init__(self, self.type, 0, 0, b'')

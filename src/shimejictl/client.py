@@ -25,7 +25,7 @@ import logging
 
 from ipc_protocol import Packet,\
 ServerHello, ClientHello, Notice, StartSession, EnvironmentAnnouncement, EnvironmentChanged, EnvironmentMascot, EnvironmentWithdrawn, StartPrototype, PrototypeName, PrototypeDisplayName, PrototypePath, PrototypeFD, PrototypeAddAction, PrototypeAddBehavior, PrototypeIcon, PrototypeAuthor, PrototypeVersion, CommitPrototypes, MascotMigrated, MascotDisposed, MascotInfo, MascotClicked, SelectionDone, SelectionCancelled, ImportFailed, ImportStarted, ImportFinished, ImportProgress, ExportFailed, ExportFinished, ConfigKey, ClickEventExpired, PrototypeWithdraw, ReloadPrototype, Spawn, MascotGetInfo, MascotInfo, ApplyBehavior, Stop, GetConfigKey, ListConfigKeys, SetConfigKey, ConfigKey, Disconnect,\
-Prototype, Environment, Mascot, Selection, Import, Export,\
+Prototype, Environment, Mascot, Selection, Import, Export, PluginRestoreWindows,\
 objects, prototypes, environments, mascots, active_selection, imports, exports
 
 logger = logging.getLogger(__name__)
@@ -1211,6 +1211,11 @@ def local_config_handler(arguments: argparse.Namespace, parser):
             parser.print_help()
             exit(1)
 
+def plugins_handler(arguments, client, plugins_category):
+    if plugins_category == "restore-windows":
+        packet = PluginRestoreWindows()
+        client.queue_packet(packet)
+
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="CLI client for the wl_shimeji overlay")
     argparser.add_argument("-s", "--socket", help="Path to the shimeji-overlayd socket")
@@ -1340,6 +1345,8 @@ if __name__ == "__main__":
     behavior_setter.add_argument("-i", "--id", help="ID of the mascot to set behavior for. If not specified, selection mechanism will be used")
     behavior_setter.add_argument("behavior_name", help="Behavior(s) to set for the mascot.")
 
+    window_restorer = category.add_parser("restore-windows", help="Restore windows of a mascot")
+
     prototype_exporter = category.add_parser("export", help="Export a prototype")
     prototype_exporter.add_argument("-i", "--name", action="append", help="Name of the prototype to export. Can be specified multiple times.")
     prototype_exporter.add_argument("-o", "--output", action="append", help="Output file path. Should match inputs count or be a directory")
@@ -1466,6 +1473,10 @@ if __name__ == "__main__":
                 arguments.category = "prototypes"
                 arguments.action = "export"
                 prototypes_handler(arguments, client, argparser)
+            case "restore-windows":
+                arguments.category = "plugins"
+                arguments.action = "restore-windows"
+                plugins_handler(arguments, client, "restore-windows")
             case _:
                 argparser.print_help()
                 exit(1)
