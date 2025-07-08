@@ -88,10 +88,6 @@ workspace.windowRemoved.connect((win) => {
   win.closed.disconnect(activeIeChanged);
 });
 
-workspace.windowActivated.connect(() => {
-  activeIeChanged();
-});
-
 workspace.currentDesktopChanged.connect(() => { activeIeChanged() });
 workspace.windowActivated.connect(activeIeChanged);
 

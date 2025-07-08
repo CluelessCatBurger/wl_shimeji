@@ -12,7 +12,7 @@
 
 #include <sys/mman.h>
 
-#define PLUGIN_VERSION "0.0.0"
+#define PLUGIN_VERSION "0.0.1"
 #define KWIN_PLUGIN_NAME "WlShimeji.KWinSupport"
 
 extern const unsigned char _binary_data_js_start[];
@@ -21,6 +21,8 @@ extern const unsigned char _binary_move_js_start[];
 extern const unsigned char _binary_move_js_end[];
 extern const unsigned char _binary_restore_js_start[];
 extern const unsigned char _binary_restore_js_end[];
+
+int main_script_id = -1;
 
 static sd_bus* dbus = NULL;
 
@@ -269,19 +271,19 @@ int wl_shimeji_plugin_init(plugin_t* _self, set_cursor_pos_func set_cursor, set_
     unregister_kwin_plugin(KWIN_PLUGIN_NAME ".move");
     unregister_kwin_plugin(KWIN_PLUGIN_NAME ".restore");
 
-    int32_t script_id = register_kwin_plugin(KWIN_PLUGIN_NAME, _binary_data_js_start, _binary_data_js_end-_binary_data_js_start);
-    if (script_id < 0) {
+    main_script_id = register_kwin_plugin(KWIN_PLUGIN_NAME, _binary_data_js_start, _binary_data_js_end-_binary_data_js_start);
+    if (main_script_id < 0) {
         WARN("[KWinSupport] Failed to register KWin plugin (data)");
         return -1;
     }
 
-    bool started = start_kwin_script(script_id);
+    bool started = start_kwin_script(main_script_id);
     if (!started) {
         WARN("[KWinSupport] Failed to start KWin script");
         return -1;
     }
 
-    return plugin_init(self, "KWinSupport", "0.0.0", "CluelessCatBurger", "Window interaction support for KWin", version_to_i64(WL_SHIMEJI_PLUGIN_TARGET_VERSION));
+    return plugin_init(self, "KWinSupport", PLUGIN_VERSION, "CluelessCatBurger", "Window interaction support for KWin", version_to_i64(WL_SHIMEJI_PLUGIN_TARGET_VERSION));
 }
 
 int wl_shimeji_plugin_tick()
@@ -328,6 +330,11 @@ int wl_shimeji_plugin_deinit() {
         WARN("[KWinSupportPlugin] Failed to unregister KWin plugin (restore)");
         return -1;
     }
+
+    if (main_script_id >= 0) unload_kwin_plugin(main_script_id);
+    if (move_id >= 0) unload_kwin_plugin(move_id);
+    if (restore_id >= 0) unload_kwin_plugin(restore_id);
+
 
     sd_bus_close(dbus);
     sd_bus_unref(dbus);

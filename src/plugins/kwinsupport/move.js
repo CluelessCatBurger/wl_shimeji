@@ -17,7 +17,7 @@ callDBus("com.github.CluelessCatBurger.WlShimeji.KWinSupport", "/", "com.github.
         for (const _win of workspace.stackingOrder) {
           if (_win.internalId.toString() === id) continue;
           if (_win.layer != 2 || _win.minimized || _win.deleted || (_win.desktops.length != 0 && _win.desktops.indexOf(workspace.currentDesktop) == -1)) continue;
-          if (_win.frameGeometry.x >= workspace.workspaceWidth || _win.frameGeometry.y >= workspace.workspaceHeight || _win.frameGeometry.x + _win.frameGeometry.width <= 0 || _win.frameGeometry.y + _win.frameGeometry.height <= 0) continue;
+          if (_win.frameGeometry.x >= (workspace.workspaceWidth + 5) || _win.frameGeometry.y >= (workspace.workspaceHeight) + 5 || _win.frameGeometry.x + _win.frameGeometry.width <= -5 || _win.frameGeometry.y + _win.frameGeometry.height <= -5) continue;
           is_active = !_win.fullScreen;
 
           if (_win.stackingOrder > order) {
