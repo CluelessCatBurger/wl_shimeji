@@ -27,15 +27,20 @@ typedef struct plugin plugin_t;
 // Callbacks
 typedef void (*set_cursor_pos_func)(int32_t, int32_t);
 typedef void (*set_active_ie_func)(bool, int32_t, int32_t, int32_t, int32_t);
+typedef void (*window_moved_hint_func)(void);
 
-typedef int (*init_func)(plugin_t*, set_cursor_pos_func, set_active_ie_func);
+typedef int (*init_func)(plugin_t*, set_cursor_pos_func, set_active_ie_func, window_moved_hint_func);
 typedef int (*tick_func)(plugin_t*);
+typedef int (*move_func)(plugin_t*, int, int);
+typedef int (*restore_func)(plugin_t*);
 typedef void (*deinit_func)(plugin_t*);
 
 #ifndef BUILD_PLUGIN_SUPPORT
-int plugins_init(const char* plugins_search_path, set_cursor_pos_func cursor_cb, set_active_ie_func active_ie_cb); // Loads all plugins from the specified path, initializes them using provided callbacks
+int plugins_init(const char* plugins_search_path, set_cursor_pos_func cursor_cb, set_active_ie_func active_ie_cb, window_moved_hint_func window_moved_hint_cb); // Loads all plugins from the specified path, initializes them using provided callbacks
 int plugins_tick(); // Executes all plugins
 int plugins_deinit(); // Deinitializes all plugins
+int plugins_move_ie(int x, int y);
+int plugins_restore_ies();
 #endif
 
 int plugin_init(plugin_t* self, const char* name, const char* version, const char* author, const char* description, int64_t target_version);

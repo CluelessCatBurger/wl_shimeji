@@ -172,6 +172,16 @@ static void set_active_ie(bool is_active, int32_t x, int32_t y, int32_t width, i
     environment_set_active_ie(is_active, bb);
 }
 
+static void window_moved_hint() {
+    pthread_mutex_lock(&server_state.environment_mutex);
+    for (uint32_t i = 0; i < list_size(server_state.environments); i++) {
+        environment_t* environment = list_get(server_state.environments, i);
+        if (!environment) continue;
+        environment_mascot_detach_ie_movers(environment);
+    }
+    pthread_mutex_unlock(&server_state.environment_mutex);
+}
+
 static environment_t* find_env_by_coords(int32_t x, int32_t y)
 {
     for (uint32_t i = 0, c = list_count(server_state.environments); i < list_size(server_state.environments) && c; i++) {
@@ -652,7 +662,7 @@ int main(int argc, const char** argv)
 
     // UNUSED(disable_plugins);
     if (!disable_plugins) {
-        plugins_init(plugins_location, set_cursor_pos, set_active_ie);
+        plugins_init(plugins_location, set_cursor_pos, set_active_ie, window_moved_hint);
     }
     else INFO("Plugins are disabled");
 

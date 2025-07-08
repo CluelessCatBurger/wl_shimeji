@@ -11,7 +11,7 @@ function activeIeChanged() {
     if (_win.layer != 2 || _win.minimized || _win.deleted || (_win.desktops.length != 0 && _win.desktops.indexOf(workspace.currentDesktop) == -1)) continue;
     is_active = !_win.fullScreen;
 
-    if (_win.stackingOrder > order && is_active) {
+    if (_win.stackingOrder > order) {
       order = _win.stackingOrder;
       win = _win;
     }

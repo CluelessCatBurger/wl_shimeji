@@ -243,5 +243,6 @@ void environment_set_active_ie(bool is_active, struct bounding_box geometry);
 bool environment_ie_is_active();
 struct bounding_box environment_get_active_ie(environment_t* environment);
 void environment_recalculate_ie_attachement(environment_t* env, bool is_active, struct bounding_box geometry);
+void environment_mascot_detach_ie_movers(environment_t* env);
 
 #endif

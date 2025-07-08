@@ -9,6 +9,8 @@ struct plugin {
     init_func init;
     deinit_func deinit;
     tick_func tick;
+    move_func move;
+    restore_func restore;
 
     char* name;
     char* version;
@@ -25,7 +27,7 @@ int plugin_deinit(plugin_t* self);
 int plugin_init(plugin_t* self, const char* name, const char* version, const char* author, const char* description, int64_t target_version)
 {
     if (target_version != version_to_i64(WL_SHIMEJI_PLUGIN_TARGET_VERSION)) {
-        WARN("[Plugins] Skipping plugin \"%s\": plugin not build for actual version of wl_shimeji", name);
+        WARN("[Plugins] Skipping plugin \"%s\": plugin not build for actual version of wl_shimeji: expected %llu got %llu", name, version_to_i64(WL_SHIMEJI_PLUGIN_TARGET_VERSION), target_version);
         return -1;
     }
 
@@ -75,7 +77,7 @@ static void setup_handlers(bool setup) {
     }
 }
 
-static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_active_ie_func iefn) {
+static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_active_ie_func iefn, window_moved_hint_func window_moved_hint_cb) {
     plugin_t* plugin = calloc(1, sizeof(plugin_t));
     if (!plugin) ERROR("OOM");
 
@@ -89,6 +91,8 @@ static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_ac
     plugin->init = dlsym(dlhandle, "wl_shimeji_plugin_init");
     plugin->deinit = dlsym(dlhandle, "wl_shimeji_plugin_deinit");
     plugin->tick = dlsym(dlhandle, "wl_shimeji_plugin_tick");
+    plugin->move = dlsym(dlhandle, "wl_shimeji_plugin_move");
+    plugin->restore = dlsym(dlhandle, "wl_shimeji_plugin_restore");
 
     if (!plugin->init) {
         WARN("[Plugins] Failed to load plugin at %s: Unable to locate init function", path);
@@ -108,7 +112,7 @@ static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_ac
     setup_handlers(true);
     int v = setjmp(checkpoint);
     if (!v) {
-        if (plugin->init(plugin, posfn, iefn) != 0) {
+        if (plugin->init(plugin, posfn, iefn, window_moved_hint_cb) != 0) {
             WARN("[Plugins] Failed to initialize plugin at %s", path);
             setup_handlers(false);
             goto fail;
@@ -151,7 +155,7 @@ static void plugin_unload(plugin_t* plugin)
     free(plugin);
 }
 
-int plugins_init(const char* plugins_search_path, set_cursor_pos_func cursor_cb, set_active_ie_func active_ie_cb)
+int plugins_init(const char* plugins_search_path, set_cursor_pos_func cursor_cb, set_active_ie_func active_ie_cb, window_moved_hint_func window_moved_hint_cb)
 {
     char ** candidates = NULL;
     int32_t num_candidates = 0;
@@ -166,7 +170,7 @@ int plugins_init(const char* plugins_search_path, set_cursor_pos_func cursor_cb,
     for (int i = 0; i < num_candidates; i++) {
         char path[PATH_MAX] = {0};
         snprintf(path, PATH_MAX-1, "%s/%s", plugins_search_path, candidates[i]);
-        plugin_t* plugin = plugin_load(path, cursor_cb, active_ie_cb);
+        plugin_t* plugin = plugin_load(path, cursor_cb, active_ie_cb, window_moved_hint_cb);
         if (!plugin) continue;
         utarray_push_back(plugins, &plugin);
     }
@@ -212,6 +216,92 @@ int plugins_tick()
     }
 
     return 0;
+}
+
+int plugins_move_ie(int x, int y)
+{
+    plugin_t** p;
+
+    int retcode = -1;
+
+    if (!plugins) return 0;
+
+    for(p=(plugin_t**)utarray_front(plugins);
+        p!=NULL;
+        p=(plugin_t**)utarray_next(plugins, p))
+    {
+        if (!(*p)->move) continue;
+
+        setup_handlers(true);
+        int v = setjmp(checkpoint);
+        if (!v) retcode = (*p)->move(*p, x, y);
+        setup_handlers(false);
+        if (v) {
+            if (v == 1) {
+                WARN("[Plugins] Plugin %s move failed: Segmentation fault", (*p)->name);
+            }
+            else if (v == 2) {
+                WARN("[Plugins] Plugin %s move failed: Timed out", (*p)->name);
+            }
+            setup_handlers(true);
+            v = setjmp(checkpoint);
+            if (!v) (*p)->deinit(*p);
+            setup_handlers(false);
+            if (v == 1) {
+                WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
+            }
+            else if (v == 2) {
+                WARN("[Plugins] Plugin %s deinit failed: Timed out", (*p)->name);
+            }
+            plugin_unload(*p);
+            *p = NULL;
+        }
+    }
+
+    return retcode;
+}
+
+int plugins_restore_ies()
+{
+    plugin_t** p;
+
+    int retcode = -1;
+
+    if (!plugins) return 0;
+
+    for(p=(plugin_t**)utarray_front(plugins);
+        p!=NULL;
+        p=(plugin_t**)utarray_next(plugins, p))
+    {
+        if (!(*p)->restore) continue;
+
+        setup_handlers(true);
+        int v = setjmp(checkpoint);
+        if (!v) retcode = (*p)->restore(*p);
+        setup_handlers(false);
+        if (v) {
+            if (v == 1) {
+                WARN("[Plugins] Plugin %s restore failed: Segmentation fault", (*p)->name);
+            }
+            else if (v == 2) {
+                WARN("[Plugins] Plugin %s restore failed: Timed out", (*p)->name);
+            }
+            setup_handlers(true);
+            v = setjmp(checkpoint);
+            if (!v) (*p)->deinit(*p);
+            setup_handlers(false);
+            if (v == 1) {
+                WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
+            }
+            else if (v == 2) {
+                WARN("[Plugins] Plugin %s deinit failed: Timed out", (*p)->name);
+            }
+            plugin_unload(*p);
+            *p = NULL;
+        }
+    }
+
+    return retcode;
 }
 
 int plugins_deinit()

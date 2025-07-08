@@ -1154,7 +1154,6 @@ void mascot_build_behavior_pool(struct mascot* mascot, const struct mascot_behav
 // Set behavior (resets behavior pool and action stacks)
 void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* behavior)
 {
-#ifndef PLUGINSUPPORT_IMPLEMENTATION
     if (mascot->current_action.action) {
         struct action_funcs* funcs = mascot_get_handlers(mascot);
         if (funcs) {
@@ -1163,7 +1162,6 @@ void mascot_set_behavior(struct mascot* mascot, const struct mascot_behavior* be
             }
         }
     }
-#endif
 
     mascot->current_behavior = behavior;
     mascot->current_action = (struct mascot_action_reference){0};

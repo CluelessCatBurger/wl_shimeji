@@ -4017,3 +4017,16 @@ bool environment_ie_is_active()
 {
     return active_ie.is_active;
 }
+
+void environment_mascot_detach_ie_movers(environment_t* env)
+{
+    if (!env) return;
+    pthread_scoped_lock(mascot_lock, &env->mascot_manager.mutex);
+    for (uint32_t i = 0; i < env->mascot_manager.referenced_mascots->entry_count; i++) {
+        struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
+        if (!mascot) continue;
+        pthread_scoped_lock(tick_lock, &mascot->tick_lock);
+
+        if (mascot->state == mascot_state_ie_fall || mascot->state == mascot_state_ie_walk || mascot->state == mascot_state_ie_throw) mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
+    }
+}
