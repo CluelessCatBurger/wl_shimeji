@@ -125,7 +125,7 @@ install: all
 	install -d $(DESTDIR)$(PREFIX)/include/
 	install -d $(DESTDIR)$(PREFIX)/include/wl_shimeji
 	install -m655 src/plugins.h $(DESTDIR)$(PREFIX)/include/wl_shimeji/plugins.h
-	install -m655 src/plugins.h $(DESTDIR)$(PREFIX)/include/wl_shimeji/master_header.h
+	install -m655 src/master_header.h $(DESTDIR)$(PREFIX)/include/wl_shimeji/master_header.h
 
 .PHONY: install-plugins
 install-plugins: build-plugins
