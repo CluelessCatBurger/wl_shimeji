@@ -44,17 +44,14 @@ int32_t check_movement_collision(
 
     int result = 0;
 
-    // default: no clamp → keep target
     *out_x = tx;
     *out_y = ty;
 
     bool no_clamp = (border_mask & COLLISION_OPT_NOCLAMP) != 0;
-    // which borders to *exclude* from the returned hit bits
     int exclude = border_mask
                 & (BORDER_TYPE_FLOOR | BORDER_TYPE_CEILING
                  | BORDER_TYPE_LEFT  | BORDER_TYPE_RIGHT);
 
-    // ─── NEW: if the segment lies exactly on a border‐line, just exclude that one ───
     if (sy == box->y           && ty == box->y)           exclude |= BORDER_TYPE_CEILING;
     if (sy == box->y + box->height && ty == box->y + box->height) exclude |= BORDER_TYPE_FLOOR;
     if (sx == box->x           && tx == box->x)           exclude |= BORDER_TYPE_LEFT;
@@ -169,111 +166,6 @@ int32_t check_movement_collision(
     // for INNER_COLLISION, always add the OOB flag if we crossed any side
     return result;
 }
-//     int32_t result = 0x0;
-//     int32_t _out_x = 0;
-//     int32_t _out_y = 0;
-
-
-//     if (!out_x) {
-//         out_x = &_out_x;
-//     }
-//     if (!out_y) {
-//         out_y = &_out_y;
-//     }
-
-//     // Check if starting point is inside the box
-//     int32_t starting_inside = (starting_x >= box->x && starting_x <= box->x + box->width &&
-//                                 starting_y >= box->y && starting_y <= box->y + box->height);
-
-//     // Check if target point is inside the box
-//     int32_t target_inside = (target_x >= box->x && target_x <= box->x + box->width &&
-//                              target_y >= box->y && target_y <= box->y + box->height);
-
-//     if (starting_inside == target_inside) {
-//         *out_x = target_x;
-//         *out_y = target_y;
-//         return result;
-//     }
-
-//     // Determine collision type
-//     if ((box->type == INNER_COLLISION) && !starting_inside) {
-//         // Ignore movement from outside to inside
-//         *out_x = target_x;
-//         *out_y = target_y;
-//         return result;
-//     } else if ((box->type == OUTER_COLLISION) && starting_inside) {
-//         // Ignore movement from inside to outside
-//         *out_x = target_x;
-//         *out_y = target_y;
-//         return result;
-//     }
-
-//     // Check for intersection with the box borders
-//     if (
-//     //  COLLISION_INNER
-//         (
-//             starting_inside ?
-//             (target_x > box->x + box->width)
-//             :
-//             (target_x < box->x + box->width) && (starting_x > box->x)// && (starting_x < box->x + box->width)
-//         )
-//         &&
-//         starting_x != target_x
-//     ) {
-//         printf("CLAMP TO RIGHT\n");
-//         result = BORDER_TYPE_RIGHT;
-//         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_x = box->x + box->width;
-//     } else if (
-//     //  we start inside? is our target outside bb? orelse is out target inside bb and we are outside
-//         (
-//             starting_inside ?
-//             (target_x < box->x)
-//             :
-//             (target_x < box->x) && (starting_x < box->x + box->width)// && (starting_x < box->x)
-//         )
-//         &&
-//         starting_x != target_x // We are actually moving on that axis
-//     ) {
-//         result = BORDER_TYPE_LEFT; // So we are on left border
-//         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_x = box->x; // If we clamping, clamp to left border
-//     } else {
-//         *out_x = target_x;
-//     }
-
-//     if (
-//         (
-//             starting_inside ?
-//             (target_y < box->y)
-//             :
-//             (target_y > box->y) && (starting_y < box->y + box->height) && (starting_y < box->y)
-//         )
-//         &&
-//         starting_y != target_y // We are actually moving on that axis
-//     ) {
-//         result = BORDER_TYPE_CEILING;
-//         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_y = box->y;
-//     } else if (
-//         (
-//             starting_inside ?
-//             (target_y > box->y + box->height)
-//             :
-//             (target_y < box->y + box->height) && (starting_y > box->y) && (starting_y > box->y + box->height)
-//         )
-//         &&
-//         starting_y != target_y
-//     ) {
-//         result = BORDER_TYPE_FLOOR;
-//         if (!(border_mask & COLLISION_OPT_NOCLAMP)) *out_y = box->y + box->height;
-//     } else {
-//         *out_y = target_y;
-//     }
-
-//     if (result) {
-//         if (box->type == INNER_COLLISION) result |= COLLISION_RESULT_OOB;
-//     }
-
-//     return result & ~border_mask;
-// }
 
 int32_t is_inside(struct bounding_box *box, int32_t x, int32_t y)
 {
