@@ -32,7 +32,6 @@
 #include <linux/input-event-codes.h>
 #include <wayland-util.h>
 #include <errno.h>
-#include "plugins.h"
 #include "config.h"
 #include "list.h"
 #include <wayland-cursor.h>
@@ -2561,13 +2560,13 @@ enum environment_move_result environment_subsurface_move(environment_subsurface_
             proposed_x = dx;
             proposed_y = dy;
 
-            int32_t move_flags = 0;
-            if (!(collision & (BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR))) {
-                move_flags |= DIFF_VERTICAL_MOVE;
-            }
-            if (BORDER_IS_WALL(collision)) {
-                move_flags |= DIFF_HORIZONTAL_MOVE;
-            }
+            int32_t move_flags = DIFF_HORIZONTAL_MOVE | DIFF_VERTICAL_MOVE;
+            // if (!(collision & (BORDER_TYPE_CEILING | BORDER_TYPE_FLOOR))) {
+            //     move_flags |= DIFF_VERTICAL_MOVE;
+            // }
+            // if (BORDER_IS_WALL(collision)) {
+            //     move_flags |= DIFF_HORIZONTAL_MOVE;
+            // }
 
             mascot_moved(surface->mascot, proposed_x, proposed_y);
             mascot_apply_environment_position_diff(surface->mascot, diff_x, diff_y, move_flags, new_env);
