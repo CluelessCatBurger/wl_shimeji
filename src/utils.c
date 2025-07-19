@@ -20,6 +20,22 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #define EVAL_MAX(a, b) ((a) > (b) ? (a) : (b))
 #define EVAL_MIN(a, b) ((a) < (b) ? (a) : (b))
 
+
+static int32_t loglevel =
+#ifdef VERBOSE
+LOGLEVEL_DEBUG;
+#else
+LOGLEVEL_INFO;
+#endif
+
+int32_t LOGLEVEL(int32_t loglevel_) {
+    int32_t curlevel = loglevel;
+    if (loglevel >= 0) {
+        loglevel = loglevel_;
+    }
+    return curlevel;
+}
+
 static size_t rvvm_strlcpy(char* dst, const char* src, size_t size)
 {
     size_t i = 0;
@@ -78,6 +94,7 @@ PRINT_FORMAT void __error(const char* file, int line, const char* fmt, ...)
 
 PRINT_FORMAT void __warn(const char* file, int line, const char* fmt, ...)
 {
+    if (loglevel < LOGLEVEL_WARN) return;
     va_list args;
     va_start(args, fmt);
     char prefix[128] = {0};
@@ -90,6 +107,7 @@ PRINT_FORMAT void __warn(const char* file, int line, const char* fmt, ...)
 
 PRINT_FORMAT void __info(const char* file, int line, const char* fmt, ...)
 {
+    if (loglevel < LOGLEVEL_INFO) return;
     va_list args;
     va_start(args, fmt);
     char prefix[128] = {0};
@@ -103,6 +121,7 @@ PRINT_FORMAT void __info(const char* file, int line, const char* fmt, ...)
 PRINT_FORMAT void __debug(const char* file, int line, const char* fmt, ...)
 {
 #ifdef VERBOSE
+    if (loglevel < LOGLEVEL_DEBUG) return;
     va_list args;
     va_start(args, fmt);
     char prefix[128] = {0};

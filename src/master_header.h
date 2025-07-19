@@ -57,6 +57,12 @@ PRINT_FORMAT void __clog(const char*, const char*, const char*, int, const char*
 #define LOG(logtype, color, x, ...) __clog(color, logtype, __FILE__, __LINE__, x, ##__VA_ARGS__)
 #define TRACE(x, ...) __clog(CYAN, "TRACE", __FILE__, __LINE__, x, ##__VA_ARGS__)
 
+#define LOGLEVEL_WARN  2
+#define LOGLEVEL_INFO  3
+#define LOGLEVEL_DEBUG 5
+
+int32_t LOGLEVEL(int32_t loglevel);
+
 // Convert string version to uint64_t
 // Version format: "major.minor.patch"
 // When converts to u64, it has following structure:
