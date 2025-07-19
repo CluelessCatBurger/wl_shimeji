@@ -17,7 +17,6 @@
     along with this program; if not, see <https://www.gnu.org/licenses/>.
 */
 
-#include <linux/limits.h>
 #define _GNU_SOURCE
 #include <sys/mman.h>
 #include "mascot_config_parser.h"
@@ -42,7 +41,6 @@
 #include "config.h"
 #include "physics.h"
 #include "list.h"
-#include "io.h"
 #include <errno.h>
 
 #include "protocol/server.h"
@@ -411,6 +409,11 @@ int main(int argc, const char** argv)
     bool spawn_everything = false;
     int env_init_flags = 0;
     bool disable_plugins = false;
+
+    if (!isatty(stderr->_fileno)) {
+        INFO("stderr is not a tty, lowering loglevel.");
+        LOGLEVEL(LOGLEVEL_WARN);
+    }
 
     char socket_path[PATH_MAX] = {0};
 
