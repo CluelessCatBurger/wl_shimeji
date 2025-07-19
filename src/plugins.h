@@ -33,6 +33,7 @@ typedef int (*init_func)(plugin_t*, set_cursor_pos_func, set_active_ie_func, win
 typedef int (*tick_func)(plugin_t*);
 typedef int (*move_func)(plugin_t*, int, int);
 typedef int (*restore_func)(plugin_t*);
+typedef int (*activate_func)(plugin_t*);
 typedef void (*deinit_func)(plugin_t*);
 
 #ifndef BUILD_PLUGIN_SUPPORT
@@ -41,6 +42,7 @@ int plugins_tick(); // Executes all plugins
 int plugins_deinit(); // Deinitializes all plugins
 int plugins_move_ie(int x, int y);
 int plugins_restore_ies();
+int plugins_reactivate_ie(); // Activate topmost visible (should be inside workarea) window
 #endif
 
 int plugin_init(plugin_t* self, const char* name, const char* version, const char* author, const char* description, int64_t target_version);

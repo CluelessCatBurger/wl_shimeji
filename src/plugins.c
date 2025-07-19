@@ -11,6 +11,7 @@ struct plugin {
     tick_func tick;
     move_func move;
     restore_func restore;
+    activate_func activate;
 
     char* name;
     char* version;
@@ -93,6 +94,7 @@ static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_ac
     plugin->tick = dlsym(dlhandle, "wl_shimeji_plugin_tick");
     plugin->move = dlsym(dlhandle, "wl_shimeji_plugin_move");
     plugin->restore = dlsym(dlhandle, "wl_shimeji_plugin_restore");
+    plugin->activate = dlsym(dlhandle, "wl_shimeji_plugin_activate");
 
     if (!plugin->init) {
         WARN("[Plugins] Failed to load plugin at %s: Unable to locate init function", path);
@@ -285,6 +287,49 @@ int plugins_restore_ies()
             }
             else if (v == 2) {
                 WARN("[Plugins] Plugin %s restore failed: Timed out", (*p)->name);
+            }
+            setup_handlers(true);
+            v = setjmp(checkpoint);
+            if (!v) (*p)->deinit(*p);
+            setup_handlers(false);
+            if (v == 1) {
+                WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
+            }
+            else if (v == 2) {
+                WARN("[Plugins] Plugin %s deinit failed: Timed out", (*p)->name);
+            }
+            plugin_unload(*p);
+            *p = NULL;
+        }
+    }
+
+    return retcode;
+}
+
+int plugins_reactivate_ie()
+{
+    plugin_t** p;
+
+    int retcode = -1;
+
+    if (!plugins) return 0;
+
+    for(p=(plugin_t**)utarray_front(plugins);
+        p!=NULL;
+        p=(plugin_t**)utarray_next(plugins, p))
+    {
+        if (!(*p)->activate) continue;
+
+        setup_handlers(true);
+        int v = setjmp(checkpoint);
+        if (!v) retcode = (*p)->activate(*p);
+        setup_handlers(false);
+        if (v) {
+            if (v == 1) {
+                WARN("[Plugins] Plugin %s activate failed: Segmentation fault", (*p)->name);
+            }
+            else if (v == 2) {
+                WARN("[Plugins] Plugin %s activate failed: Timed out", (*p)->name);
             }
             setup_handlers(true);
             v = setjmp(checkpoint);
