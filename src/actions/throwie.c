@@ -316,4 +316,5 @@ void throwie_action_clean(struct mascot *mascot)
     free(mascot->action_data);
     mascot->action_data = NULL;
     mascot_announce_affordance(mascot, NULL);
+    plugins_reactivate_ie();
 }
