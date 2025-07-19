@@ -7,3 +7,6 @@
 [submodule "src/shimejictl/qoi"]
 	path = src/shimejictl/qoi
 	url = https://github.com/mathpn/py-qoi
+[submodule "src/plugins/kwinsupport"]
+	path = src/plugins/kwinsupport
+	url = https://github.com/CluelessCatBurger/wl_shimeji.kwinsupport

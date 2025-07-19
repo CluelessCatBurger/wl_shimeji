@@ -89,7 +89,7 @@ $(PLUGINS_LIB): $(PLUGINS_LIB_OBJS)
 
 $(PLUGINS_SUBDIRS): $(PLUGINS_LIB)
 	@echo "-> Building plugin $@..."
-	$(MAKE) -s -C $(PLUGINS_DIR)/$@ BUILDDIR="$(abspath $(BUILDDIR))" PLUGINS_OUT_DIR="$(abspath $(PLUGINS_OUT_DIR))" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS) -L$(abspath $(BUILDDIR))"
+	$(MAKE) -s -C $(PLUGINS_DIR)/$@ BUILDDIR="$(abspath $(BUILDDIR))" PLUGINS_OUT_DIR="$(abspath $(PLUGINS_OUT_DIR))" CFLAGS="$(CFLAGS) -I$(DESTDIR)$(PREFIX)/include/" LDFLAGS="$(LDFLAGS) -L$(abspath $(BUILDDIR))"
 
 .PHONY: build-plugins
 build-plugins: $(PLUGINS_SUBDIRS)
@@ -122,6 +122,9 @@ install: all
 	install -m644 systemd/wl_shimeji.service $(DESTDIR)$(PREFIX)/share/systemd/user/
 	install -d $(DESTDIR)$(PREFIX)/lib/
 	install -m755 $(PLUGINS_LIB) $(DESTDIR)$(PREFIX)/lib/
+	install -d $(DESTDIR)$(PREFIX)/include/
+	install -d $(DESTDIR)$(PREFIX)/include/wl_shimeji
+	install -m655 src/plugins.h $(DESTDIR)$(PREFIX)/include/wl_shimeji/plugins.h
 
 .PHONY: install-plugins
 install-plugins: build-plugins
