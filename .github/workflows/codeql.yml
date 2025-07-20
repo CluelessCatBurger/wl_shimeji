@@ -43,8 +43,14 @@ jobs:
         languages: c
         config-file: ./.github/codeql/codeql-config.yml
 
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v3
+    - run: |
+       DEBIAN_FRONTEND=noninteractive sudo apt-get update
+       DEBIAN_FRONTEND=noninteractive sudo apt-get install libwayland-dev libwayland-bin libarchive-dev uthash-dev
+       git clone https://gitlab.freedesktop.org/wayland/wayland-protocols --branch 1.40
+       WAYLAND_PROTOCOLS_DIR=wayland-protocols make
+
+    # - name: Autobuild
+    #   uses: github/codeql-action/autobuild@v3
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3
