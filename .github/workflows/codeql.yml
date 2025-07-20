@@ -36,6 +36,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+          submodules: "recursive"
       
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
@@ -43,10 +45,13 @@ jobs:
         languages: c
         config-file: ./.github/codeql/codeql-config.yml
 
-    - run: |
+    - name: Fetch dependencies 
+      run: |
        DEBIAN_FRONTEND=noninteractive sudo apt-get update
        DEBIAN_FRONTEND=noninteractive sudo apt-get install libwayland-dev libwayland-bin libarchive-dev uthash-dev
        git clone https://gitlab.freedesktop.org/wayland/wayland-protocols --branch 1.40
+    - name: Build
+      run: |
        WAYLAND_PROTOCOLS_DIR=wayland-protocols make
 
     # - name: Autobuild
