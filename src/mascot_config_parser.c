@@ -1931,7 +1931,7 @@ bool resolve_temporal_behavior_reference(struct mascot_prototype* prototype, str
         struct mascot_temporal_behavior_reference ref = *(struct mascot_temporal_behavior_reference*)(void*)&behavior->next_behavior_list[i];
         bool replaced = false;
         DEBUG("Resolving behavior ref %s", ref.name);
-        for (uint16_t j = 0; j < bcount; j++) {
+        for (size_t j = 0; j < bcount; j++) {
             if (!strncmp(ref.name, behaviors_definitions[j]->name, strlen(behaviors_definitions[j]->name)) && strlen(ref.name) == strlen(behaviors_definitions[j]->name)) {
                 behavior->next_behavior_list[i] = (struct mascot_behavior_reference){.behavior = behaviors_definitions[j], .frequency = ref.frequency, .condition = behavior->is_condition ? behavior->condition : NULL};
                 replaced = true;
@@ -2179,7 +2179,7 @@ struct config_behavior_loader_result load_behaviors(struct mascot_prototype* pro
 
             DEBUG("Retrying load behavior with unresolved behavior names (%d)", deffered_count);
 
-            for (uint16_t i = 0; i < result.count; i++) {
+            for (size_t i = 0; i < result.count; i++) {
                 resolve_temporal_behavior_reference(prototype, result.behaviors[i], result.behaviors, result.count);
             }
 
@@ -2329,7 +2329,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
             }
             version = version_to_i64(((struct json_string_s*)(element->value->payload))->string);
             if (version < 0) {
-                WARN("Cannot load prototype from %s: Invalid JSON: Mascot config version is invalid");
+                WARN("Cannot load prototype from %s: Invalid JSON: Mascot config version is invalid", filename_buf);
                 return PROTOTYPE_LOAD_MANIFEST_INVALID;
             }
             strncpy(version_str, ((struct json_string_s*)(element->value->payload))->string, 127);
@@ -2586,7 +2586,7 @@ uint32_t mascot_prototype_store_reload(mascot_prototype_store *store)
     if (!store->location) return 0;
 
     // Clear existing prototypes
-    for (uint16_t i = 0, c = store->count; i < store->size && c; i++) {
+    for (size_t i = 0, c = store->count; i < store->size && c; i++) {
         struct mascot_prototype* prototype = store->prototypes[i];
         if (prototype) {
             c--;

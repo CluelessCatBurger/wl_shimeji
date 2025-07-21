@@ -65,10 +65,16 @@ void _find_ireg(const uint8_t* buffer, uint32_t width, uint32_t height, uint32_t
     }
 }
 
-void _write_buffers(environment_buffer_factory_t* factory, uint64_t* buffer_factory_pos, const uint8_t* buffer, size_t buffer_len, uint32_t width, uint32_t height) {
+bool _write_buffers(environment_buffer_factory_t* factory, uint64_t* buffer_factory_pos, const uint8_t* buffer, size_t buffer_len, uint32_t width, uint32_t height) {
+
+    if (buffer_len > QOI_PIXELS_MAX) return false;
+
     uint8_t* buffers = calloc(2, buffer_len);
 
-    if(!buffers) ERROR("Failed to write buffers to memfd: Allocation failed for buffer with size %d", buffer_len*2);
+    if (!buffers) {
+        WARN("Failed to write buffers to memfd: Allocation failed for buffer with size %d", buffer_len*2);
+        return false;
+    }
 
     // Convert RGBA to ARGB and fill the direct and mirrored buffers
     for (uint32_t y = 0; y < height; y++) {
@@ -94,6 +100,7 @@ void _write_buffers(environment_buffer_factory_t* factory, uint64_t* buffer_fact
     environment_buffer_factory_write(factory, buffers, buffer_len * 2);
     *buffer_factory_pos += buffer_len * 2;
     free(buffers);
+    return true;
 }
 
 struct mascot_atlas* mascot_atlas_new(const char* dirname)
@@ -206,12 +213,15 @@ struct mascot_atlas* mascot_atlas_new(const char* dirname)
                 .h = input_height
             }
         };
-        _write_buffers(buffer_factory, &buffer_factory_pos, pixels[sprite_i], qois[sprite_i].width*qois[sprite_i].height*4, qois[sprite_i].width, qois[sprite_i].height);
+        if (!_write_buffers(buffer_factory, &buffer_factory_pos, pixels[sprite_i], (size_t)qois[sprite_i].width*(size_t)qois[sprite_i].height*(size_t)4, qois[sprite_i].width, qois[sprite_i].height)) {
+            environment_buffer_factory_destroy(buffer_factory);
+            return NULL;
+        }
     }
 
     environment_buffer_factory_done(buffer_factory);
 
-    for (uint16_t mascot_sprite = 0; mascot_sprite < sprite_count*2; mascot_sprite ++) {
+    for (uint16_t mascot_sprite = 0; mascot_sprite < sprite_count*(uint16_t)2; mascot_sprite ++) {
         atlas->sprites[mascot_sprite].buffer = environment_buffer_factory_create_buffer(buffer_factory, atlas->sprites[mascot_sprite].width, atlas->sprites[mascot_sprite].height, atlas->sprites[mascot_sprite].width*4, atlas->sprites[mascot_sprite].offset);
         environment_buffer_add_to_input_region(atlas->sprites[mascot_sprite].buffer, atlas->sprites[mascot_sprite].ireg.x, atlas->sprites[mascot_sprite].ireg.y, atlas->sprites[mascot_sprite].ireg.w, atlas->sprites[mascot_sprite].ireg.h);
         if (mascot_sprite%2 == 0) DEBUG("Atlas \"%s\": Created sprite \"%s\"", dirname, namelist[mascot_sprite/2]);
@@ -248,7 +258,7 @@ void mascot_atlas_destroy(struct mascot_atlas* atlas)
 {
     if (!atlas) return;
 
-    for (uint16_t i = 0; i < atlas->sprite_count*2; i++) {
+    for (uint16_t i = 0; i < atlas->sprite_count*(uint16_t)2; i++) {
         if (i % 2 == 0) free(atlas->name_order[i/2]);
         environment_buffer_destroy(atlas->sprites[i].buffer);
     }

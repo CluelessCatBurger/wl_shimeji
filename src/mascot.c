@@ -748,7 +748,7 @@ struct mascot* mascot_new
     if (!prototype) ERROR("Could not create mascot: Prototype is null");
 
     struct mascot* mascot = calloc(1, sizeof(struct mascot));
-    if (!mascot) ERROR("Could not create mascot type %s(%s): Allocation failed");
+    if (!mascot) ERROR("Could not create mascot type %s(%s): Allocation failed", prototype->display_name, prototype->name);
 
     mascot->id = new_mascot_id++;
     mascot->environment = env;

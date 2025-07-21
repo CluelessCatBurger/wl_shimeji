@@ -72,9 +72,9 @@ int32_t io_find(const char* path, const char* pattern, int32_t flags,
 
         DIR* dir = opendir(full_path);
         if (!dir) {
-            free(cur.rel);
             /* If base directory is unreadable, return error */
             if (cur.rel[0] == '\0') {
+                free(cur.rel);
                 free(stack);
                 for (int i = 0; i < *count; i++)
                     free((*results)[i]);

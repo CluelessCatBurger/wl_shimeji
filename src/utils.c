@@ -50,7 +50,8 @@ static size_t rvvm_strlcpy(char* dst, const char* src, size_t size)
 // Write current timestamp into buffer
 size_t write_time(char* prefix) {
     time_t t = time(NULL);
-    struct tm tm = *localtime(&t);
+    struct tm now;
+    struct tm tm = *localtime_r(&t, &now);
     return snprintf(prefix, 31, "%02d:%02d:%02d.%03d", tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(t % 1000));
 }
 

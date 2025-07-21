@@ -1199,7 +1199,7 @@ protocol_shm_pool_t* protocol_server_ephermal_shm_pool(int32_t id)
 
 protocol_shm_pool_t* protocol_shm_pool_new(struct protocol_client* client, uint32_t id, int32_t fd, uint32_t size)
 {
-    if (!id | !client) return NULL;
+    if (!id || !client) return NULL;
 
     protocol_shm_pool_t* pool = protocol_server_ephermal_shm_pool(id);
     if (!pool) {
@@ -1253,7 +1253,7 @@ void protocol_shm_pool_destroy(protocol_shm_pool_t* pool)
 
 protocol_buffer_t* protocol_shm_pool_buffer_new(struct protocol_client* client, protocol_shm_pool_t* pool, uint32_t id, uint32_t width, uint32_t height, uint32_t stride, uint32_t format, uint32_t offset)
 {
-    if (!id | !client) return NULL;
+    if (!id || !client) return NULL;
 
     protocol_buffer_t* buffer = calloc(1, sizeof(protocol_buffer_t));
     if (!buffer) {
