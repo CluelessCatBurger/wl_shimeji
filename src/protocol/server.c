@@ -658,7 +658,7 @@ protocol_popup_t* protocol_server_click_accept(struct protocol_client* client, u
     for (uint32_t i = 0; i < list_size(server_state->clients); i++) {
         struct protocol_client* _client = list_get(server_state->clients, i);
         if (_client) {
-            ipc_packet_t* expire_event = expire_event = protocol_builder_click_event_expired(server_state->last_click_event);
+            ipc_packet_t* expire_event = protocol_builder_click_event_expired(server_state->last_click_event);
             if (client == _client) {
                 continue;
             }

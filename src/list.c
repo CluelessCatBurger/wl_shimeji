@@ -26,6 +26,9 @@
 struct list* list_init_(uint32_t capacity)
 {
     struct list* list = malloc(sizeof(struct list));
+    if (!list) {
+        ERROR("OOM CONDITION in list_init_");
+    }
     list->entry_count = capacity;
     list->entries = calloc(1, sizeof(void*) * capacity);
     list->entry_used = calloc(1, capacity);

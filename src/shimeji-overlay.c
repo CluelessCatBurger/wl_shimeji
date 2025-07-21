@@ -733,6 +733,7 @@ int main(int argc, const char** argv)
     // Add inhereted fd to epoll (if any)
     if (inhereted_fd != -1) {
         struct socket_description* inhereted_sd = calloc(1, sizeof(struct socket_description));
+        if (!inhereted_sd) ERROR("Failed to allocate memory for socket description");
         ipc_connector_t* parent_ipc_connector = ipc_initialize_connector(inhereted_fd, epfd, inhereted_sd);
         struct protocol_client* parent_client = protocol_accept_connection(parent_ipc_connector);
         *inhereted_sd = (struct socket_description){
@@ -788,6 +789,12 @@ int main(int argc, const char** argv)
 
                 // Add clientfd to epoll
                 struct socket_description* client_sd = calloc(1, sizeof(struct socket_description));
+                if (!client_sd) {
+                    WARN("Cannot allocate memory for socket description");
+                    close(clientfd);
+                    continue;
+                }
+
                 ipc_connector_t* ipc_connector = ipc_initialize_connector(clientfd, epfd, client_sd);
                 struct protocol_client* client = protocol_accept_connection(ipc_connector);
                 client_sd->fd = clientfd;

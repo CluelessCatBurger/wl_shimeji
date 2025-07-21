@@ -101,6 +101,9 @@ enum mascot_tick_result throwie_action_init(struct mascot *mascot, struct mascot
     mascot->state = mascot_state_ie_throw;
 
     mascot->action_data = calloc(1, sizeof(struct throwie_action_data));
+    if (!mascot->action_data) {
+        ERROR("OOM CONDITION in throwie_action_init");
+    }
     ((struct throwie_action_data *)mascot->action_data)->start_tick = tick;
     ((struct throwie_action_data *)mascot->action_data)->start_point = environment_get_active_ie(mascot->environment);
 

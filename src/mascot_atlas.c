@@ -205,7 +205,7 @@ struct mascot_atlas* mascot_atlas_new(const char* dirname)
         atlas->sprites[(sprite_i*2)+1] = (struct mascot_sprite) {
             .width = qois[sprite_i].width,
             .height = qois[sprite_i].height,
-            .offset = buffer_factory_offset + qois[sprite_i].width*qois[sprite_i].height*4,
+            .offset = buffer_factory_offset + (uint64_t)qois[sprite_i].width*(uint64_t)qois[sprite_i].height*(uint64_t)4,
             .ireg = {
                 .x = qois[sprite_i].width - input_x - input_width,
                 .y = input_y,

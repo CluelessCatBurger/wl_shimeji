@@ -1954,6 +1954,7 @@ struct config_behavior_parse_result parse_behavior(struct mascot_prototype* prot
     result.status = MASCOT_BEHAVIOR_PARSE_ERROR;
 
     struct mascot_behavior* behavior_obj = calloc(1, sizeof(struct mascot_behavior));
+    if (!behavior_obj) ERROR("OOM CONDITION in static parse_behavior.");
 
     bool name_set = false;
     bool next_behaviors_count_set = false;

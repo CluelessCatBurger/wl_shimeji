@@ -2117,6 +2117,7 @@ static void handle_output(void* data, uint32_t id, uint32_t version)
     struct wl_output* output = wl_registry_bind(registry, id, &wl_output_interface, version);
     if (new_environment) {
         environment_t* env = (environment_t*)calloc(1, sizeof(environment_t));
+        if (!env) ERROR("OOM CONDITION while in handle_output");
         pthread_mutexattr_t attrs;
         pthread_mutexattr_init(&attrs);
         pthread_mutexattr_settype(&attrs, PTHREAD_MUTEX_RECURSIVE);
@@ -2242,6 +2243,7 @@ enum environment_init_status environment_init(int flags,
     orphaned_mascot = orph_listener;
 
     struct envs_queue* envs = (struct envs_queue*)calloc(1, sizeof(struct envs_queue));
+    if (!envs) ERROR("OOM CONDITION while in environment_init");
     envs->flags = flags;
 
     registry = wl_display_get_registry(display);
@@ -3168,6 +3170,7 @@ bool environment_migrate_subsurface(environment_subsurface_t* surface, environme
 
     // Get all user data from the surface
     struct wl_surface_data* userdata = wl_surface_get_user_data(surface->surface);
+    if (!userdata) ERROR("Unexpected NULL userdata while in migration");
 
     if (surface->alpha_modifier) wp_alpha_modifier_surface_v1_destroy(surface->alpha_modifier);
     if (surface->viewport) wp_viewport_destroy(surface->viewport);
