@@ -3919,6 +3919,9 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
     if (!env || !env->is_ready) return;
     pthread_scoped_lock(mascot_lock, &env->mascot_manager.mutex);
 
+    // int32_t offset_x = env->workarea_geometry.x;
+    int32_t offset_y = env->global_geometry.y;
+
     for (uint32_t i = 0; i < env->mascot_manager.referenced_mascots->entry_count; i++) {
         struct mascot* mascot = list_get(env->mascot_manager.referenced_mascots, i);
         if (!mascot) continue;
@@ -3966,6 +3969,8 @@ void environment_recalculate_ie_attachement(environment_t* env, bool is_active, 
                 new_x += (new_geometry.x - active_ie.geometry.x);
             }
         }
+
+        new_y -= offset_y;
 
         if (abs(new_x - x) > 25 || abs(new_y - y) > 25) {
             mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
