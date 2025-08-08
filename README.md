@@ -18,11 +18,11 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
 - wayland-protocols:
   - Arch: `pacman -S wayland-protocols`
   - Debian: ??? You can manually clone wayland-protocols and then specify it path by setting WAYLAND_PROTOCOLS_DIR to wayland-protocols' absolute path
-  - Fedora: `dnf install wayland-protocols-devel` 
+  - Fedora: `dnf install wayland-protocols-devel`
 - libarchive:
   - Arch: `pacman -S libarchive`
   - Debian: `apt-get install libarchive-dev`
-  - Fedora: `dnf install libarchive-devel` 
+  - Fedora: `dnf install libarchive-devel`
 - uthash:
   - Arch: `pacman -S uthash`
   - Debian: `apt-get install libuthash-dev`
@@ -44,6 +44,11 @@ Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, 
 Below are the community packages for wl_shimeji. They are not maintained by me, so if you have any issues with them, please contact the package maintainer.
 
 - Arch Linux (AUR): [wl_shimeji-git](https://aur.archlinux.org/packages/wl_shimeji-git)
+
+## Official packages
+### Plugins
+
+- kwinsupport: [wl_shimeji-kwinsupport](https://aur.archlinux.org/packages/wl_shimeji-plugin-kwinsupport) (AUR)
 
 # Building
 
@@ -76,7 +81,7 @@ Currently we have following plugins:
   - uthash:
     - Arch: `pacman -S uthash`
     - Debian: `apt-get install libuthash-dev`
-    - Fedora: `dnf install uthash-devel` 
+    - Fedora: `dnf install uthash-devel`
   - libwayland-shimeji-plugins (supplied by wl_shimeji)
   - wl_shimeji should run with XDG_CURRENT_DESKTOP set to "KDE" and org.kde.KWin must be present on session bus
 
