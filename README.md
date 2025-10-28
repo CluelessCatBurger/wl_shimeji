@@ -8,9 +8,19 @@ This is a reimplementation of the [Shimeji](https://kilkakon.com/shimeji/) for W
 
 Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](https://x.com/Monikaphobia)
 
+> [!IMPORTANT]
+> **wl_shimeji** currently does not officially support compositors that lack full support of Wayland core specification or violate it. Use at your own risk.
+> Notable examples:
+>
+> - Gamescope (does not implement **wl_subcompositor**)
+> - Hyprland (violates the Wayland core specification regarding **wl_subsurface** clipping)
+>
+> Additionally, wl_shimeji **will never support compositors that do not implement the wlr-layer-shell protocol, as it is a core part of wl_shimeji's implementation**, so no Mutter for now.
+
 # Requirements
 
 ## Build requirements
+
 - libwayland-client:
   - Arch: `pacman -S wayland`
   - Debian: `apt-get install libwayland-dev libwayland-bin`
@@ -29,9 +39,11 @@ Shimejis on the screenshot by [paccha](https://linktr.ee/paccha_) and [Moneka](h
   - Fedora: `dnf install uthash-devel`
 
 ## Runtime requirements
+
 Your compositor should *at least* support xdg-shell, wlr-layer-shell protocols, and provide wl_subcompositor interface.
 
 ## Shimejictl requirements
+
 - python-pillow
   - Arch: `pacman -S python-pillow`
   - Fedora: `dnf install python3-pillow`
@@ -46,6 +58,7 @@ Below are the community packages for wl_shimeji. They are not maintained by me, 
 - Arch Linux (AUR): [wl_shimeji-git](https://aur.archlinux.org/packages/wl_shimeji-git)
 
 ## Official packages
+
 ### Plugins
 
 - kwinsupport: [wl_shimeji-kwinsupport](https://aur.archlinux.org/packages/wl_shimeji-plugin-kwinsupport) (AUR)
@@ -63,12 +76,14 @@ make install
 
 You can also build plugins (everything in src/plugins subdirectories).
 Plugins are optional, but can provide such features as:
+
 - Interactions with other applications' windows
 - Get global mouse position
 
 Currently mascots can't move windows as it is not supported by wl_shimeji.
 
 Currently we have following plugins:
+
 - src/plugins/kwinsupport - KDE integration using it's scripting API
 
 ## Dependencies for plugins
@@ -109,6 +124,7 @@ shimejictl convert /path/to/shimeji-ee.zip -O /some/output/directory
 ```
 
 It will try to read the zip archive and will ask you to select which mascots you want to convert:
+
 ```bash
 $ shimejictl convert "The Neuroling Collection v0.7.zip" -O output/
 Prototypes available for conversion:
@@ -132,6 +148,7 @@ When you selected mascot types that you need, shimejictl will convert them to th
 # Importing .wlshm prototypes
 
 After you successfully converted your mascots, you can import them to the wl_shimeji format using the following command:
+
 ```sh
 shimejictl prototypes import /path/to/Shimeji.{first_name}.wlshm /path/to/Shimeji.{second_name}.wlshm ...
 ```
@@ -141,6 +158,7 @@ If prototype already exists, shimejictl will skip it unless -f is used.
 # Listing available prototypes
 
 You can list all available mascot prototypes using the following command:
+
 ```sh
 shimejictl prototypes list
 ```
@@ -150,6 +168,7 @@ shimejictl prototypes list
 To summon mascot, you need to know mascot's name, which you can get by using `shimejictl prototypes list` command. When you found mascot of your choice, you can summon using `shimejictl mascot summon {name}` command, where `{name}` is the name of the mascot you want to summon.
 
 For example, if you want to summon a mascot named Neuron, you can use the following command:
+
 ```sh
 shimejictl mascot summon Neuron
 ```
@@ -178,20 +197,25 @@ shimejictl prototypes export -i {prototype_name} -o {output_file}
 ```
 
 ## Stopping application
+
 You can stop the application by using `shimejictl stop` command.
 
 ## Configuration
+
 You can configure some options of overlay by using `shimejictl config` command.
+
 ```sh
 shimejictl config set "option_name" "value"
 ```
 
 You also can get option value by using `get` action:
+
 ```sh
 shimejictl config get "option_name"
 ```
 
 Or values of all options by using `list` action:
+
 ```sh
 shimejictl config list
 ```
@@ -203,9 +227,10 @@ Config file is usually located at .config/wl_shimeji/shimeji-overlayd.conf
 ## Multihead usage
 
 wl_shimeji supports multiple screens. However, some features may be disabled by default. Config provides following options:
- - ALLOW_THROWING_MULTIHEAD: Allows throwing mascot between screens
- - ALLOW_DRAGGING_MULTIHEAD: Allows dragging mascot between screens
- - UNIFIED_OUTPUTS: Treats all outputs as one entity
+
+- ALLOW_THROWING_MULTIHEAD: Allows throwing mascot between screens
+- ALLOW_DRAGGING_MULTIHEAD: Allows dragging mascot between screens
+- UNIFIED_OUTPUTS: Treats all outputs as one entity
 
 You may want block one of displays from being used by wl_shimeji in runtime, so we have `shimejictl environment close` to disable one of outputs. shimejictl will ask you to select one of outputs by clicking on it. After this operation, you can't restore display unless you restart wl_shimeji or reconnect display to the system.
 
@@ -226,11 +251,13 @@ You can map mouse button and tablet events (stylus down, stylus up) to different
 wl_shimeji can be activated on-demand through systemd socket. To enable it, use 'systemctl --use enable wl_shimeji.socket'.
 
 ## Running overlay manually
+
 You can start overlay manually by running `shimeji-overlayd`. It's not recommended and *useless* in case you don't pass -se flag to it or
 if you don't pass unix fd using -cfd flag, unless you implementing another frontend for the overlay. If -se or -cfd not specified
 overlay will close immediately after start.
 
 Arguments:
+
 - `-s`, `--socket-path`  - path to the overlay socket file.
 - `-cd`, `--configuration-root`  - path to the configuration root of the wl_shimeji (/home/kotb/.local/share/wl_shimeji by default)
 - `-cfd`, `--caller-fd` - paired unix socket fd used for communication. If closed and no other clients connected nor no mascots exists, overlay will close.
@@ -264,6 +291,7 @@ Arguments:
 
 On first start, the program will create a configuration file in the config directory.
 Currently config file allows to:
+
 - Enable/Disable mascot breeding
 - Enable/Disable mascot dragging
 - Enable/Disable IE interactions (doesn't make sense without plugins)
@@ -277,12 +305,12 @@ IE Throw Policy and max number is integers.
 
 I will not explain possible values for IE Throw Policy for now.
 
-## TODO LIST:
+## TODO LIST
 
 - [ ] Write documentation for plugins API
 - [ ] Add more configuration options
 
-## Notes:
+## Notes
 
 - About environment interaction: It will be available only through the plugins. Wayland protocol doesn't allow to interact with windows of other applications,
   and will NEVER allow it. It's a security feature. If you think that it makes Wayland bad, ask yourself a question: Why application even should have access to
@@ -296,7 +324,7 @@ I will not explain possible values for IE Throw Policy for now.
 - Windows support? After searching for a while, I found that there is a similar mechanism to wl_subcompositor in Windows called "DirectComposition".
   I will not implement it by myself, but if you want to try, you can do it.
 
-# Blabbering section:
+# Blabbering section
 
 ## What is Shimeji?
 
