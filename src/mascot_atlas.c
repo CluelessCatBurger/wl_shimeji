@@ -82,17 +82,29 @@ bool _write_buffers(environment_buffer_factory_t* factory, uint64_t* buffer_fact
             size_t rgbaIndex = (y * width + x) * 4;
             size_t argbIndex = rgbaIndex; // Direct mapping for ARGB buffer
             size_t mirrorIndex = (y * width + (width - 1 - x)) * 4; // Mirrored mapping
+            
+            // Premultiply aplha
+            *(buffers+argbIndex+0) = (buffer[rgbaIndex + 2] * buffer[rgbaIndex+3] + 127) / 255; // Premultiplied B
+            *(buffers+argbIndex+1) = (buffer[rgbaIndex + 1] * buffer[rgbaIndex+3] + 127) / 255; // Premultiplied G
+            *(buffers+argbIndex+2) = (buffer[rgbaIndex + 0] * buffer[rgbaIndex+3] + 127) / 255; // Premultiplied R
+            *(buffers+argbIndex+3) =  buffer[rgbaIndex + 3]; // Just alpha
 
-            *(buffers+argbIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // B
-            *(buffers+argbIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // G
-            *(buffers+argbIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // R
-            *(buffers+argbIndex+3) = buffer[rgbaIndex + 3]; // A
+            *(buffers+buffer_len+mirrorIndex+0) = (buffer[rgbaIndex + 2] * buffer[rgbaIndex+3] + 127) / 255; // Premultiplied B
+            *(buffers+buffer_len+mirrorIndex+1) = (buffer[rgbaIndex + 1] * buffer[rgbaIndex+3] + 127) / 255; // Premultiplied G
+            *(buffers+buffer_len+mirrorIndex+2) = (buffer[rgbaIndex + 0] * buffer[rgbaIndex+3] + 127) / 255; // Premultiplied R
+            *(buffers+buffer_len+mirrorIndex+3) =  buffer[rgbaIndex + 3]; // Just alpha
+
+
+            // *(buffers+argbIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // B
+            // *(buffers+argbIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // G
+            // *(buffers+argbIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // R
+            // *(buffers+argbIndex+3) = buffer[rgbaIndex + 3]; // A
 
             // Fill mirrored ARGB buffer
-            *(buffers+buffer_len+mirrorIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // B
-            *(buffers+buffer_len+mirrorIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // G
-            *(buffers+buffer_len+mirrorIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // R
-            *(buffers+buffer_len+mirrorIndex+3) = buffer[rgbaIndex + 3]; // A
+            // *(buffers+buffer_len+mirrorIndex) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 2] : 0; // B
+            // *(buffers+buffer_len+mirrorIndex+1) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 1] : 0; // G
+            // *(buffers+buffer_len+mirrorIndex+2) = buffer[rgbaIndex + 3] ? buffer[rgbaIndex + 0] : 0; // R
+            // *(buffers+buffer_len+mirrorIndex+3) = buffer[rgbaIndex + 3]; // A
         }
     }
 
