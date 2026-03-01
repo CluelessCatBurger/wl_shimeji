@@ -509,6 +509,8 @@ static enum mascot_tick_result mascot_action_get_next(struct mascot *mascot,
       } else {
         next_func = state_funcs[actionref.action->type].next;
       }
+    } else {
+      return mascot_action_get_next(mascot, tick);
     }
 
     if (!next_func) {
