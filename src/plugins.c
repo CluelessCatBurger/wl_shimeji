@@ -51,8 +51,11 @@ int plugin_init(plugin_t* self, const char* name, const char* version, const cha
 #include <utarray.h>
 #include <dlfcn.h>
 #include "io.h"
+#include <linux/limits.h>
+#include <pthread.h>
 
 UT_array *plugins;
+pthread_mutex_t plugins_mutex = PTHREAD_MUTEX_INITIALIZER;
 UT_icd plugin_ptr_icd = {sizeof(plugin_t*), NULL, NULL, NULL};
 
 static jmp_buf checkpoint;
@@ -79,13 +82,17 @@ static void setup_handlers(bool setup) {
 }
 
 static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_active_ie_func iefn, window_moved_hint_func window_moved_hint_cb) {
-    plugin_t* plugin = calloc(1, sizeof(plugin_t));
-    if (!plugin) ERROR("OOM");
 
     void* dlhandle = dlopen(path, RTLD_NOW);
     if (!dlhandle) {
         WARN("Failed to load plugin at %s: %s", path, dlerror());
         return NULL;
+    }
+
+    plugin_t* plugin = calloc(1, sizeof(plugin_t));
+    if (!plugin) {
+        dlclose(dlhandle);
+        ERROR("OOM");
     }
 
     plugin->dl_handle = dlhandle;
@@ -141,7 +148,13 @@ static plugin_t* plugin_load(const char* path, set_cursor_pos_func posfn, set_ac
     return plugin;
 
     fail:
-        dlclose(dlhandle);
+
+        if (plugin && plugin->deinit && plugin->initialized)
+            plugin->deinit(plugin);
+
+        if (dlhandle)
+            dlclose(dlhandle);
+            
         free(plugin);
         return NULL;
 }
@@ -153,7 +166,10 @@ static void plugin_unload(plugin_t* plugin)
         plugin_deinit(plugin);
     }
 
-    dlclose(plugin->dl_handle);
+    if (plugin->dl_handle) {
+        dlclose(plugin->dl_handle);
+        plugin->dl_handle = NULL;
+    }
     free(plugin);
 }
 
@@ -175,8 +191,9 @@ int plugins_init(const char* plugins_search_path, set_cursor_pos_func cursor_cb,
         plugin_t* plugin = plugin_load(path, cursor_cb, active_ie_cb, window_moved_hint_cb);
         if (!plugin) continue;
         utarray_push_back(plugins, &plugin);
+        free(candidates[i]);
     }
-
+    
     free(candidates);
     return utarray_len(plugins);
 }
@@ -185,12 +202,18 @@ int plugins_tick()
 {
     plugin_t** p;
 
-    if (!plugins) return 0;
+    pthread_mutex_lock(&plugins_mutex);
+    if (!plugins) {
+        pthread_mutex_unlock(&plugins_mutex);
+        return 0;
+    }
 
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
         p=(plugin_t**)utarray_next(plugins, p))
     {
+        if (!*p) continue;
+        
         setup_handlers(true);
         int v = setjmp(checkpoint);
         if (!v) (*p)->tick(*p);
@@ -204,7 +227,7 @@ int plugins_tick()
             }
             setup_handlers(true);
             v = setjmp(checkpoint);
-            if (!v) (*p)->deinit(*p);
+            if (!v && *p) (*p)->deinit(*p);
             setup_handlers(false);
             if (v == 1) {
                 WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
@@ -216,6 +239,7 @@ int plugins_tick()
             *p = NULL;
         }
     }
+    pthread_mutex_unlock(&plugins_mutex);
 
     return 0;
 }
@@ -226,13 +250,17 @@ int plugins_move_ie(int x, int y)
 
     int retcode = -1;
 
-    if (!plugins) return 0;
+    pthread_mutex_lock(&plugins_mutex);
+    if (!plugins) {
+        pthread_mutex_unlock(&plugins_mutex);
+        return 0;
+    }
 
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
         p=(plugin_t**)utarray_next(plugins, p))
     {
-        if (!(*p)->move) continue;
+        if (!*p || !(*p)->move) continue;
 
         setup_handlers(true);
         int v = setjmp(checkpoint);
@@ -247,7 +275,7 @@ int plugins_move_ie(int x, int y)
             }
             setup_handlers(true);
             v = setjmp(checkpoint);
-            if (!v) (*p)->deinit(*p);
+            if (!v && *p) (*p)->deinit(*p);
             setup_handlers(false);
             if (v == 1) {
                 WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
@@ -259,6 +287,7 @@ int plugins_move_ie(int x, int y)
             *p = NULL;
         }
     }
+    pthread_mutex_unlock(&plugins_mutex);
 
     return retcode;
 }
@@ -269,13 +298,17 @@ int plugins_restore_ies()
 
     int retcode = -1;
 
-    if (!plugins) return 0;
+    pthread_mutex_lock(&plugins_mutex);
+    if (!plugins) {
+        pthread_mutex_unlock(&plugins_mutex);
+        return 0;
+    }
 
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
         p=(plugin_t**)utarray_next(plugins, p))
     {
-        if (!(*p)->restore) continue;
+        if (!*p || !(*p)->restore) continue;
 
         setup_handlers(true);
         int v = setjmp(checkpoint);
@@ -290,7 +323,7 @@ int plugins_restore_ies()
             }
             setup_handlers(true);
             v = setjmp(checkpoint);
-            if (!v) (*p)->deinit(*p);
+            if (!v && *p) (*p)->deinit(*p);
             setup_handlers(false);
             if (v == 1) {
                 WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
@@ -302,6 +335,7 @@ int plugins_restore_ies()
             *p = NULL;
         }
     }
+    pthread_mutex_unlock(&plugins_mutex);
 
     return retcode;
 }
@@ -312,13 +346,17 @@ int plugins_reactivate_ie()
 
     int retcode = -1;
 
-    if (!plugins) return 0;
+    pthread_mutex_lock(&plugins_mutex);
+    if (!plugins) {
+        pthread_mutex_unlock(&plugins_mutex);
+        return 0;
+    }
 
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
         p=(plugin_t**)utarray_next(plugins, p))
     {
-        if (!(*p)->activate) continue;
+        if (!*p || !(*p)->activate) continue;
 
         setup_handlers(true);
         int v = setjmp(checkpoint);
@@ -333,7 +371,7 @@ int plugins_reactivate_ie()
             }
             setup_handlers(true);
             v = setjmp(checkpoint);
-            if (!v) (*p)->deinit(*p);
+            if (!v && *p) (*p)->deinit(*p);
             setup_handlers(false);
             if (v == 1) {
                 WARN("[Plugins] Plugin %s deinit failed: Segmentation fault", (*p)->name);
@@ -345,6 +383,7 @@ int plugins_reactivate_ie()
             *p = NULL;
         }
     }
+    pthread_mutex_unlock(&plugins_mutex);
 
     return retcode;
 }
@@ -353,15 +392,21 @@ int plugins_deinit()
 {
     plugin_t** p;
 
-    if (!plugins) return 0;
+    pthread_mutex_lock(&plugins_mutex);
+    if (!plugins) {
+        pthread_mutex_unlock(&plugins_mutex);
+        return 0;
+    }
 
     for(p=(plugin_t**)utarray_front(plugins);
         p!=NULL;
         p=(plugin_t**)utarray_next(plugins, p))
     {
+        if (!*p) continue;
+        
         setup_handlers(true);
         int v = setjmp(checkpoint);
-        if (!v) (*p)->deinit(*p);
+        if (!v && *p) (*p)->deinit(*p);
         setup_handlers(false);
 
         if (v == 1) {
@@ -376,6 +421,8 @@ int plugins_deinit()
     }
 
     utarray_free(plugins);
+    plugins = NULL;
+    pthread_mutex_unlock(&plugins_mutex);
     return 0;
 }
 

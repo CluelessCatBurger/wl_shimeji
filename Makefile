@@ -17,6 +17,12 @@ override CFLAGS  += -I$(abspath $(SRCDIR)) -I$(abspath $(BUILDDIR)) -Wall -Wextr
 override CFLAGS  += $(shell pkg-config --cflags wayland-client)
 override LDFLAGS += $(shell pkg-config wayland-client wayland-cursor libarchive --libs) -lm
 
+# AddressSanitizer support: set ASAN=1 when calling make to enable
+ifdef ASAN
+override CFLAGS += -g -O1 -fsanitize=address -fno-omit-frame-pointer
+override LDFLAGS += -fsanitize=address
+endif
+
 override WAYLAND_PROTOCOLS_DIR ?= $(shell pkg-config wayland-protocols --variable=pkgdatadir)
 override WAYLAND_SCANNER = $(shell pkg-config --variable=wayland_scanner wayland-scanner)
 
@@ -85,7 +91,7 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c Makefile
 	$(CC) $(CFLAGS) -MMD -MF $(patsubst %.o, %.d, $@) -c $< -o $@
 
 $(PLUGINS_LIB): $(PLUGINS_LIB_OBJS)
-	$(CC) $(CFLAGS) $(PLUGINS_LIB_SRC) -DBUILD_PLUGIN_SUPPORT -I$(BUILDDIR) -fPIC -shared -lm -o $(PLUGINS_LIB)
+	$(CC) $(CFLAGS) $(PLUGINS_LIB_SRC) -DBUILD_PLUGIN_SUPPORT -I$(BUILDDIR) -fPIC -shared -lm $(LDFLAGS) -o $(PLUGINS_LIB)
 
 $(PLUGINS_SUBDIRS): $(PLUGINS_LIB)
 	@echo "-> Building plugin $@..."
@@ -96,7 +102,7 @@ build-plugins: $(PLUGINS_SUBDIRS)
 
 # Rule to build the binary
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) $^ $(LDFLAGS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $^ -o $@
 
 # Rule to build shimejictl
 $(UTILS_DIR)/shimejictl: $(SRCDIR)/shimejictl/client.py
@@ -131,6 +137,15 @@ install: all
 install-plugins: build-plugins
 	install -d $(DESTDIR)$(PREFIX)/lib/wl_shimeji/
 	install -m 0755 "$(PLUGINS_OUT_DIR)/"*.so "$(DESTDIR)$(PREFIX)/lib/wl_shimeji/"
+
+.PHONY: uninstall
+uninstall:
+	@-rm -f $(DESTDIR)$(PREFIX)/bin/shimeji-overlayd
+	@-rm -f $(DESTDIR)$(PREFIX)/bin/shimejictl
+	@-rm -f $(DESTDIR)$(PREFIX)/share/systemd/user/wl_shimeji.socket
+	@-rm -f $(DESTDIR)$(PREFIX)/share/systemd/user/wl_shimeji.service
+	@-rm -f $(DESTDIR)$(PREFIX)/lib/libwayland-shimeji-plugins.so
+	@-rm -rf $(DESTDIR)$(PREFIX)/include/wl_shimeji/
 
 # Handle header dependency rebuild
 sinclude $(DEPS)
