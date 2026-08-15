@@ -1362,6 +1362,7 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
     bool content_count_set = false;
     bool local_var_count_set = false;
     uint16_t local_vars_count = 0;
+    uint16_t actual_content_count = 0;  // Track actual number of content elements added
     enum mascot_action_embedded_property embedded_type = mascot_action_embedded_property_none;
     enum mascot_action_type type = mascot_action_type_stay;
 
@@ -1417,6 +1418,7 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
                 WARN("Unknown action type: %s", type_str);
                 continue;
             }
+            free(type_str);
         }
         if (!strncmp("content_count", celement->name->string, celement->name->string_size) && strlen("content_count") == celement->name->string_size) {
             if (content_count_set) {
@@ -1497,6 +1499,7 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
                 embedded_type = mascot_action_embedded_property_unknown;
                 continue;
             }
+            free(embedded_type_str);
         }
         if (!strncmp("condition", celement->name->string, celement->name->string_size) && strlen("condition") == celement->name->string_size) {
             if (celement->value->type == json_type_null) {
@@ -1684,6 +1687,7 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
                             action_obj->content[j].kind = mascot_action_content_type_action_reference;
                             action_obj->content[j].value.action_reference = action_reference.actionref;
                             j++;
+                            actual_content_count++;
                         } else if (!strncasecmp("Animation", content_type->string, content_type->string_size)) {
                             struct mascot_animation* animation = parse_animation(prototype, content_obj);
                             if (!animation) {
@@ -1693,6 +1697,7 @@ struct config_action_parse_result action_parse(struct mascot_prototype* prototyp
                             action_obj->content[j].kind = mascot_action_content_type_animation;
                             action_obj->content[j].value.animation = animation;
                             j++;
+                            actual_content_count++;
                         } else {
                             WARN("Unknown content type");
                             goto action_generator_fail;
@@ -1759,6 +1764,38 @@ action_generator_fail:
         DEBUG("Failed to load action named %s: %d", action_obj->name, result.status);
     } else {
         DEBUG("Failed to load action");
+    }
+
+    // Free content elements based on actual number added, not configured count
+    for (uint16_t j = 0; j < actual_content_count; j++) {
+        struct mascot_action_content* content = &action_obj->content[j];
+        if (content->kind == mascot_action_content_type_animation) {
+            struct mascot_animation* animation = content->value.animation;
+            if (animation) {
+                for (uint16_t k = 0; k < animation->frame_count; k++) {
+                    struct mascot_pose* pose = animation->frames[k];
+                    free(pose);
+                }
+                free(animation->frames);
+
+                for (uint16_t k = 0; k < animation->hotspots_count; k++) {
+                    struct mascot_hotspot* hotspot = animation->hotspots[k];
+                    free((char*)hotspot->behavior);
+                    free(hotspot);
+                }
+                free(animation->hotspots);
+                free(animation);
+            }
+        } else if (content->kind == mascot_action_content_type_action_reference) {
+            struct mascot_action_reference* reference = content->value.action_reference;
+            if (reference) {
+                for (uint16_t k = 0; k < 128; k++) {
+                    free(reference->overwritten_locals[k]);
+                }
+                free(reference->overwritten_locals);
+                free(reference);
+            }
+        }
     }
 
     if (action_obj->variables) {
@@ -2300,6 +2337,7 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
     struct json_value_s* manifest_data = json_parse(buffer, size);
     if (!manifest_data) {
         ERROR("Cannot load prototype from %s: Invalid JSON or out of memory", filename_buf);
+        return PROTOTYPE_LOAD_MANIFEST_INVALID;
     }
 
     if (manifest_data->type != json_type_object) {
@@ -2367,6 +2405,10 @@ enum mascot_prototype_load_result mascot_prototype_load(struct mascot_prototype 
         }
         element = element->next;
     }
+
+    free(manifest_data);
+    free(buffer);
+    fclose(manifest);
 
     if (version < minver) {
         WARN("Cannot load prototype from %s: Mascot config version is too old! Minimum supported version is %s but got %s", filename_buf, WL_SHIMEJI_MASCOT_MIN_VER, version_str);
@@ -2670,7 +2712,10 @@ uint32_t mascot_prototype_store_reload(mascot_prototype_store *store)
             continue;
         }
         mascot_prototype_store_add(store, prototype);
+
+        free(directories[i]);
     }
+    free(directories);
 
     return store->count;
 }

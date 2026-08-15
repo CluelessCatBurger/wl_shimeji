@@ -84,6 +84,7 @@ pthread_mutex_t thread_mutex;
 
 struct env_data {
     pthread_t interpolation_thread;
+    pthread_mutex_t mutex;
     bool stop;
 };
 
@@ -106,6 +107,7 @@ static void env_new(environment_t* environment)
     if (!data) {
         ERROR("Failed to allocate memory for environment data");
     }
+    pthread_mutex_init(&data->mutex, NULL);
 
     list_add(server_state.environments, environment);
     protocol_server_announce_new_environment(environment, NULL);
@@ -139,8 +141,11 @@ static void env_delete(environment_t* environment)
 
     struct env_data* data = environment_get_user_data(environment);
     if (data) {
+        pthread_mutex_lock(&data->mutex);
         data->stop = true;
+        pthread_mutex_unlock(&data->mutex);
         pthread_join(data->interpolation_thread, NULL);
+        pthread_mutex_destroy(&data->mutex);
         free(data);
     }
     environment_unlink(environment);
@@ -200,8 +205,19 @@ void* env_interpolation_thread(void* data)
     TRACE("Starting environment interpolation thread");
     environment_t* env = (environment_t*)data;
     struct env_data* env_data = environment_get_user_data(env);
+    if (!env_data) {
+        WARN("env_interpolation_thread: environment data is NULL");
+        return NULL;
+    }
+    
     uint64_t sleep_time;
-    while (!env_data->stop) {
+    while (true) {
+        pthread_mutex_lock(&env_data->mutex);
+        bool should_stop = env_data->stop;
+        pthread_mutex_unlock(&env_data->mutex);
+        
+        if (should_stop) break;
+        
         sleep_time = environment_interpolate(env);
         environment_commit(env);
 
@@ -854,6 +870,10 @@ int main(int argc, const char** argv)
             break;
         }
     }
+
+    should_exit = true;
+    pthread_join(*thread, NULL);
+    free(thread);
 
     plugins_deinit();
     close(listen_fd);
