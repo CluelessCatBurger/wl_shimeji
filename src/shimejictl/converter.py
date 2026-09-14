@@ -3,6 +3,8 @@ from xml.etree import ElementTree
 import json
 import enum
 
+import logging
+
 INLINED_ACTION_AUTOINCREMENT = 0
 INLINED_BEHAVIOUR_AUTOINCREMENT = 0
 INLINED_CONDITION_AUTOINCREMENT = 0
@@ -34,6 +36,8 @@ EMBEDDED_TYPE = enum.Enum("EmbeddedType", [
     "Resist",
     "Breed",
     "Broadcast",
+    "BroadcastStay", # unimplemented
+    "BroadcastMove", # unimplemented
     "ScanMove",
     "Interact",
     "Transform",
@@ -94,6 +98,8 @@ MASCOT_VAR_NAMES = [
             "OffsetY",
             "Gap"
 ]
+
+logger = logging.getLogger(__name__)
 
 def vector_to_tuple(what: str) -> tuple[int, int]:
     if what is None:
@@ -196,6 +202,12 @@ def parse_action(action: ElementTree.Element, action_definitions: dict, programs
 
     action_type = ACTION_TYPE[action_type]
 
+    action_class = action.attrib.get("Class")
+    if (action_class is not None) and (i := action_class.find("Broadcast")):
+        broadcast_type = action_class[i:]
+        if broadcast_type == "BroadcastStay" or broadcast_type == "BroadcastMove":
+            logger.warning(f"Action {action.attrib.get("Name")} has type {broadcast_type} which is not currently supported. Continuing conversion.")
+
     action_object = {
         "type": action_type.name,
         "name": action.attrib.get("Name", None),
@@ -203,7 +215,7 @@ def parse_action(action: ElementTree.Element, action_definitions: dict, programs
         "content_count": 0,
         "local_variables": {},
         "local_variables_count": 0,
-        "embedded_type": CLASS_NAME_TO_EMBEDDED_TYPE.get(action.attrib.get("Class")).name if action.attrib.get("Class") else None,
+        "embedded_type": CLASS_NAME_TO_EMBEDDED_TYPE.get(action_class).name if action_class else None,
         "loop": {"true": True, "false": False}.get(action.attrib.get("Loop", False), False),
         "condition": programs_defs.index(action.attrib.get("Condition")) if action.attrib.get("Condition") else None,
         "border_type": action.attrib.get("BorderType", "Any"),
