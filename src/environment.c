@@ -229,6 +229,8 @@ struct environment_subsurface {
   bool is_grabbed;
   struct environment_pointer *drag_pointer;
   int32_t x, y;
+  int32_t surface_x, surface_y;
+  int32_t grab_offset_x, grab_offset_y;
   int32_t width, height;
   int32_t offset_x, offset_y;
 
@@ -1010,12 +1012,10 @@ static void on_pointer_leave(void *data, struct wl_pointer *pointer,
     return;
   }
 
-  env_pointer->frame.mask |= EVENT_FRAME_SURFACE | EVENT_FRAME_MOTIONS;
+  env_pointer->frame.mask |= EVENT_FRAME_SURFACE;
   env_pointer->frame.surface_changed = NULL;
   env_pointer->frame.enter_serial = serial;
 
-  env_pointer->frame.surface_local_x = 0;
-  env_pointer->frame.surface_local_y = 0;
 }
 
 static void on_pointer_motion(void *data, struct wl_pointer *pointer,
@@ -1167,24 +1167,6 @@ static void on_pointer_frame(void *data, struct wl_pointer *pointer) {
         environment_subsurface_from_surface(env_pointer->above_surface);
     surface_pointer_callbacks =
         wl_surface_get_callbacks(env_pointer->above_surface);
-    if (new_env && new_env != env && env_pointer->grabbed_subsurface) {
-      struct mascot *mascot =
-          environment_subsurface_get_mascot(env_pointer->grabbed_subsurface);
-      if (mascot && (config_get_allow_dragging_multihead() ||
-                     config_get_unified_outputs())) {
-        int32_t diffx, diffy;
-        environment_global_coordinates_delta(env, new_env, &diffx, &diffy);
-        int32_t newx = env_pointer->x, newy = env_pointer->y;
-
-        mascot_moved(mascot, newx, yconv(new_env, newy));
-        mascot_apply_environment_position_diff(
-            mascot, diffx, diffy, DIFF_HORIZONTAL_MOVE | DIFF_VERTICAL_MOVE,
-            new_env);
-        mascot_environment_changed(mascot, new_env);
-        env_pointer->frame.mask &= ~EVENT_FRAME_MOTIONS;
-      }
-      env = new_env;
-    }
     if (new_env)
       env_pointer->above_environment = new_env;
 
@@ -1364,47 +1346,10 @@ static void mascot_on_pointer_motion(void *data, struct wl_pointer *pointer,
     return;
   }
 
-  int32_t global_x;
-  int32_t global_y;
-
-  // Transform surface_local coordinates to global coordinates
-  // global_x = env_surface->pose->anchor_x + wl_fixed_to_int(x) +
-  // env_surface->mascot->X->value.i; global_y = env_surface->pose->anchor_y +
-  // wl_fixed_to_int(y) + env_surface->mascot->Y->value.i;
-
-  bool is_dragged_surface = false;
-  if (env_pointer->grabbed_subsurface) {
-    if (env_pointer->grabbed_subsurface->surface ==
-        env_pointer->above_surface) {
-      is_dragged_surface = true;
-    }
-  }
-
-  if (is_dragged_surface) {
-    // Previous position
-    global_x = env_pointer->x;
-    global_y = env_pointer->y;
-
-    global_x += wl_fixed_to_int(x) - env_pointer->surface_x;
-    global_y += wl_fixed_to_int(y) - env_pointer->surface_y;
-  } else {
-    int32_t anchor_x = 0;
-    int32_t anchor_y = 0;
-
-    if (env_surface->pose) {
-      anchor_x = env_surface->pose->anchor_x;
-      anchor_y = env_surface->pose->anchor_y;
-    }
-
-    global_x = mascot->X->value.i + wl_fixed_to_int(x) +
-               anchor_x / (config_get_mascot_scale() * env_surface->env->scale);
-    global_y = yconv(env_surface->env, mascot->Y->value.i) +
-               wl_fixed_to_int(y) +
-               anchor_y / (config_get_mascot_scale() * env_surface->env->scale);
-  }
-
-  env_pointer->x = global_x;
-  env_pointer->y = global_y;
+  // Use the same rendered origin for hit testing and dragging, including
+  // mirrored poses, offsets and scaling. Local motion is not a global delta.
+  env_pointer->x = env_surface->surface_x + wl_fixed_to_int(x);
+  env_pointer->y = env_surface->surface_y + wl_fixed_to_int(y);
 
   if (env_pointer->grabbed_subsurface)
     return;
@@ -2887,6 +2832,8 @@ void environment_subsurface_drag(environment_subsurface_t *surface,
     environment_subsurface_release(surface);
     return;
   }
+  surface->grab_offset_x = surface->x - pointer->x;
+  surface->grab_offset_y = surface->y - pointer->y;
   surface->is_grabbed = true;
   enable_input_on_environments(true);
   wl_surface_set_input_region(surface->surface, empty_region);
@@ -2984,11 +2931,25 @@ bool environment_subsurface_move_to_pointer(environment_subsurface_t *surface) {
   if (!surface->is_grabbed)
     return false;
 
-  environment_subsurface_set_position(surface, surface->drag_pointer->x,
-                                      surface->drag_pointer->y);
-  if (surface->mascot)
-    mascot_moved(surface->mascot, surface->drag_pointer->x,
-                 yconv(surface->env, surface->drag_pointer->y));
+  environment_pointer_t *pointer = surface->drag_pointer;
+  environment_t *pointer_env = environment_from_surface(pointer->above_surface);
+  if (!pointer_env)
+    return false;
+  int32_t x = pointer->x, y = pointer->y;
+  environment_to_global_coordinates(pointer_env, &x, &y);
+  environment_t *target = environment_by_global_coords(x, y);
+  if (!target || !(config_get_allow_dragging_multihead() || config_get_unified_outputs()))
+    target = surface->env;
+  int32_t origin_x = 0, origin_y = 0;
+  environment_to_global_coordinates(target, &origin_x, &origin_y);
+  x += surface->grab_offset_x - origin_x;
+  y += surface->grab_offset_y - origin_y;
+  if (surface->mascot) {
+    mascot_moved(surface->mascot, x, yconv(target, y));
+    if (surface->env != target)
+      mascot_environment_changed(surface->mascot, target);
+  }
+  environment_subsurface_set_position(surface, x, y);
   environment_commit(surface->env);
   return true;
 }
@@ -3317,8 +3278,10 @@ environment_subsurface_set_position(environment_subsurface_t *surface,
   surface_anchor_y = (float)surface_anchor_y /
                      (config_get_mascot_scale() * surface->env->scale);
 
-  wl_subsurface_set_position(surface->subsurface, dx + surface_anchor_x,
-                             dy + surface_anchor_y);
+  surface->surface_x = dx + surface_anchor_x;
+  surface->surface_y = dy + surface_anchor_y;
+  wl_subsurface_set_position(surface->subsurface, surface->surface_x,
+                             surface->surface_y);
 
   surface->x = dx;
   surface->y = dy;
