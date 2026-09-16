@@ -869,7 +869,6 @@ bool mascot_drag_started(struct mascot *mascot,
   mascot->dragged = true;
   mascot->dragged_tick = 0;
   mascot_set_behavior(mascot, mascot->prototype->drag_behavior);
-  environment_subsurface_set_offset(mascot->subsurface, 0, 120);
   environment_subsurface_drag(mascot->subsurface, pointer);
   return true;
 }
@@ -881,9 +880,6 @@ bool mascot_drag_ended(struct mascot *mascot, bool throw) {
   else
     mascot_set_behavior(mascot, mascot_fall_behavior(mascot));
   environment_subsurface_release(mascot->subsurface);
-  environment_subsurface_set_offset(mascot->subsurface, 0, 0);
-  environment_subsurface_move(mascot->subsurface, mascot->X->value.i,
-                              mascot->Y->value.i - 120, true, false);
   return true;
 }
 
@@ -1374,13 +1370,15 @@ enum mascot_tick_result mascot_out_of_bounds_check(struct mascot *mascot) {
       mascot->state != mascot_state_jump) {
     INFO("<Mascot:%s:%u> Mascot out of screen bounds (caught at %d,%d while "
          "allowed values are from 0,0 to %d,%d (Geometry offset is %d,%d)), "
-         "respawning!",
+         "clamping to nearest edge",
          mascot->prototype->name, mascot->id, mascot->X->value.i,
          mascot->Y->value.i, env_bbox->width, env_bbox->height, env_bbox->x,
          env_bbox->y);
-    mascot->X->value.i =
-        rand() % environment_workarea_width(mascot->environment);
-    mascot->Y->value.i = environment_workarea_height(mascot->environment) - 256;
+    // A throw past the last output must stay at that edge, not respawn above.
+    mascot->X->value.i = fmin(fmax(mascot->X->value.i, env_bbox->x),
+                             env_bbox->x + env_bbox->width);
+    mascot->Y->value.i = fmin(fmax(mascot->Y->value.i, env_bbox->y),
+                             env_bbox->y + env_bbox->height);
     mascot_set_behavior(mascot, mascot->prototype->fall_behavior);
     environment_subsurface_set_position(
         mascot->subsurface, mascot->X->value.i,
