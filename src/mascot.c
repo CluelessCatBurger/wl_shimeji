@@ -484,6 +484,10 @@ static enum mascot_tick_result mascot_action_get_next(struct mascot *mascot,
 
     enum action_set_result action_set =
         mascot_set_action(mascot, &actionref, false, tick);
+    if (action_set == ACTION_SET_ACTION_REENTER)
+      return mascot_tick_reenter;
+    if (action_set == ACTION_SET_ACTION_NEXT)
+      return mascot_tick_next;
     if (action_set != ACTION_SET_RESULT_OK) {
       WARN("<Mascot:%s:%u> Failed to set action \"%s\" from behavior \"%s\"",
            mascot->prototype->name, mascot->id, actionref.action->name,
@@ -510,7 +514,7 @@ static enum mascot_tick_result mascot_action_get_next(struct mascot *mascot,
         next_func = state_funcs[actionref.action->type].next;
       }
     } else {
-      return mascot_action_get_next(mascot, tick);
+      return mascot_tick_reenter;
     }
 
     if (!next_func) {
@@ -609,6 +613,8 @@ static enum mascot_tick_result mascot_action_get_next(struct mascot *mascot,
         continue;
       if (set_result == ACTION_SET_ACTION_NEXT)
         return mascot_tick_next;
+      if (set_result == ACTION_SET_ACTION_REENTER)
+        return mascot_tick_reenter;
     }
     if (result.status == mascot_tick_ok)
       return mascot_tick_ok;
@@ -835,7 +841,7 @@ enum mascot_tick_result mascot_tick(struct mascot *mascot, uint32_t tick,
       mascot_drag_ended(mascot, false);
     }
   }
-  if (iteration >= 64) {
+  if (iteration >= 16) {
     WARN("<Mascot:%s:%u> Tick iteration limit reached, considered softlocked "
          "(changing behavior to fall)",
          mascot->prototype->name, mascot->id);
@@ -847,7 +853,7 @@ enum mascot_tick_result mascot_tick(struct mascot *mascot, uint32_t tick,
     }
     mascot_set_behavior(mascot, 0);
     pthread_mutex_unlock(&mascot->tick_lock);
-    return mascot_tick_reenter;
+    return mascot_tick_ok;
   }
   if (tick_return->events_count == 128) {
     pthread_mutex_unlock(&mascot->tick_lock);

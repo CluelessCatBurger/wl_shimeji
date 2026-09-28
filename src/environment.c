@@ -3814,6 +3814,7 @@ uint32_t environment_tick(environment_t *environment, uint32_t tick) {
   pthread_mutex_lock(&environment->mascot_manager.mutex);
   struct list *mascots = environment->mascot_manager.referenced_mascots;
   struct mascot_tick_return result = {};
+  uint32_t reenter_count = 0;
   for (size_t i = 0, c = 0; i < list_size(mascots) && c < list_count(mascots);
        i++) {
     struct mascot *mascot = list_get(mascots, i);
@@ -3848,8 +3849,12 @@ uint32_t environment_tick(environment_t *environment, uint32_t tick) {
       }
     }
     if (tick_status == mascot_tick_reenter) {
-      i--;
-      c--;
+      if (++reenter_count < 16) {
+        i--;
+        c--;
+      } else {
+        WARN("<Environment> Mascot reenter limit exceeded in single tick, deferring to next tick");
+      }
     }
   }
   pthread_mutex_unlock(&environment->mascot_manager.mutex);

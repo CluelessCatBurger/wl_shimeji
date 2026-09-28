@@ -1,0 +1,4008 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+import argparse
+from typing import Callable, Any
+from PIL import Image
+import shutil
+import os
+import random
+from xml.etree import ElementTree
+import tarfile
+from dataclasses import dataclass
+import xml.etree.ElementTree as ET
+import logging
+import zipfile
+import tempfile
+import enum
+import xml
+from typing import Dict, Optional
+import struct
+import pathlib
+import stat
+import io
+import json
+from dataclasses import dataclass, field
+import subprocess
+import time
+import socket
+
+
+
+
+TokenType = enum.Enum('TokenType', ["IDENTIFIER", "NUMBER", "OPENING_BRACKET", "CLOSING_BRACKET", "OPERATOR", "QUESTION_MARK", "COLON", "SEMICOLON", "EOF", "SOF", "ACCESS_OPERATOR", "COMMA", "INVALID"])
+BracketType = enum.Enum('BracketType', ["EXPRESSION", "SCOPE", "ARRAY"])
+OperatorType = enum.Enum('OperatorType', [
+    "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "MODULUS", "POWER",
+    "BITWISE_AND", "BITWISE_OR", "BITWISE_XOR", "BITWISE_NOT", "LEFT_SHIFT", "RIGHT_SHIFT", "OR", "AND",
+    "INCREMENT", "DECREMENT",
+    "LESS_THAN", "LESS_THAN_OR_EQUAL", "GREATER_THAN", "GREATER_THAN_OR_EQUAL", "EQUAL", "NOT_EQUAL", "NOT", "INVALID"
+])
+
+ALLOWED_IDENTIFIERS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+ALLOWED_NUMBERS = set("0123456789")
+ALLOWED_OPERATORS = set("+-*/%&|^~<>=!")
+ALLOWED_BRACKETS = set("()[]{}")
+ALLOWED_WHITESPACE = set(" \t\n")
+ALLOWED_ACCESS_OPERATOR = set(".")
+ALLOWED_QUESTION_MARK = set("?")
+ALLOWED_COLON = set(":")
+ALLOWED_SEMICOLON = set(";")
+ALLOWED_COMMA = set(",")
+
+
+OPERATOR_MAP = {
+    "+": OperatorType.ADD,
+    "-": OperatorType.SUBTRACT,
+    "*": OperatorType.MULTIPLY,
+    "/": OperatorType.DIVIDE,
+    "%": OperatorType.MODULUS,
+    "&": OperatorType.BITWISE_AND,
+    "|": OperatorType.BITWISE_OR,
+    "^": OperatorType.BITWISE_XOR,
+    "~": OperatorType.BITWISE_NOT,
+    "<<": OperatorType.LEFT_SHIFT,
+    ">>": OperatorType.RIGHT_SHIFT,
+    "<": OperatorType.LESS_THAN,
+    "<=": OperatorType.LESS_THAN_OR_EQUAL,
+    ">": OperatorType.GREATER_THAN,
+    ">=": OperatorType.GREATER_THAN_OR_EQUAL,
+    "==": OperatorType.EQUAL,
+    "!=": OperatorType.NOT_EQUAL,
+    "**": OperatorType.POWER,
+    "!": OperatorType.NOT,
+    "||": OperatorType.OR,
+    "&&": OperatorType.AND,
+    "++": OperatorType.INCREMENT,
+    "--": OperatorType.DECREMENT,
+
+}
+
+BRACKET_MAP = {
+    "(": BracketType.EXPRESSION,
+    ")": BracketType.EXPRESSION,
+    "[": BracketType.ARRAY,
+    "]": BracketType.ARRAY,
+    "{": BracketType.SCOPE,
+    "}": BracketType.SCOPE,
+}
+
+OPENING_BRACKETS = set("([{")
+CLOSING_BRACKETS = set(")]}")
+
+def prepare_string(js_string: str) -> str:
+    if (js_string.startswith("${") or js_string.startswith("#{") ) and js_string.endswith("}"):
+        js_string = js_string[2:-1]
+    js_string = js_string.replace("&lt;", "<")\
+    .replace("&gt;", ">").replace("&amp;", "&")\
+    .replace("&quot;", "\"").replace("&apos;", "'")\
+    .replace("&nbsp;", " ").replace("&copy;", "©")\
+    .replace("&reg;", "®").replace("&trade;", "™")\
+    .replace("&euro;", "€").replace("&pound;", "£")
+    return js_string
+
+class Tokenizer:
+    class Token:
+        type: TokenType = None
+        subtype: BracketType | OperatorType = None
+        value: str = None
+        start: tuple[int,int] = None
+        end: tuple[int,int] = None
+
+        invalid_by: str = None
+
+        def __init__(self, *args, **kwargs) -> None:
+            x = ["type", "subtype", "value", "start", "end", "invalid_by"]
+
+            for k,v in kwargs.items():
+                if k in x:
+                    setattr(self, k, v)
+                x.remove(k)
+
+            for arg in args:
+                setattr(self, x.pop(0), arg)
+
+        def __repr__(self) -> str:
+            return f"<Token:{self.type}:{self.subtype} `{self.value}` at {self.start}>"
+
+    @staticmethod
+    def __prepare_string(js_string: str) -> str:
+        if (js_string.startswith("${") or js_string.startswith("#{") ):
+            if js_string.endswith("}"):
+                js_string = js_string[2:-1]
+            else:
+                raise SyntaxError("Invalid string interpolation")
+
+        js_string = js_string.lower().replace("&lt;", "<")\
+        .replace("&gt;", ">").replace("&amp;", "&")\
+        .replace("&quot;", "\"").replace("&apos;", "'")\
+        .replace("&nbsp;", " ").replace("&copy;", "©")\
+        .replace("&reg;", "®").replace("&trade;", "™")\
+        .replace("&euro;", "€").replace("&pound;", "£")\
+        .replace("math.random*", "math.random()*")\
+        .replace("math.random/", "math.random()/")\
+        .replace("math.random-", "math.random()-")\
+        .replace("math.random+", "math.random()+")
+
+        return js_string
+
+    @staticmethod
+    def tokenize(string: str) -> list[Token]:
+
+        string = Tokenizer.__prepare_string(string)
+
+        tokens: list[Tokenizer.Token] = []
+        line, col = 0,0
+        current_token = Tokenizer.Token()
+
+        for char in string:
+            if char == '\n':
+                line += 1
+                col = 0
+
+            if current_token.type is None:
+                if char not in ALLOWED_WHITESPACE:
+                    current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+            else:
+                if char in ALLOWED_WHITESPACE:
+                    tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                    current_token = Tokenizer.Token()
+
+                elif current_token.type == TokenType.IDENTIFIER:
+                    if char in ALLOWED_IDENTIFIERS or char in ALLOWED_NUMBERS:
+                        current_token.value += char
+
+                    else:
+                        tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                        current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                elif current_token.type == TokenType.NUMBER:
+                    if char in ALLOWED_NUMBERS or char == ".":
+                        current_token.value += char
+
+                    elif char in ALLOWED_IDENTIFIERS:
+                        current_token.type = TokenType.INVALID
+                        current_token.invalid_by = f"Invalid character {char} in number"
+
+                    else:
+                        tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                        current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                elif current_token.type == TokenType.OPERATOR:
+                    if current_token.value + char in OPERATOR_MAP:
+                        current_token.value += char
+
+                    else:
+                        tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                        current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                elif current_token.type == TokenType.OPENING_BRACKET or current_token.type == TokenType.CLOSING_BRACKET:
+                    tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                    current_token.subtype = BRACKET_MAP[current_token.value]
+                    current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+                else:
+                    tokens.append(Tokenizer.__emit_token(current_token, line, col))
+                    current_token = Tokenizer.__initialize_token_by_char(char, line, col)
+
+            col += 1
+
+        if current_token.type is not None:
+            tokens.append(Tokenizer.__emit_token(current_token, line, col))
+
+        return tokens
+
+    @staticmethod
+    def __emit_token(current_token: Token, line: int, col: int) -> Token:
+        if current_token.type == TokenType.OPERATOR:
+            current_token.subtype = OPERATOR_MAP.get(current_token.value)
+            if current_token.subtype is None:
+                current_token.type = TokenType.INVALID
+                current_token.invalid_by = f"Invalid operator {current_token.value}"
+
+        elif current_token.type == TokenType.OPENING_BRACKET or current_token.type == TokenType.CLOSING_BRACKET:
+            current_token.subtype = BRACKET_MAP[current_token.value]
+
+        current_token.end = (line, col)
+        return current_token
+
+    @staticmethod
+    def __initialize_token_by_char(char: str, line: int, col: int) -> Token:
+        current_token = Tokenizer.Token()
+        if char in ALLOWED_IDENTIFIERS:
+            current_token.type = TokenType.IDENTIFIER
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_NUMBERS:
+            current_token.type = TokenType.NUMBER
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_OPERATORS:
+            current_token.type = TokenType.OPERATOR
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_BRACKETS:
+            current_token.type = TokenType.OPENING_BRACKET if char in OPENING_BRACKETS else TokenType.CLOSING_BRACKET
+            current_token.subtype = BRACKET_MAP[char]
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_ACCESS_OPERATOR:
+            current_token.type = TokenType.ACCESS_OPERATOR
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_QUESTION_MARK:
+            current_token.type = TokenType.QUESTION_MARK
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_COLON:
+            current_token.type = TokenType.COLON
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_SEMICOLON:
+            current_token.type = TokenType.SEMICOLON
+            current_token.value = char
+            current_token.start = (line, col)
+
+        elif char in ALLOWED_COMMA:
+            current_token.type = TokenType.COMMA
+            current_token.value = char
+            current_token.start = (line, col)
+
+        return current_token
+
+
+
+
+
+class ASTNode:
+    pass
+
+class BinaryOpNode(ASTNode):
+    def __init__(self, left, operator, right):
+        self.left = left
+        self.operator = operator
+        self.right = right
+
+    def __repr__(self):
+        return f"({self.left} {self.operator} {self.right})"
+
+class UnaryOpNode(ASTNode):
+    def __init__(self, operator: Tokenizer.Token, operand: ASTNode):
+        self.operator = operator
+        self.operand = operand
+
+    def __repr__(self):
+        return f"({self.operator}{self.operand})"
+
+class LiteralNode(ASTNode):
+    def __init__(self, value):
+        self.value = value
+
+    def __repr__(self):
+        return str(self.value)
+
+class VariableNode(ASTNode):
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+class FunctionCallNode(ASTNode):
+    def __init__(self, function_name, arguments):
+        self.function_name = function_name
+        self.arguments = arguments
+
+    def __repr__(self):
+        return f"{self.function_name}({', '.join(map(str, self.arguments))})"
+
+class MemberAccessNode(ASTNode):
+    def __init__(self, left, right):
+        self.left = left
+        self.right = right
+
+    def __str__(self) -> str:
+        return f"{self.left}.{self.right}"
+
+    def __repr__(self):
+        return f"<MemberAccessNode: {str(self)}>"
+
+class TernaryOpNode(ASTNode):
+    def __init__(self, condition, true_expr, false_expr):
+        self.condition = condition
+        self.true_expr = true_expr
+        self.false_expr = false_expr
+
+    def __repr__(self):
+        return f"({self.condition} ? {self.true_expr} : {self.false_expr})"
+
+class AbstractSyntaxTree:
+    def __init__(self, tokens: list[Tokenizer.Token]):
+        self.tokens = tokens
+        self.pos = 0
+        self.operator_stack = []
+        self.operand_stack = []
+
+    def current_token(self) -> Tokenizer.Token:
+        if self.pos < len(self.tokens):
+            return self.tokens[self.pos]
+        return Tokenizer.Token(type=TokenType.EOF)
+
+    def eat(self, token_type: TokenType) -> Tokenizer.Token:
+        current = self.current_token()
+        if current.type == token_type:
+            self.pos += 1
+            return current
+        raise SyntaxError(f"Expected token {token_type}, but got {current.type}")
+
+    def parse(self) -> ASTNode:
+        return self.parse_expression()
+
+    def parse_expression(self) -> ASTNode:
+        return self.parse_ternary()
+
+    def parse_ternary(self) -> ASTNode:
+        condition = self.parse_logical_or()
+        if self.current_token().type == TokenType.QUESTION_MARK:
+            self.eat(TokenType.QUESTION_MARK)
+            true_expr = self.parse_expression()
+            self.eat(TokenType.COLON)
+            false_expr = self.parse_expression()
+            return TernaryOpNode(condition, true_expr, false_expr)
+        return condition
+
+    def parse_logical_or(self) -> ASTNode:
+        node = self.parse_logical_and()
+        while self.current_token().subtype == OperatorType.OR:
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_logical_and()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_logical_and(self) -> ASTNode:
+        node = self.parse_equality()
+        while self.current_token().subtype == OperatorType.AND:
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_equality()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_equality(self) -> ASTNode:
+        node = self.parse_comparison()
+        while self.current_token().subtype in (OperatorType.EQUAL, OperatorType.NOT_EQUAL):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_comparison()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_comparison(self) -> ASTNode:
+        node = self.parse_additive()
+        while self.current_token().subtype in (OperatorType.LESS_THAN, OperatorType.LESS_THAN_OR_EQUAL, OperatorType.GREATER_THAN, OperatorType.GREATER_THAN_OR_EQUAL):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_additive()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_additive(self) -> ASTNode:
+        node = self.parse_multiplicative()
+        while self.current_token().subtype in (OperatorType.ADD, OperatorType.SUBTRACT):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_multiplicative()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_multiplicative(self) -> ASTNode:
+        node = self.parse_unary()
+        while self.current_token().subtype in (OperatorType.MULTIPLY, OperatorType.DIVIDE, OperatorType.MODULUS):
+            operator = self.eat(TokenType.OPERATOR)
+            right = self.parse_unary()
+            node = BinaryOpNode(node, operator, right)
+        return node
+
+    def parse_unary(self) -> ASTNode:
+        token = self.current_token()
+        if token.subtype in (OperatorType.NOT, OperatorType.SUBTRACT, OperatorType.BITWISE_NOT, OperatorType.ADD):
+            operator = self.eat(TokenType.OPERATOR)
+            operand = self.parse_unary()
+            return UnaryOpNode(operator, operand)
+        return self.parse_primary()
+
+    def parse_primary(self) -> ASTNode:
+        token = self.current_token()
+        if token.type == TokenType.NUMBER:
+            self.eat(TokenType.NUMBER)
+            return LiteralNode(float(token.value))
+        if token.type == TokenType.IDENTIFIER:
+            if token.value == "true":
+                self.eat(TokenType.IDENTIFIER)
+                ident_node = LiteralNode("1.0")
+            elif token.value == "false":
+                self.eat(TokenType.IDENTIFIER)
+                ident_node = LiteralNode("0.0")
+            else:
+                ident_node = VariableNode(self.eat(TokenType.IDENTIFIER).value)
+            while self.current_token().type == TokenType.ACCESS_OPERATOR:
+                self.eat(TokenType.ACCESS_OPERATOR)
+                right = self.eat(TokenType.IDENTIFIER)
+                ident_node = MemberAccessNode(ident_node, right.value)
+            if self.current_token().type == TokenType.OPENING_BRACKET:
+                self.eat(TokenType.OPENING_BRACKET)
+                arguments = []
+                while self.current_token().type != TokenType.CLOSING_BRACKET and self.current_token().type != TokenType.EOF:
+                    arguments.append(self.parse_expression())
+                    if self.current_token().type == TokenType.COMMA:
+                        self.eat(TokenType.COMMA)
+                if self.current_token().type == TokenType.CLOSING_BRACKET:
+                    self.eat(TokenType.CLOSING_BRACKET)
+                else:
+                    raise SyntaxError("Missing closing bracket for function call")
+                return FunctionCallNode(ident_node, arguments)
+            return ident_node
+        if token.type == TokenType.OPENING_BRACKET:
+            self.eat(TokenType.OPENING_BRACKET)
+            node = self.parse_expression()
+            self.eat(TokenType.CLOSING_BRACKET)
+            return node
+        if token.type == TokenType.OPERATOR and token.subtype in (OperatorType.ADD, OperatorType.SUBTRACT):
+            node = self.parse_unary()
+            return node
+        raise SyntaxError(f"Unexpected token: {token}")
+
+
+
+
+
+
+
+OP = enum.Enum("OP", [
+    "ERR",
+    "RET",
+    # Stack section
+    # Stack section
+    "LOADL",
+    "LOADE",
+    "STORE",
+    # Arithmetic section
+    # Arithmetic section
+    "ADD",
+    "SUB",
+    "MUL",
+    "DIV",
+    "MOD",
+    "POW",
+    # Bitwise section
+    # Bitwise section
+    "AND",
+    "OR",
+    "XOR",
+    "NOT",
+    "LSHIFT",
+    "RSHIFT",
+    # Comparison section
+    # Comparison section
+    "LT",
+    "LE",
+    "GT",
+    "GE",
+    "EQ",
+    "NE",
+    # Logical section
+    # Logical section
+    "LAND",
+    "LOR",
+    "LNOT",
+    # Control section
+    # Control section
+    # Branch
+    # Branch
+    "BQZ",
+    "BNZ",
+    "JMP",
+    # Call
+    # Call
+    "CALL"
+])
+
+FORCED_EXTERNAL = [
+    "mascot.anchor",
+    "mascot.totalcount",
+    "mascot.count"
+]
+FORCED_LOCAL = [
+    "Name",
+    "Type",
+    "Class",
+    "Embedded",
+    "Move",
+    "Stay",
+    "Animate",
+    "Sequence",
+    "Select",
+    "BorderType",
+    "Ceiling",
+    "Wall",
+    "Floor",
+    "TargetX",
+    "TargetY",
+    "VelocityX",
+    "VelocityY",
+    "VelocityParam",
+    "InitialVX",
+    "InitialVY",
+    "Gravity",
+    "RegistanceX",
+    "RegistanceY",
+    "LookRight",
+    "IeOffsetX",
+    "IeOffsetY",
+    "X",
+    "Y",
+    "BornX",
+    "BornY",
+    "BornBehaviour",
+    "BornMascot",
+    "BornInterval",
+    "BornTransient",
+    "BornCount",
+    "TransformBehaviour",
+    "TransformMascot",
+    "Affordance",
+    "Behaviour",
+    "TargetBehaviour",
+    "Loop",
+    "Animation",
+    "Condition",
+    "Image",
+    "ImageRight",
+    "ImageAnchor",
+    "Velocity",
+    "Duration",
+    "Draggable",
+    "Sound",
+    "Volume",
+    "BehaviourList",
+    "ChaseMouse",
+    "Frequency",
+    "Hidden",
+    "NextBehaviourList",
+    "Add",
+    "BehaviourReference",
+    "Fall",
+    "Dragged",
+    "Thrown",
+    "FootX",
+    "FootDX",
+    "OffsetX",
+    "OffsetY",
+    "Pose",
+    "Hotspot",
+    "Shape",
+    "Origin",
+    "Size",
+    "Constant",
+    "Value",
+    "IsTurn",
+    "TargetLook",
+    "Information",
+    "PreviewImage",
+    "SplashImage",
+    "Artist",
+    "Scripter",
+    "URL",
+    "Commissioner",
+    "Support",
+    "Toggleable",
+    "Count",
+    "LookRight",
+    "Gap"
+]
+
+SYMNAME_REMAP = {x.lower(): f"mascot.{x[0].lower()}{x[1:]}" for x in FORCED_LOCAL}
+
+class Program:
+    def __init__(self):
+        self.instructions = []
+        self.local_vars = []
+        self.global_vars = []
+        self.functions = []
+        self.evaluate_once = True
+
+    @staticmethod
+    def from_ast(ast: ASTNode, local_vars: list = [], global_vars: list = [], functions: list = []):
+        program = Program()
+        program.local_vars = local_vars
+        program.global_vars = global_vars
+        program.functions = functions
+        program._compile(ast)
+        program.instructions.append((OP.RET,))
+        return program
+
+    def _compile(self, node: ASTNode):
+        if isinstance(node, LiteralNode):
+            self.instructions.append((OP.STORE, node.value))
+        elif isinstance(node, VariableNode):
+            name = node.name
+            symlist = self.local_vars if not name.lower() in FORCED_EXTERNAL else self.global_vars
+            name = SYMNAME_REMAP.get(name.lower(), name)
+            if name not in symlist:
+                symlist.append(name)
+            self.instructions.append((OP.LOADL, symlist.index(name)))
+
+        elif isinstance(node, MemberAccessNode):
+            name = str(node)
+            name = SYMNAME_REMAP.get(name.lower(), name)
+            if name.count(".") != 1 or name.lower() in FORCED_EXTERNAL and name not in FORCED_LOCAL:
+                if name not in self.global_vars:
+                    self.global_vars.append(name)
+                self.instructions.append((OP.LOADE, self.global_vars.index(name)))
+            else:
+                if name.startswith("mascot.") or name in FORCED_LOCAL:
+                    if name not in self.local_vars:
+                        self.local_vars.append(name)
+                    self.instructions.append((OP.LOADL, self.local_vars.index(name)))
+                if name.startswith("math.") or name in FORCED_EXTERNAL:
+                    if name not in self.global_vars:
+                        self.global_vars.append(name)
+                    self.instructions.append((OP.LOADE, self.global_vars.index(name)))
+        elif isinstance(node, UnaryOpNode):
+            if node.operator.subtype == OperatorType.NOT:
+                self._compile(node.operand)
+                self.instructions.append((OP.LNOT,))
+            elif node.operator.subtype == OperatorType.SUBTRACT:
+                self.instructions.append((OP.STORE, 0))
+                self._compile(node.operand)
+                self.instructions.append((OP.SUB,))
+            elif node.operator.subtype == OperatorType.BITWISE_NOT:
+                self._compile(node.operand)
+                self.instructions.append((OP.NOT,))
+            elif node.operator.subtype == OperatorType.ADD:
+                self._compile(node.operand)
+            else:
+                raise Exception("Unknown unary operator")
+        elif isinstance(node, BinaryOpNode):
+            self._compile(node.left)
+            self._compile(node.right)
+            if node.operator.subtype == OperatorType.ADD:
+                self.instructions.append((OP.ADD,))
+            elif node.operator.subtype == OperatorType.SUBTRACT:
+                self.instructions.append((OP.SUB,))
+            elif node.operator.subtype == OperatorType.MULTIPLY:
+                self.instructions.append((OP.MUL,))
+            elif node.operator.subtype == OperatorType.DIVIDE:
+                self.instructions.append((OP.DIV,))
+            elif node.operator.subtype == OperatorType.MODULUS:
+                self.instructions.append((OP.MOD,))
+            elif node.operator.subtype == OperatorType.POWER:
+                self.instructions.append((OP.POW,))
+            elif node.operator.subtype == OperatorType.BITWISE_AND:
+                self.instructions.append((OP.AND,))
+            elif node.operator.subtype == OperatorType.BITWISE_OR:
+                self.instructions.append((OP.OR,))
+            elif node.operator.subtype == OperatorType.BITWISE_XOR:
+                self.instructions.append((OP.XOR,))
+            elif node.operator.subtype == OperatorType.LEFT_SHIFT:
+                self.instructions.append((OP.LSHIFT,))
+            elif node.operator.subtype == OperatorType.RIGHT_SHIFT:
+                self.instructions.append((OP.RSHIFT,))
+            elif node.operator.subtype == OperatorType.LESS_THAN:
+                self.instructions.append((OP.LT,))
+            elif node.operator.subtype == OperatorType.LESS_THAN_OR_EQUAL:
+                self.instructions.append((OP.LE,))
+            elif node.operator.subtype == OperatorType.GREATER_THAN:
+                self.instructions.append((OP.GT,))
+            elif node.operator.subtype == OperatorType.GREATER_THAN_OR_EQUAL:
+                self.instructions.append((OP.GE,))
+            elif node.operator.subtype == OperatorType.EQUAL:
+                self.instructions.append((OP.EQ,))
+            elif node.operator.subtype == OperatorType.NOT_EQUAL:
+                self.instructions.append((OP.NE,))
+            elif node.operator.subtype == OperatorType.AND:
+                self.instructions.append((OP.LAND,))
+            elif node.operator.subtype == OperatorType.OR:
+                self.instructions.append((OP.LOR,))
+            else:
+                raise Exception("Unknown binary operator")
+
+        elif isinstance(node, TernaryOpNode):
+            self._compile(node.condition)
+            branch_instr = len(self.instructions)
+            self.instructions.append((OP.BQZ, 0))
+            self._compile(node.true_expr)
+            jump_instr = len(self.instructions)
+            self.instructions.append((OP.JMP, 0))
+            self.instructions[branch_instr] = (OP.BQZ, len(self.instructions)-branch_instr)
+            self._compile(node.false_expr)
+            self.instructions[jump_instr] = (OP.JMP, len(self.instructions)-jump_instr)
+
+
+        elif isinstance(node, FunctionCallNode):
+            name = str(node.function_name)
+            for arg in node.arguments:
+                self._compile(arg)
+            if name not in self.functions:
+                self.functions.append(name)
+            self.instructions.append((OP.CALL, self.functions.index(name)))
+
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: {len(self.instructions)} instructions long, located at 0x{id(self)}>"
+
+
+
+INLINED_ACTION_AUTOINCREMENT = 0
+INLINED_BEHAVIOUR_AUTOINCREMENT = 0
+INLINED_CONDITION_AUTOINCREMENT = 0
+
+class RedefinitionError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+ACTION_TYPE = enum.Enum("ActionType", [
+    "Fall",
+    "Move",
+    "Embedded",
+    "Stay",
+    "Animate",
+    "Sequence",
+    "Select"
+])
+
+EMBEDDED_TYPE = enum.Enum("EmbeddedType", [
+    "Jump",
+    "Fall",
+    "Look",
+    "Offset",
+    "FallWithIE",
+    "JumpWithIE",
+    "WalkWithIE",
+    "ThrowIE",
+    "Dragged",
+    "Resist",
+    "Breed",
+    "Broadcast",
+    "ScanMove",
+    "Interact",
+    "Transform",
+    "Scanjump",
+    "Dispose",
+    "Mute"
+])
+
+ACTION_CONTENT_TYPE = enum.Enum("ActionContentType", [
+    "ActionReference",
+    "Animation",
+])
+
+CLASS_NAME_TO_EMBEDDED_TYPE = {
+    f"com.group_finity.mascot.action.{embedded_type.name}": embedded_type
+    for embedded_type in EMBEDDED_TYPE
+}
+
+CLASS_NAME_TO_EMBEDDED_TYPE["com.group_finity.mascot.action.Regist"] = EMBEDDED_TYPE.Resist
+CLASS_NAME_TO_EMBEDDED_TYPE["com.group_finity.mascot.action.SelfDestruct"] = EMBEDDED_TYPE.Dispose
+
+namespace = {'ns': 'http://www.group-finity.com/Mascot'}
+
+MASCOT_VAR_NAMES = [
+            "X",
+            "Y",
+            "TargetX",
+            "TargetY",
+            "VelocityParam",
+            "InitialVX",
+            "InitialVY",
+            "Gravity",
+            "RegistanceX",
+            "RegistanceY",
+            "LookRight",
+            "IeOffsetX",
+            "IeOffsetY",
+            "BornX",
+            "BornY",
+            "Duration",
+            "BornInterval",
+            "BornCount",
+            "BornTransient",
+            # "BornBehaviour",
+            # "BornBehaviour",
+            # "BornMascot",
+            # "BornMascot",
+            # "TransformBehaviour",
+            # "TransformBehaviour",
+            # "TransformMascot",
+            # "TransformMascot",
+            # "Affordance",
+            # "Affordance",
+            # "Behaviour",
+            # "Behaviour",
+            # "TargetBehaviour",
+            # "TargetBehaviour",
+            "Loop",
+            "Condition",
+            # "Velocity",
+            # "Velocity",
+            "Duration",
+            "FootX",
+            "FootDX",
+            "OffsetX",
+            "OffsetY",
+            "Gap"
+]
+
+def vector_to_tuple(what: str) -> tuple[int, int]:
+    if what is None:
+        return (0, 0)
+    vars = what.split(",")
+    if len(vars) != 2:
+        return (int(vars[0]), int(vars[0]))
+    return (int(vars[0]), int(vars[1]))
+
+def parse_animation(animation: ElementTree.Element, programs_defs: list[str]) -> dict:
+    if animation.tag != "{http://www.group-finity.com/Mascot}Animation":
+        raise SyntaxError("Invalid XML format: Expected Animation")
+
+    animation_obj = {
+        "type": "Animation",
+        "condition": programs_defs.index(animation.attrib.get("Condition")) if animation.attrib.get("Condition") else None,
+        "frames": [],
+        "hotspots": [],
+        "frame_count": 0,
+        "hotspots_count": 0
+    }
+
+    for child in animation:
+        if child.tag == "{http://www.group-finity.com/Mascot}Pose":
+            frame_obj = {
+                "type": "Frame",
+                "image": child.attrib.get("Image"),
+                "image_right": child.attrib.get("ImageRight"),
+                "image_anchor_x": vector_to_tuple(child.attrib.get("ImageAnchor"))[0],
+                "image_anchor_y": vector_to_tuple(child.attrib.get("ImageAnchor"))[1],
+                "velocity_x": vector_to_tuple(child.attrib.get("Velocity"))[0],
+                "velocity_y": vector_to_tuple(child.attrib.get("Velocity"))[1],
+                "duration": int(child.attrib.get("Duration", 0))
+            }
+
+            if frame_obj["image"]:
+                frame_obj["image"] = frame_obj["image"].lstrip("/").replace('.png', '.qoi')
+            if frame_obj["image_right"]:
+                frame_obj["image_right"] = frame_obj["image_right"].lstrip("/").replace('.png', '.qoi')
+
+            animation_obj["frames"].append(frame_obj)
+            animation_obj["frame_count"] += 1
+        elif child.tag == "{http://www.group-finity.com/Mascot}Hotspot":
+            hotspot_obj = {
+                "type": "Hotspot",
+                "shape": child.get("Shape", "Rectangle"),
+                "x": int(child.get("Origin", "0,0").split(",")[0]),
+                "y": int(child.get("Origin", "0,0").split(",")[1]),
+                "width": int(child.get("Size", "0,0").split(",")[0]),
+                "height": int(child.get("Size", "0,0").split(",")[1]),
+                "behavior": child.get("Behavior", None)
+            }
+
+            animation_obj["hotspots"].append(hotspot_obj)
+            animation_obj["hotspots_count"] += 1
+        else:
+            print(f"Unknown tag in animation: {child.tag}; skipping...")
+            continue
+
+    return animation_obj
+
+
+
+def parse_action_reference(actionref: ElementTree.Element, action_definitions: dict, programs_defs: list[str]) -> dict:
+    if actionref.tag != "{http://www.group-finity.com/Mascot}ActionReference":
+        raise SyntaxError("Invalid XML format: Expected ActionReference")
+
+    action_name = actionref.attrib.get("Name")
+    if action_name is None:
+        raise SyntaxError("Invalid XML format: ActionReference name not found")
+
+    actionref_obj = {
+        "type": "ActionReference",
+        "action_name": action_name,
+        "duration": programs_defs.index(actionref.attrib.get("Duration")) if actionref.attrib.get("Duration") else None,
+        "condition": programs_defs.index(actionref.attrib.get("Condition")) if actionref.attrib.get("Condition") else None,
+        "locals_overrides": {},
+        "locals_count": 0,
+    }
+
+    for attrib_name, attrib_value in actionref.attrib.items():
+        if attrib_name in MASCOT_VAR_NAMES:
+            actionref_obj["locals_overrides"][f"mascot.{attrib_name}"] = programs_defs.index(attrib_value)
+            actionref_obj["locals_count"] += 1
+
+    if actionref_obj["locals_overrides"].pop("mascot.Duration", None):
+        actionref_obj["locals_count"] -= 1
+
+    if actionref_obj["locals_overrides"].pop("mascot.Loop", None):
+        actionref_obj["locals_count"] -= 1
+
+    return actionref_obj
+
+def parse_action(action: ElementTree.Element, action_definitions: dict, programs_defs = list[str], depth: int = 0) -> dict:
+    global INLINED_ACTION_AUTOINCREMENT
+
+    action_type = action.attrib.get("Type")
+    if action_type is None:
+        raise SyntaxError("Invalid XML format: Action type not found")
+
+    action_type = ACTION_TYPE[action_type]
+
+    action_object = {
+        "type": action_type.name,
+        "name": action.attrib.get("Name", None),
+        "content": [],
+        "content_count": 0,
+        "local_variables": {},
+        "local_variables_count": 0,
+        "embedded_type": CLASS_NAME_TO_EMBEDDED_TYPE.get(action.attrib.get("Class")).name if action.attrib.get("Class") else None,
+        "loop": {"true": True, "false": False}.get(action.attrib.get("Loop", False), False),
+        "condition": programs_defs.index(action.attrib.get("Condition")) if action.attrib.get("Condition") else None,
+        "border_type": action.attrib.get("BorderType", "Any"),
+    }
+
+    if action_object["name"] == None:
+        if depth == 0:
+            raise SyntaxError("Invalid XML format: Root action must have a name")
+        action_object["name"] = f"___INLINED_ACTION_{INLINED_ACTION_AUTOINCREMENT}"
+        INLINED_ACTION_AUTOINCREMENT += 1
+
+    for child in action:
+        if child.tag == "{http://www.group-finity.com/Mascot}Action":
+            if action_type not in [ACTION_TYPE.Sequence, ACTION_TYPE.Select]:
+                print(f"{' ' * depth}Warning: Action type {action_type} does not support nested actions")
+                continue
+            action_obj = parse_action(child, action_definitions, programs_defs, depth + 1)
+            action_object["content"].append(
+                {
+                    "type": "ActionReference",
+                    "action_name": action_obj["name"],
+                    "duration": programs_defs.index(child.attrib.get("Duration")) if child.attrib.get("Duration") else None,
+                    "condition": programs_defs.index(child.attrib.get("Condition")) if child.attrib.get("Condition") else None,
+                    "locals_overrides": {},
+                    "locals_count": 0,
+                }
+            )
+            action_object["content_count"] += 1
+        elif child.tag == "{http://www.group-finity.com/Mascot}ActionReference":
+            if action_type not in [ACTION_TYPE.Sequence, ACTION_TYPE.Select]:
+                print(f"{' ' * depth}Warning: Action type {action_type} does not support nested actions")
+                continue
+            actionref = parse_action_reference(child, action_definitions, programs_defs)
+            action_object["content"].append(actionref)
+            action_object["content_count"] += 1
+
+        elif child.tag == "{http://www.group-finity.com/Mascot}Animation":
+            if action_type in [ACTION_TYPE.Sequence, ACTION_TYPE.Select]:
+                print(f"{' ' * depth}Warning: Action type {action_type} does not support animations")
+                continue
+            animation_obj = parse_animation(child, programs_defs)
+            action_object["content"].append(animation_obj)
+            action_object["content_count"] += 1
+
+    for attrib_name, attrib_value in action.attrib.items():
+        if attrib_name in MASCOT_VAR_NAMES:
+            action_object["local_variables"][f"mascot.{attrib_name}"] = programs_defs.index(attrib_value)
+            action_object["local_variables_count"] += 1
+        if attrib_name == "TargetBehavior":
+            action_object["target_behavior"] = attrib_value
+        if attrib_name == "BornBehavior":
+            action_object["born_behavior"] = attrib_value
+        if attrib_name == "SelectBehavior":
+            action_object["select_behavior"] = attrib_value
+        if attrib_name == "Affordance":
+            action_object["affordance"] = attrib_value
+        if attrib_name == "TransformMascot":
+            action_object["transform_target"] = attrib_value
+        if attrib_name == "Behavior":
+            action_object["behavior"] = attrib_value
+        if attrib_name == "BornMascot":
+            action_object["born_mascot"] = attrib_value
+        if attrib_name == "TargetLook":
+            action_object["target_look"] = {"true": True, "false": False}.get(attrib_value, False)
+
+    if action_object["name"] in action_definitions:
+        raise SyntaxError(f"Action {action_object['name']} redefinition")
+
+    if action_object["local_variables"].pop("mascot.Duration", None):
+        action_object["local_variables_count"] -= 1
+
+    if action_object["local_variables"].pop("mascot.Loop", None):
+        action_object["local_variables_count"] -= 1
+
+    action_definitions[action_object["name"]] = action_object
+    return action_object
+
+
+def parse_action_list(actions_list: ElementTree.Element, action_definitions: dict, programs_defs: list[str]):
+    for action in actions_list:
+        if action.tag == "{http://www.group-finity.com/Mascot}Action":
+            action_object = parse_action(action, action_definitions, programs_defs)
+        else:
+            raise SyntaxError("Invalid XML format")
+
+def behavior_to_ref(behavior: dict) -> dict:
+    behavior_reference = {
+        "name": behavior["name"],
+        "frequency": behavior["frequency"],
+    }
+
+    return behavior_reference
+
+def parse_behavior(behavior: ElementTree.Element, behavior_definitions: dict, action_definitions: dict, programs_defs: list[str]) -> dict:
+    global INLINED_BEHAVIOUR_AUTOINCREMENT
+
+    behavior_object = {
+        "name": behavior.attrib.get("Name", None),
+        "action": None,
+        "next_behavior_list": [],
+        "next_behavior_list_count": 0,
+        "hidden": False,
+        "condition": programs_defs.index(behavior.attrib.get("Condition")) if behavior.attrib.get("Condition") else None,
+        "is_conditioner": False,
+        "next_behavior_list_add": True,
+        "frequency": int(behavior.attrib.get("Frequency", 0))
+    }
+
+    if behavior.tag == "{http://www.group-finity.com/Mascot}Condition":
+        behavior_object["name"] = f"___CONDITION_{INLINED_BEHAVIOUR_AUTOINCREMENT}"
+        INLINED_BEHAVIOUR_AUTOINCREMENT += 1
+        behavior_object["is_conditioner"] = True
+        behavior_object["hidden"] = True
+        behavior_object["frequency"] = 0
+
+        for child in behavior:
+            try:
+                new_behavior = parse_behavior(child, behavior_definitions, action_definitions, programs_defs)
+                behavior_object["next_behavior_list"].append(behavior_to_ref(new_behavior))
+                behavior_object["next_behavior_list_count"] += 1
+            except RedefinitionError:
+                behavior_reference = {
+                    "name": child.attrib.get("Name"),
+                    "frequency": int(child.attrib.get("Frequency", 0)),
+                }
+                behavior_object["next_behavior_list"].append(behavior_reference)
+                behavior_object["next_behavior_list_count"] += 1
+
+    elif behavior.tag == "{http://www.group-finity.com/Mascot}Behavior":
+        for child in behavior:
+            if child.tag == "{http://www.group-finity.com/Mascot}NextBehaviorList":
+                if child.attrib.get("Add", "true") == "false":
+                    behavior_object["next_behavior_list_add"] = False
+                for subchild in child:
+                    if subchild.tag == "{http://www.group-finity.com/Mascot}Behavior":
+                        try:
+                            new_behavior = parse_behavior(subchild, behavior_definitions, action_definitions, programs_defs)
+                            behavior_object["next_behavior_list"].append(behavior_to_ref(new_behavior))
+                            behavior_object["next_behavior_list_count"] += 1
+                        except RedefinitionError:
+                            behavior_reference = {
+                                "name": subchild.attrib.get("Name"),
+                                "frequency": int(subchild.attrib.get("Frequency", 0)),
+                            }
+                            behavior_object["next_behavior_list"].append(behavior_reference)
+                            behavior_object["next_behavior_list_count"] += 1
+                    elif subchild.tag == "{http://www.group-finity.com/Mascot}Condition":
+                        new_behavior = parse_behavior(subchild, behavior_definitions, action_definitions, programs_defs)
+                        behavior_object["next_behavior_list"].append(behavior_to_ref(new_behavior))
+                        behavior_object["next_behavior_list_count"] += 1
+                    elif subchild.tag == "{http://www.group-finity.com/Mascot}BehaviorReference":
+                        behavior_reference = {
+                            "name": subchild.attrib.get("Name"),
+                            "frequency": int(subchild.attrib.get("Frequency", 0)),
+                        }
+                        behavior_object["next_behavior_list"].append(behavior_reference)
+                        behavior_object["next_behavior_list_count"] += 1
+                    else:
+                        raise SyntaxError("Invalid XML format")
+        if behavior.get("Action") is not None:
+            behavior_object["action"] = behavior.get("Action")
+        else:
+            behavior_object["action"] = behavior_object["name"]
+        if behavior_object["action"] not in action_definitions:
+            raise SyntaxError(f"Action {behavior_object['action']} not defined")
+    else:
+        raise SyntaxError("Invalid XML format")
+
+    if behavior_object["name"] in behavior_definitions:
+        raise RedefinitionError(f"Behavior {behavior_object['name']} redefinition")
+    behavior_definitions[behavior_object["name"]] = behavior_object
+    return behavior_object
+
+
+
+def parse_behavior_list(behavior: ElementTree.Element, behavior_definitions: dict, action_definitions: dict, programs_defs: list[str], root_behavior_list) -> dict:
+    for child in behavior:
+        if child.tag == "{http://www.group-finity.com/Mascot}Behavior" or child.tag == "{http://www.group-finity.com/Mascot}Condition":
+            behavior_object = parse_behavior(child, behavior_definitions, action_definitions, programs_defs)
+            root_behavior_list.append(behavior_to_ref(behavior_object))
+        else:
+            raise SyntaxError("Invalid XML format")
+
+
+def shmconv(actions: str, behaviors: str) -> tuple[list[str], dict, tuple[dict,list]]:
+
+    """
+    This functions shimeji-ee defintions to json format
+    :param actions: str: actions in shimeji-ee format (xml)
+    :param behaviors: str: behaviors in shimeji-ee format (xml)
+    """
+
+    # Read the xml strings provided as args
+    # Read the xml strings provided as args
+    try:
+        actions_parsed = ElementTree.fromstring(actions)
+        behaviors_parsed = ElementTree.fromstring(behaviors)
+
+        acts = {}
+        behs = {}
+
+        # First find all attrubutes recursively
+        # First find all attrubutes recursively
+        # All attributes that starts with ${ or #{ considered as a candidate for program
+        # All attributes that starts with ${ or #{ considered as a candidate for program
+        # All attributes that does not start with ${ or #{ but set some sort of value to mascot's variable considered as a candidate for program
+        # All attributes that does not start with ${ or #{ but set some sort of value to mascot's variable considered as a candidate for program
+
+        # Assuming actions_parsed and behaviors_parsed are already defined XML trees
+        # Assuming actions_parsed and behaviors_parsed are already defined XML trees
+        program_candidates = []
+
+        # Iterate over actions
+        # Iterate over actions
+        for element in actions_parsed.iter():
+            for attr_name, attr_content in element.attrib.items():
+                if attr_content in program_candidates:
+                    continue
+                if attr_name in MASCOT_VAR_NAMES:
+                    program_candidates.append(attr_content)
+                elif attr_content.startswith("${") or attr_content.startswith("#{"):
+                    program_candidates.append(attr_content)
+
+        # Iterate over behaviors
+        # Iterate over behaviors
+        for element in behaviors_parsed.iter():
+            for attr_name, attr_content in element.attrib.items():
+                if attr_content in program_candidates:
+                    continue
+                if attr_name in MASCOT_VAR_NAMES:
+                    program_candidates.append(attr_content)
+                elif attr_content.startswith("${") or attr_content.startswith("#{"):
+                    program_candidates.append(attr_content)
+
+        # Now parse the actions
+        # Now parse the actions
+        action_definitions = {}
+        for action_list in actions_parsed.findall("ns:ActionList", namespaces=namespace):
+            parse_action_list(action_list, action_definitions, program_candidates)
+
+        # Sort action by type: definitions should be always first
+        # Sort action by type: definitions should be always first
+        action_definitions = dict(sorted(action_definitions.items(), key=lambda item: item[1]["type"] in ["Sequence", "Select"]))
+
+        # Parse behaviors
+        # Parse behaviors
+        behavior_definitions = {}
+        root_behavior_list = []
+        for behavior_list in behaviors_parsed.findall("ns:BehaviorList", namespaces=namespace):
+            parse_behavior_list(behavior_list, behavior_definitions, action_definitions, program_candidates, root_behavior_list)
+
+        # Sanity checks:
+        # Sanity checks:
+        if "Fall" not in behavior_definitions:
+            print("Warning: Fall behavior not defined; It is required for execution and will not load")
+        if "Dragged" not in behavior_definitions:
+            print("Warning: Dragged behavior not defined; It is required for execution and will not load")
+        if "Thrown" not in behavior_definitions:
+            print("Warning: Thrown behavior not defined; It is required for execution and will not load")
+
+
+        return program_candidates, action_definitions, (behavior_definitions, root_behavior_list)
+    except Exception as e:
+           raise e
+           raise SyntaxError("Invalid XML format")
+    # raise NotImplementedError("Not implemented yet")
+    # raise NotImplementedError("Not implemented yet")
+
+
+
+OPCODE_TO_STR = {
+    OP.ERR: "00",
+    OP.RET: "01",
+    OP.LOADL: "10", # IMMEDIATE ARGUMENT 1 BYTE INDEX
+    OP.LOADE: "11", # IMMEDIATE ARGUMENT 1 BYTE INDEX
+    OP.STORE: "12", # IMMEDIATE ARGUMENT 4 BYTE LE FLOAT
+    OP.ADD: "20",
+    OP.SUB: "21",
+    OP.MUL: "22",
+    OP.DIV: "23",
+    OP.MOD: "24",
+    OP.POW: "25",
+    OP.AND: "30",
+    OP.OR: "31",
+    OP.XOR: "32",
+    OP.NOT: "33",
+    OP.LSHIFT: "34",
+    OP.RSHIFT: "35",
+    OP.LT: "40",
+    OP.LE: "41",
+    OP.GT: "42",
+    OP.GE: "43",
+    OP.EQ: "44",
+    OP.NE: "45",
+    OP.LAND: "50",
+    OP.LOR: "51",
+    OP.LNOT: "52",
+    OP.BQZ: "60", # IMMEDIATE ARGUMENT 1 BYTE OFFSET
+    OP.BNZ: "61", # IMMEDIATE ARGUMENT 1 BYTE OFFSET
+    OP.JMP: "62", # IMMEDIATE ARGUMENT 1 BYTE OFFSET
+    OP.CALL: "70" # IMMEDIATE ARGUMENT 1 BYTE INDEX
+}
+
+def bytes_to_hex(b: bytes) -> str:
+    return ''.join(f"{byte:02x}".upper() for byte in b)
+
+def float_to_hex(f: float) -> str:
+    bytes = struct.pack('<f', float(f))
+    return bytes_to_hex(bytes)
+
+def int_to_hex(i: int) -> str:
+    bytes = struct.pack('<I', i)
+    return bytes_to_hex(bytes)
+
+
+def char_to_hex(c: int) -> str:
+    bytes = struct.pack('<B', c)
+    return bytes_to_hex(bytes)
+
+def remove_extra_spaces(string: str) -> str:
+    resstr = string
+    while "  " in resstr:
+        resstr = resstr.replace("  ", " ")
+    return resstr
+
+class Compiler:
+    @staticmethod
+    def emit(program: Program, json_kwargs: dict = {}) -> dict:
+        data = {
+            "instructions": "",
+            "local_vars": program.local_vars,
+            "global_vars": program.global_vars,
+            "functions": program.functions
+        }
+
+        try:
+            for index, instruction in enumerate(program.instructions):
+                data["instructions"] += OPCODE_TO_STR[instruction[0]]
+                if instruction[0] in [OP.LOADL, OP.LOADE, OP.CALL]:
+                    data["instructions"] += char_to_hex(instruction[1])
+                elif instruction[0] in [OP.STORE]:
+                    hexdata = float_to_hex(instruction[1])
+                    data["instructions"] += hexdata[:2]
+                    data["instructions"] += "13"
+                    data["instructions"] += hexdata[2:4]
+                    data["instructions"] += "14"
+                    data["instructions"] += hexdata[4:6]
+                    data["instructions"] += "15"
+                    data["instructions"] += hexdata[6:]
+                    data["instructions"] += "8000"
+                elif instruction[0] in [OP.BQZ, OP.BNZ, OP.JMP]:
+                    # We need to calculate the offset
+                    # We need to calculate the offset
+                    offset = 0
+                    for ofinstr in program.instructions[index+1:index+instruction[1]]:
+                        if ofinstr[0] in [OP.STORE]:
+                            offset += 2 # First byte
+                            offset += 2 # Second byte
+                            offset += 2 # Third byte
+                            offset += 2 # Fourth byte
+                            offset += 2 # Push
+                        else:
+                            offset += 2
+
+                    data["instructions"] += char_to_hex(offset)
+                else:
+                    data["instructions"] += "00"
+        except:
+            print(f"Error at instruction {index}: {instruction}")
+            raise
+
+        return data
+
+
+    @staticmethod
+    def compile(expression: str, locals: list = [], globals: list = [], funcs: list = []) -> Program:
+        tokens = Tokenizer.tokenize(expression)
+        try:
+            root_node = AbstractSyntaxTree(tokens).parse()
+        except SyntaxError as e:
+            print(f"WARNING: Unable to compile expression \"{remove_extra_spaces(expression)}\": {e}!\nAssuming that expression always return 0")
+            root_node = LiteralNode(0)
+        program = Program.from_ast(root_node, locals, globals, funcs)
+        if expression.startswith("#{"):
+            program.evaluate_once = False
+        return program
+
+    @staticmethod
+    def compile_shimeji(root_dir: str | pathlib.Path | int, conf_dir_fd: int, **kwargs) -> tuple[str, str, str]:
+
+        """
+        root_dir: str | pathlib.Path
+            The root directory of the mascot
+        returns:
+            programs: str - json serialized programs
+            actions: str - json serialized actions
+            behaviors: str - json serialized behaviors
+            images: list[str] - list of image paths
+        """
+
+        error_msg = ""
+        try:
+            error_msg = "No actions.xml file found."
+            status = os.stat("actions.xml", dir_fd=conf_dir_fd)
+            if not status.st_mode & stat.S_IFREG:
+                raise FileNotFoundError("actions.xml is not a regular file.")
+            error_msg = "No behaviors.xml file found."
+            status = os.stat("behaviors.xml", dir_fd=conf_dir_fd)
+            if not status.st_mode & stat.S_IFREG:
+                raise FileNotFoundError("behaviors.xml is not a regular file.")
+        except:
+            raise FileNotFoundError(error_msg)
+
+        actions_xml = os.open("actions.xml", os.O_RDONLY, dir_fd=conf_dir_fd)
+        behaviors_xml = os.open("behaviors.xml", os.O_RDONLY, dir_fd=conf_dir_fd)
+
+        with os.fdopen(actions_xml, "r") as f:
+            actions = f.read()
+
+        with os.fdopen(behaviors_xml, "r") as f:
+            behaviors = f.read()
+
+        programs_defintions, actions_defintions, (behaviors_defintions, root_behaviors) = shmconv(actions, behaviors)
+
+        programs = {
+            "programs": []
+        }
+        for index, program_definition in enumerate(programs_defintions):
+            program = Compiler.compile(program_definition, [], [], [])
+            program_serialized = Compiler.emit(program)
+
+            # print("original", program_definition)
+            # print("original", program_definition)
+            # print(f"locals {program.local_vars}")
+            # print(f"locals {program.local_vars}")
+
+            programs["programs"].append({
+                "name": index,
+                "symtab_l": program.local_vars,
+                "symtab_g": program.global_vars,
+                "symtab_f": program.functions,
+                "instructions": program_serialized["instructions"],
+                "evaluate_once": program.evaluate_once
+            })
+
+        actions = [
+            action_definition for action_definition in actions_defintions.values()
+        ]
+
+        behaviors = {
+            "definitions": [x for x in behaviors_defintions.values()],
+            "root_behavior_list": root_behaviors
+        }
+
+        return json.dumps(programs, indent=kwargs.get("indent", 4)), json.dumps(actions, indent=kwargs.get("indent", 4)), json.dumps(behaviors, indent=kwargs.get("indent", 4))
+
+
+"""
+QOI encoder and decoder script.
+"""
+
+
+
+
+# chunk tags
+# chunk tags
+QOI_OP_INDEX = 0x00  # 00xxxxxx
+QOI_OP_DIFF = 0x40  # 01xxxxxx
+QOI_OP_LUMA = 0x80  # 10xxxxxx
+QOI_OP_RUN = 0xC0  # 11xxxxxx
+QOI_OP_RGB = 0xFE  # 11111110
+QOI_OP_RGBA = 0xFF  # 11111111
+QOI_MASK_2 = 0xC0  # 11000000
+
+
+QOI_MAGIC = ord("q") << 24 | ord("o") << 16 | ord("i") << 8 | ord("f")
+
+
+@dataclass
+class Pixel:
+    px_bytes: bytearray = field(init=False)
+
+    def __post_init__(self):
+        self.px_bytes = bytearray((0, 0, 0, 255))
+
+    def update(self, values: bytes) -> None:
+        n_channels = len(values)
+        if n_channels not in (3, 4):
+            raise ValueError("a tuple of 3 or 4 values should be provided")
+
+        self.px_bytes[0:n_channels] = values
+
+    def __str__(self) -> str:
+        r, g, b, a = self.px_bytes
+        return f"R: {r} G: {g} B: {b} A: {a}"
+
+    @property
+    def bytes(self) -> bytes:
+        return bytes(self.px_bytes)
+
+    @property
+    def hash(self) -> int:
+        r, g, b, a = self.px_bytes
+        return (r * 3 + g * 5 + b * 7 + a * 11) % 64
+
+    @property
+    def red(self) -> int:
+        return self.px_bytes[0]
+
+    @property
+    def green(self) -> int:
+        return self.px_bytes[1]
+
+    @property
+    def blue(self) -> int:
+        return self.px_bytes[2]
+
+    @property
+    def alpha(self) -> int:
+        return self.px_bytes[3]
+
+
+class ByteWriter:
+    def __init__(self, size: int):
+        self.bytes = bytearray(size)
+        self.write_pos = 0
+
+    def write(self, byte: int):
+        self.bytes[self.write_pos] = byte % 256
+        self.write_pos += 1
+
+    def output(self):
+        return bytes(self.bytes[0 : self.write_pos])
+
+
+class ByteReader:
+    padding_len = 8
+
+    def __init__(self, data: bytes):
+        self.bytes = data
+        self.read_pos = 0
+        # might be off by 1
+        # might be off by 1
+        self.max_pos = len(self.bytes) - self.padding_len
+
+    def read(self) -> Optional[int]:
+        if self.read_pos >= self.max_pos:
+            return None
+
+        out = self.bytes[self.read_pos]
+        self.read_pos += 1
+        return out
+
+    def output(self):
+        return bytes(self.bytes[0 : self.read_pos])
+
+
+def write_32_bits(value: int, writer: ByteWriter) -> None:
+    writer.write((0xFF000000 & value) >> 24)
+    writer.write((0x00FF0000 & value) >> 16)
+    writer.write((0x0000FF00 & value) >> 8)
+    writer.write((0x000000FF & value))
+
+
+def read_32_bits(reader: ByteReader) -> int:
+    data = [reader.read() for _ in range(4)]
+    b1, b2, b3, b4 = data
+    return b1 << 24 | b2 << 16 | b3 << 8 | b4
+
+
+def write_end(writer: ByteWriter) -> None:
+    for _ in range(7):
+        writer.write(0)
+    writer.write(1)
+
+
+def encode_img(img: Image.Image, srgb: bool, out_path: str) -> None:
+    width, height = img.size
+    if img.mode == "RGBA":
+        alpha = True
+    elif img.mode == "RGB":
+        alpha = False
+    else:
+        raise ValueError(f"Image of non-supported mode: {img.mode}")
+    img_bytes = img.tobytes()
+    output = encode(img_bytes, width, height, alpha, srgb)
+
+    with open(out_path, "wb") as qoi:
+        qoi.write(output)
+
+
+def decode_to_img(img_bytes: bytes, out_path: str) -> None:
+    out = decode(img_bytes)
+
+    size = (out["width"], out["height"])
+    img = Image.frombuffer(out["channels"], size, bytes(out["bytes"]), "raw")
+    img.save(out_path, "png")
+
+
+def encode(img_bytes: bytes, width: int, height: int, alpha: bool, srgb: bool):
+    total_size = height * width
+    channels = 4 if alpha else 3
+    pixel_data = (img_bytes[i : i + channels] for i in range(0, len(img_bytes), channels))
+    max_n_bytes = 14 + total_size * (5 if alpha else 4) + 8
+    writer = ByteWriter(max_n_bytes)
+    hash_array = [Pixel() for _ in range(64)]
+    for px in hash_array:
+        px.update(bytearray((0, 0, 0, 0)))
+
+    # write header
+    # write header
+    write_32_bits(QOI_MAGIC, writer)
+    write_32_bits(width, writer)
+    write_32_bits(height, writer)
+    writer.write(4 if alpha else 3)
+    writer.write(1 if srgb else 0)
+
+    # encode pixels
+    # encode pixels
+    run = 0
+    prev_px_value = Pixel()
+    px_value = Pixel()
+    for i, px in enumerate(pixel_data):
+        prev_px_value.update(px_value.bytes)
+        px_value.update(px)
+
+        if px_value == prev_px_value:
+            run += 1
+            if run == 62 or (i + 1) >= total_size:
+                writer.write(QOI_OP_RUN | (run - 1))
+                run = 0
+            continue
+
+        if run:
+            writer.write(QOI_OP_RUN | (run - 1))
+            run = 0
+
+        index_pos = px_value.hash
+        if hash_array[index_pos] == px_value:
+            writer.write(QOI_OP_INDEX | index_pos)
+            continue
+        hash_array[index_pos].update(px_value.bytes)
+
+        if px_value.alpha != prev_px_value.alpha:
+            writer.write(QOI_OP_RGBA)
+            writer.write(px_value.red)
+            writer.write(px_value.green)
+            writer.write(px_value.blue)
+            writer.write(px_value.alpha)
+            continue
+
+        vr = (384 + px_value.red - prev_px_value.red) % 256 - 128
+        vg = (384 + px_value.green - prev_px_value.green) % 256 - 128
+        vb = (384 + px_value.blue - prev_px_value.blue) % 256 - 128
+
+        vg_r = (384 + vr - vg) % 256 - 128
+        vg_b = (384 + vb - vg) % 256 - 128
+
+        if all(-3 < x < 2 for x in (vr, vg, vb)):
+            writer.write(QOI_OP_DIFF | (vr + 2) << 4 | (vg + 2) << 2 | (vb + 2))
+            continue
+
+        elif all(-9 < x < 8 for x in (vg_r, vg_b)) and -33 < vg < 32:
+            writer.write(QOI_OP_LUMA | (vg + 32))
+            writer.write((vg_r + 8) << 4 | (vg_b + 8))
+            continue
+
+        writer.write(QOI_OP_RGB)
+        writer.write(px_value.red)
+        writer.write(px_value.green)
+        writer.write(px_value.blue)
+
+    write_end(writer)
+    return writer.output()
+
+
+def decode(file_bytes: bytes) -> Dict:
+    reader = ByteReader(file_bytes)
+    header_magic = read_32_bits(reader)
+    if header_magic != QOI_MAGIC:
+        raise ValueError("provided image does not contain QOI header")
+
+    width = read_32_bits(reader)
+    height = read_32_bits(reader)
+    channels = reader.read()
+    colorspace = reader.read()
+
+    hash_array = [Pixel() for _ in range(64)]
+    for px in hash_array:
+        px.update(bytearray((0, 0, 0, 0)))
+    out_size = width * height * channels
+    pixel_data = bytearray(out_size)
+    px_value = Pixel()
+    run = 0
+    for i in range(-channels, out_size, channels):
+        index_pos = px_value.hash
+        hash_array[index_pos].update(px_value.bytes)
+        if i >= 0:
+            pixel_data[i : i + channels] = px_value.bytes
+
+        if run > 0:
+            run -= 1
+            continue
+
+        b1 = reader.read()
+        if b1 is None:
+            break
+
+        if b1 == QOI_OP_RGB:
+            new_value = bytes((reader.read() for _ in range(3)))
+            px_value.update(new_value)
+            continue
+
+        if b1 == QOI_OP_RGBA:
+            new_value = bytes((reader.read() for _ in range(4)))
+            px_value.update(new_value)
+            continue
+
+        if (b1 & QOI_MASK_2) == QOI_OP_INDEX:
+            px_value.update(hash_array[b1].bytes)
+            continue
+
+        if (b1 & QOI_MASK_2) == QOI_OP_DIFF:
+            red = (px_value.red + ((b1 >> 4) & 0x03) - 2) % 256
+            green = (px_value.green + ((b1 >> 2) & 0x03) - 2) % 256
+            blue = (px_value.blue + (b1 & 0x03) - 2) % 256
+            px_value.update(bytes((red, green, blue)))
+            continue
+
+        if (b1 & QOI_MASK_2) == QOI_OP_LUMA:
+            b2 = reader.read()
+            vg = ((b1 & 0x3F) % 256) - 32
+            red = (px_value.red + vg - 8 + ((b2 >> 4) & 0x0F)) % 256
+            green = (px_value.green + vg) % 256
+            blue = (px_value.blue + vg - 8 + (b2 & 0x0F)) % 256
+            px_value.update(bytes((red, green, blue)))
+            continue
+
+        if (b1 & QOI_MASK_2) == QOI_OP_RUN:
+            run = b1 & 0x3F
+
+    out = {
+        "width": width,
+        "height": height,
+        "channels": "RGB" if channels == 3 else "RGBA",
+        "colorspace": colorspace,
+    }
+
+    out["bytes"] = pixel_data
+
+    return out
+
+
+def replace_extension(path: str, extension: str) -> str:
+    old_extension = path.split(".")[-1]
+    new_path = path.replace("." + old_extension, "." + extension)
+    return new_path
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-e", "--encode", action="store_true", default=False)
+    parser.add_argument("-d", "--decode", action="store_true", default=False)
+    parser.add_argument(
+        "-f",
+        "--file-path",
+        type=str,
+        help="path to image file to be encoded or decoded",
+        required=True,
+    )
+    parser.add_argument("-s", "--srgb", action="store_true")
+    args = parser.parse_args()
+
+    if args.encode:
+        try:
+            img = Image.open(args.file_path)
+        except Exception as exc:
+            print(f"image load failed: {exc}")
+            return
+
+        out_path = replace_extension(args.file_path, "qoi")
+        encode_img(img, args.srgb, out_path)
+
+    if args.decode:
+        with open(args.file_path, "rb") as qoi:
+            file_bytes = qoi.read()
+
+        out_path = replace_extension(args.file_path, "png")
+        decode_to_img(file_bytes, out_path)
+
+
+
+
+
+def lv_distance(s1: str, s2: str) -> float:
+    len1, len2 = len(s1), len(s2)
+
+    dp = [[0] * (len2 + 1) for _ in range(len1 + 1)]
+
+    for i in range(len1 + 1):
+        dp[i][0] = i
+    for j in range(len2 + 1):
+        dp[0][j] = j
+
+    for i in range(1, len1 + 1):
+        for j in range(1, len2 + 1):
+            cost = 0 if s1[i - 1] == s2[j - 1] else 1
+            dp[i][j] = min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
+
+    return dp[len1][len2]
+
+def lv_variant(pool: list[str], s: str) -> str:
+    best_match: str = None
+    min_distance = float('inf')
+
+    for variant in pool:
+        distance = lv_distance(variant, s)
+        if distance < min_distance:
+            min_distance = distance
+            best_match = variant
+
+    return best_match
+
+
+
+
+
+
+
+prototypes: dict[int, Prototype] = {}
+environments: dict[int, Environment] = {}
+mascots: dict[int, Mascot] = {}
+exports: dict[int, Export] = {}
+imports: dict[int, Import] = {}
+objects: dict[int, Any] = {}
+active_selection: Selection | None = None
+
+class Mascot:
+    id: int
+    prototype: Prototype
+    environment: Environment
+    current_action: str
+    current_action_index: int
+    current_state: int
+    current_behavior: str
+    affordance: str
+    action_stack: list[tuple[str,int]]
+    behavior_pool: list[tuple[str,int]]
+    variables: list[MascotInfo.Variable]
+
+    socket: socket.socket
+
+    def __init__(self, id: int, prototype: Prototype, socket: socket.socket):
+        self.id = id
+        self.socket = socket
+
+        self.prototype = prototype
+        self.environment = None
+        self.current_action = ''
+        self.current_action_index = -1
+        self.current_behavior = ''
+        self.affordance = ''
+        self.action_stack = []
+        self.behavior_pool = []
+        self.variables = []
+
+    def dismiss(self):
+        packet = Dispose(self.id)
+        self.socket.send(packet.encode())
+
+    def migrated(self, packet: MascotMigrated):
+        environment = environments.get(packet.environment_id)
+        self.environment = environment
+        if environment:
+            self.environment.mascots[self.id] = self
+
+    def disposed(self, packet: MascotDisposed):
+        self.environment.mascots.pop(self.id, None)
+        self.environment = None
+
+    def info(self, packet: MascotInfo):
+        self.prototype = prototypes.get(packet.prototype_id)
+        self.environment = environments.get(packet.environment_id)
+        self.current_action = packet.current_action_name
+        self.current_action_index = packet.current_action_index
+        self.current_state = packet.current_state
+        self.current_behavior = packet.current_behavior_name
+        self.affordance = packet.current_affordance_name
+        self.action_stack = packet.actions
+        self.behavior_pool = packet.behaviors
+        self.variables = packet.variables
+
+class Environment:
+    id: int
+    name: str
+    description: str
+    x: int
+    y: int
+    width: int
+    height: int
+    scale: float
+
+    mascots: dict[int, Mascot]
+
+    socket: socket.socket
+
+    def __init__(self, id: int, socket: socket.socket, *args):
+        self.id = id
+        self.socket = socket
+        self.mascots = {}
+
+        self.change(*args)
+
+    def change(self, name, description, x, y, width, height, scale):
+        self.name = name
+        self.description = description
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.scale = scale
+
+    def mascot_added(self, packet: EnvironmentMascot):
+        prototype = prototypes.get(packet.prototype_id)
+        mascot = Mascot(packet.mascot_new_id, prototype, self.socket)
+        self.mascots[mascot.id] = mascot
+        mascots[mascot.id] = mascot
+        objects[mascot.id] = mascot
+        mascot.environment = self
+
+    def close(self):
+        packet = EnvironmentClose(self.id)
+        self.socket.send(packet.encode())
+
+    def withdraw(self, EnvironmentWithdrawn):
+        environments.pop(self.id)
+        objects.pop(self.id)
+
+    def __repr__(self):
+        return \
+        f"Environment(id={self.id}, name={self.name}, description={self.description}, pos=({self.x},{self.y}), size=({self.width},{self.height}), scale={self.scale}, with {len(self.mascots)} mascots)"
+
+class Prototype:
+    id: int
+    name: str
+    display_name: str
+    path: str
+    fd: int
+    actions: list[str]
+    behaviors: list[str]
+    icon_fd: int
+    author: str = ''
+    version: int = 0
+
+    socket: socket.socket
+
+    def __init__(self, id: int, socket: socket.socket):
+        self.id = id
+        self.name = ''
+        self.display_name = ''
+        self.path = ''
+        self.fd = -1
+        self.icon_fd = -1
+        self.actions = []
+        self.behaviors = []
+        self.author = ''
+        self.version = 0
+
+    def withdrawn(self, packet: PrototypeWithdraw):
+        objects.pop(self.id)
+        prototypes.pop(self.id)
+
+    def __del__(self):
+        if (self.fd != -1):
+            os.close(self.fd)
+        if (self.icon_fd != -1):
+            os.close(self.icon_fd)
+
+class Selection:
+    id: int
+    environments: list[Environment]
+
+    socket: socket.socket
+
+    def __init__(self, environments: list[Environment], socket: socket.socket):
+        global active_selection
+        self.id = random.randint(0, 2**24) | (5 << 24)
+        self.environments = environments
+
+        self.socket = socket
+
+        packet = Select(self.id, [env.id for env in environments])
+        socket.send(packet.encode())
+
+        objects[self.id] = self
+        active_selection = self
+
+    def selected(self, packet: SelectionDone):
+        global active_selection
+        environment = environments.get(packet.environment_id)
+        mascot = mascots.get(packet.mascot_id)
+        logger.info(f"Selected point ({packet.x},{packet.y}) at {environment}, underlying mascot {mascot}")
+        if active_selection == self:
+            active_selection = None
+
+    def cancelled(self, packet: SelectionCancelled):
+        global active_selection
+        logger.info(f"Selection cancelled")
+        if active_selection == self:
+            active_selection = None
+
+    def cancel(self):
+        packet = SelectionCancel(self.id)
+        self.socket.send(packet.encode())
+
+    def __del__(self):
+        global active_selection
+        objects.pop(self.id, None)
+        if active_selection == self:
+            active_selection = None
+
+class Export:
+    id: int
+    export_fd: int
+    prototype: Prototype
+
+    socket: socket.socket
+    def __init__(self, export_fd: int, prototype: Prototype, sock: socket.socket):
+        self.export_fd = export_fd
+        self.prototype = prototype
+        self.socket = sock
+        self.id = random.randint(0, 2**24) | (7 << 24)
+
+        packet = ExportPrototype(self.id, self.export_fd, self.prototype.id)
+        buf = packet.encode()
+
+        socket.send_fds(self.socket, [buf], packet.fds)
+
+        objects[self.id] = self
+        exports[self.id] = self
+
+    def finished(self, packet: ExportFinished):
+        objects.pop(self.id, None)
+        exports.pop(self.id, None)
+
+    def failed(self, packet: ExportFailed):
+        objects.pop(self.id, None)
+        exports.pop(self.id, None)
+
+class Import:
+    id: int
+    import_fd: int
+
+    socket: socket.socket
+
+    def __init__(self, import_fd: int, force: bool, sock: socket.socket):
+        self.import_fd = import_fd
+        self.force = force
+        self.socket = sock
+
+        self.id = random.randint(0, 2**24) | (6 << 24)
+        packet = ImportPrototype(self.id, self.force, self.import_fd)
+        buf = packet.encode()
+
+        socket.send_fds(self.socket, [buf], packet.fds)
+
+        imports[self.id] = self
+        objects[self.id] = self
+
+    def started(self, packet: ImportStarted):
+        pass
+
+    def failed(self, packet: ImportFailed):
+        pass
+
+    def finished(self, packet: ImportFinished):
+        pass
+
+    def progress(self, packet: ImportProgress):
+        pass
+
+# --------------------------
+# --------------------------
+
+class Packet:
+
+    buffer: bytes
+    read_position: int = 0
+    fds: list[int]
+    fd_readposition: int = 0
+
+    type: int
+    flags: int
+    object_id: int = 0
+    length: int = 0
+
+    def __init__(self, type: int, flags: int, object_id: int, buffer: bytes):
+        self.type = type
+        self.flags = flags
+        self.object_id = object_id
+        self.buffer = buffer or b''
+        self.fds = []
+
+
+    def serialize(self) -> bytes:
+        return b''
+
+    def encode(self) -> bytes:
+        self.buffer = self.serialize()
+        return struct.pack('bbHI', self.type, self.flags, 8 + len(self.buffer), self.object_id) + self.buffer
+
+    def decode(self):
+        self.type, self.flags, self.length, self.object_id = struct.unpack('bbHI', self.buffer[:8])
+        self.read_position += 8
+        self.deserialize()
+
+    def deserialize(self) -> None:
+        ...
+
+    def read_values(self, signature: str) -> list[Any]:
+        signature = "=" + signature
+        length = struct.calcsize(signature)
+        values = struct.unpack(signature, self.buffer[self.read_position:self.read_position + length])
+        self.read_position += length
+        return list(values)
+
+    def write_values(self, signature: str, *values: Any) -> None:
+        self.buffer += struct.pack(signature, *values)
+
+    def consume_fd(self) -> int:
+        fd = self.fds[self.fd_readposition]
+        self.fd_readposition += 1
+        return fd
+
+    def add_fd(self, fd: int) -> None:
+        self.fds.append(os.dup(fd))
+        self.fd_readposition += 1
+
+    def __del__(self):
+        for fd in self.fds:
+            os.close(fd)
+
+class ClientHello(Packet):
+
+    type: int = 0
+    version: int = 0
+
+    def __init__(self, version: int):
+        self.version = version
+        Packet.__init__(self, self.type, 0, 0, b'')
+
+    def serialize(self) -> bytes:
+        return struct.pack('Q', self.version)
+
+class ServerHello(Packet): ...
+class Disconnect(Packet): ...
+class Notice(Packet):
+    severity: int
+    alert: int
+    message: str
+    formating_values: list[str]
+
+    def __init__(self, *args):
+        Packet.__init__(self, *args)
+        self.formating_values = []
+
+    def deserialize(self):
+        self.severity, self.alert, message_length = self.read_values("bbb")
+        self.message = self.read_values(f"{message_length}s")[0].decode()
+        formating_values_count = self.read_values("b")[0]
+        for _ in range(formating_values_count):
+            value_length = self.read_values("b")[0]
+            value = self.read_values(f"{value_length}s")[0]
+            self.formating_values.append(value.decode())
+
+
+class StartSession(Packet): ...
+class EnvironmentAnnouncement(Packet):
+    new_id: int
+    name: str
+    description: str
+    x: int
+    y: int
+    width: int
+    height: int
+    scale: float
+
+    def deserialize(self):
+        self.new_id, name_len = self.read_values("Ib")
+        self.name, description_len = self.read_values(f"{name_len}sb")
+        self.description, self.x, self.y, self.width, self.height, self.scale = self.read_values(f"{description_len}sIIIIf")
+        self.name = self.name.decode('utf-8')
+        self.description = self.description.decode('utf-8')
+
+class EnvironmentChanged(Packet):
+    name: str
+    description: str
+    x: int
+    y: int
+    width: int
+    height: int
+    scale: float
+
+    def deserialize(self):
+        name_len = self.read_values("b")[0]
+        self.name, description_len = self.read_values(f"{name_len}sb")
+        self.description, self.x, self.y, self.width, self.height, self.scale = self.read_values(f"{description_len}sIIIIf")
+        self.name = self.name.decode('utf-8')
+        self.description = self.description.decode('utf-8')
+
+class EnvironmentMascot(Packet):
+    mascot_new_id: int
+    prototype_id: int
+
+    def deserialize(self) -> None:
+        self.mascot_new_id, self.prototype_id = self.read_values("II")
+
+class EnvironmentWithdrawn(Packet): ...
+
+class StartPrototype(Packet):
+    prototype_id: int
+
+    def deserialize(self) -> None:
+        self.prototype_id = self.read_values("I")[0]
+
+class PrototypeName(Packet):
+    name: str
+
+    def deserialize(self) -> None:
+        name_len = self.read_values("b")[0]
+        self.name = self.read_values(f"{name_len}s")[0].decode()
+
+class PrototypeDisplayName(Packet):
+    display_name: str
+
+    def deserialize(self) -> None:
+        name_len = self.read_values("b")[0]
+        self.display_name = self.read_values(f"{name_len}s")[0].decode()
+
+class PrototypePath(Packet):
+    path: str
+
+    def deserialize(self) -> None:
+        path_len = self.read_values("b")[0]
+        self.path = self.read_values(f"{path_len}s")[0].decode()
+
+class PrototypeFD(Packet):
+    fd: int
+
+    def deserialize(self) -> None:
+        self.fd = self.consume_fd()
+
+class PrototypeAddAction(Packet):
+    action: str
+
+    def deserialize(self) -> None:
+        action_len = self.read_values("b")[0]
+        self.action = self.read_values(f"{action_len}s")[0].decode()
+
+class PrototypeAddBehavior(Packet):
+    behavior: str
+
+    def deserialize(self) -> None:
+        behavior_len = self.read_values("b")[0]
+        self.behavior = self.read_values(f"{behavior_len}s")[0].decode()
+
+class PrototypeIcon(Packet):
+    iconfd: int
+
+    def deserialize(self) -> None:
+        self.iconfd = self.consume_fd()
+
+class PrototypeAuthor(Packet):
+    author: str
+
+    def deserialize(self) -> None:
+        author_len = self.read_values("b")[0]
+        self.author = self.read_values(f"{author_len}s")[0].decode()
+
+class PrototypeVersion(Packet):
+    version: int
+
+    def deserialize(self) -> None:
+        self.version = self.read_values("Q")[0]
+
+class CommitPrototypes(Packet): ...
+
+class MascotMigrated(Packet):
+    environment_id: int
+
+    def deserialize(self) -> None:
+        self.environment_id = self.read_values("I")[0]
+
+class MascotDisposed(Packet): ...
+
+class MascotGetInfo(Packet):
+    type: int = 0x16
+
+    def __init__(self, mascot_id: int):
+        Packet.__init__(self, self.type, 0, mascot_id, b'')
+
+class MascotInfo(Packet):
+
+    @dataclass
+    class Variable:
+        kind: int
+        value: int | float
+        used: bool
+        evaulate_once: bool
+        script_id: int
+
+    prototype_id: int
+    environment_id: int
+    current_state: int
+    current_action_name: str
+    current_action_index: int
+    current_behavior_name: str
+    current_affordance_name: str
+    actions: list[tuple[str, int]]
+    behaviors: list[tuple[str, int]]
+    variables: list[Variable]
+
+    def __init__(self, type: int, flags: int, object_id: int, buffer: bytes):
+        Packet.__init__(self, type, flags, object_id, buffer)
+        self.actions = []
+        self.behaviors = []
+        self.variables = []
+
+    def deserialize(self):
+        self.prototype_id, self.environment_id,\
+        self.current_state, cur_act_len = self.read_values("IIIB")
+        self.current_action_name, self.current_action_index, cur_beh_len = self.read_values(f"{cur_act_len}sHB")
+        self.current_behavior_name, affordance_len = self.read_values(f"{cur_beh_len}sB")
+        self.current_affordance_name, action_pool_len = self.read_values(f"{affordance_len}sB")
+        for _ in range(action_pool_len):
+            action_name_len = self.read_values("B")[0]
+            action_name, action_index = self.read_values(f"{action_name_len}sI")
+            self.actions.append((action_name, action_index))
+        behavior_pool_len = self.read_values("B")[0]
+        for _ in range(behavior_pool_len):
+            behavior_name_len = self.read_values("B")[0]
+            behavior_name, behavior_frequency = self.read_values(f"{behavior_name_len}sQ")
+            self.behaviors.append((behavior_name, behavior_frequency))
+        variables_count = self.read_values("H")[0]
+        for _ in range(variables_count):
+            kind = self.read_values("B")[0]
+            value, used, evaluated_once, script_id = self.read_values(f"{'i' if kind != 1 else 'f'}??H")
+            self.variables.append(MascotInfo.Variable(kind, value, used, evaluated_once, script_id))
+
+class MascotClicked(Packet):
+    new_clicked_id: int
+
+    def deserialize(self):
+        self.new_clicked_id = self.read_values("I")[0]
+
+
+class Select(Packet):
+    type: int = 0x1E
+    new_selected_id: int
+    environments: list[int]
+
+    def __init__(self, id: int, env_ids: list[int]):
+        Packet.__init__(self, self.type, 0, 0, b'')
+        self.new_selected_id = id
+        self.environments = env_ids
+
+    def serialize(self) -> bytes:
+        return struct.pack("IB" + "I" * len(self.environments), *([self.new_selected_id, len(self.environments)] + self.environments))
+
+class SelectionDone(Packet):
+    environment_id: int
+    mascot_id: int
+    x: int
+    y: int
+    surface_x: int
+    surface_y: int
+
+    def deserialize(self) -> None:
+        self.environment_id, self.mascot_id, self.x, self.y, self.surface_x, self.surface_y = self.read_values("IIIIII")
+
+class SelectionCancelled(Packet): ...
+
+class ReloadPrototype(Packet):
+    prototype_path: str
+    type: int = 0x21
+
+    def __init__(self, prototype_path: str):
+        Packet.__init__(self, self.type, 0, 0, b'')
+        self.prototype_path = prototype_path
+
+    def serialize(self):
+        return struct.pack(f"b{len(self.prototype_path)}s", len(self.prototype_path), self.prototype_path.encode("utf-8"))
+
+class ImportPrototype(Packet):
+    new_object_id: int
+    prototype_fd: int
+    type: int = 0x22
+
+    def __init__(self, new_object_id: int, force: bool, prototype_fd: int):
+        Packet.__init__(self, self.type, force, 0, b'')
+        self.new_object_id = new_object_id
+        self.prototype_fd = prototype_fd
+
+    def serialize(self):
+        self.add_fd(self.prototype_fd)
+        return struct.pack("I", self.new_object_id)
+
+class ImportFailed(Packet):
+    error_code: int
+
+    def deserialize(self):
+        self.error_code = self.read_values("i")[0]
+
+class ImportStarted(Packet): ...
+class ImportFinished(Packet):
+    relative_path: str
+
+    def deserialize(self) -> None:
+        relative_path_len = self.read_values(f"b")[0]
+        self.relative_path = self.read_values(f"{relative_path_len}s")[0].decode()
+
+class ImportProgress(Packet):
+    progress: float
+
+    def deserialize(self) -> None:
+        self.progress = self.read_values("f")[0]
+
+class ExportPrototype(Packet):
+    export_fd: int
+    new_object_id: int
+    prototype_id: int
+    type: int = 0x27
+
+    def __init__(self, object_id: int, export_fd: int, prototype_id: int):
+        Packet.__init__(self, self.type, 0, 0, b'')
+        self.new_object_id = object_id
+        self.export_fd = export_fd
+        self.prototype_id = prototype_id
+
+    def serialize(self):
+        self.add_fd(self.export_fd)
+        return struct.pack("II", self.new_object_id, self.prototype_id)
+
+class ExportFailed(Packet):
+    error_code: int
+
+    def deserialize(self) -> None:
+        self.error_code = self.read_values("I")[0]
+
+class ExportFinished(Packet): ...
+
+class Spawn(Packet):
+    prototype_id: int
+    environment_id: int
+    x: int
+    y: int
+    spawn_behavior: str
+
+    type: int = 0x2A
+
+    def __init__(self, prototype_id: int, environment_id: int, x: int, y: int, spawn_behavior: str):
+        Packet.__init__(self, self.type, 0, 0, b'')
+        self.prototype_id = prototype_id
+        self.environment_id = environment_id
+        self.x = x
+        self.y = y
+        self.spawn_behavior = spawn_behavior
+
+    def serialize(self) -> bytes:
+        return struct.pack(f"IIIIb{len(self.spawn_behavior)}s", self.prototype_id, self.environment_id, self.x, self.y, len(self.spawn_behavior), self.spawn_behavior.encode())
+
+class Dispose(Packet):
+    type: int = 0x2B
+
+    def __init__(self, id: int):
+        Packet.__init__(self, self.type, 0, id, b'')
+
+class EnvironmentClose(Packet):
+    type: int = 0x2E
+
+    def __init__(self, id: int):
+        Packet.__init__(self, self.type, 0, id, b'')
+
+class SelectionCancel(Packet):
+    type: int = 0x3C
+
+    def __init__(self, id: int):
+        Packet.__init__(self, self.type, 0, id, b'')
+
+class ApplyBehavior(Packet):
+    type: int = 0x50
+    behavior: str
+
+    def __init__(self, id: int, behavior: str):
+        Packet.__init__(self, self.type, 0, id, b'')
+        self.behavior = behavior
+
+    def serialize(self) -> bytes:
+        return struct.pack(f"b{len(self.behavior)}s", len(self.behavior), self.behavior.encode())
+
+class GetConfigKey(Packet):
+    type: int = 0x51
+    key: str
+
+    def __init__(self, key: str):
+        Packet.__init__(self, self.type, 0, 0, b'')
+        self.key = key
+
+    def serialize(self) -> bytes:
+        return struct.pack(f"b{len(self.key)}s", len(self.key), self.key.encode())
+
+class SetConfigKey(Packet):
+    type: int = 0x52
+    key: str
+    value: str
+
+    def __init__(self, key: str, value: str):
+        Packet.__init__(self, self.type, 0, 0, b'')
+        self.key = key
+        self.value = value
+
+    def serialize(self) -> bytes:
+        return struct.pack(f"b{len(self.key)}sb{len(self.value)}s", len(self.key), self.key.encode(), len(self.value), self.value.encode())
+
+class ListConfigKeys(Packet):
+    type: int = 0x53
+
+    def __init__(self):
+        Packet.__init__(self, self.type, 0, 0, b'')
+
+class ConfigKey(Packet):
+    key: str
+    value: str
+
+    def deserialize(self):
+        key_len = self.read_values("b")[0]
+        self.key = self.read_values(f"{key_len}s")[0].decode()
+        value_len = self.read_values("b")[0]
+        self.value = self.read_values(f"{value_len}s")[0].decode()
+
+class ClickEventExpired(Packet): ...
+
+class Stop(Packet):
+    type: int = 0x56
+
+    def __init__(self):
+        Packet.__init__(self, self.type, 0, 0, b'')
+
+class PrototypeWithdraw(Packet): ...
+
+class PluginRestoreWindows(Packet):
+    type: int = 0x2F
+
+    def __init__(self):
+        Packet.__init__(self, self.type, 0, 0, b'')
+
+
+ServerHello, ClientHello, Notice, StartSession, EnvironmentAnnouncement, EnvironmentChanged, EnvironmentMascot, EnvironmentWithdrawn, StartPrototype, PrototypeName, PrototypeDisplayName, PrototypePath, PrototypeFD, PrototypeAddAction, PrototypeAddBehavior, PrototypeIcon, PrototypeAuthor, PrototypeVersion, CommitPrototypes, MascotMigrated, MascotDisposed, MascotInfo, MascotClicked, SelectionDone, SelectionCancelled, ImportFailed, ImportStarted, ImportFinished, ImportProgress, ExportFailed, ExportFinished, ConfigKey, ClickEventExpired, PrototypeWithdraw, ReloadPrototype, Spawn, MascotGetInfo, MascotInfo, ApplyBehavior, Stop, GetConfigKey, ListConfigKeys, SetConfigKey, ConfigKey, Disconnect,\
+Prototype, Environment, Mascot, Selection, Import, Export, PluginRestoreWindows,\
+objects, prototypes, environments, mascots, active_selection, imports, exports
+
+logger = logging.getLogger(__name__)
+# logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
+
+
+class Client:
+    deserializers: dict[int, type[Packet]] = {
+        0x01: ServerHello,
+        0x03: Notice,
+        0x04: StartSession,
+        0x05: EnvironmentAnnouncement,
+        0x06: EnvironmentChanged,
+        0x07: EnvironmentMascot,
+        0x08: EnvironmentWithdrawn,
+        0x09: StartPrototype,
+        0x0A: PrototypeName,
+        0x0B: PrototypeDisplayName,
+        0x0C: PrototypePath,
+        0x0D: PrototypeFD,
+        0x0E: PrototypeAddAction,
+        0x0F: PrototypeAddBehavior,
+        0x10: PrototypeIcon,
+        0x11: PrototypeAuthor,
+        0x12: PrototypeVersion,
+        0x13: CommitPrototypes,
+        0x14: MascotMigrated,
+        0x15: MascotDisposed,
+        0x17: MascotInfo,
+        0x18: MascotClicked,
+        0x1F: SelectionDone,
+        0x20: SelectionCancelled,
+        0x23: ImportFailed,
+        0x24: ImportStarted,
+        0x25: ImportFinished,
+        0x26: ImportProgress,
+        0x28: ExportFailed,
+        0x29: ExportFinished,
+        0x54: ConfigKey,
+        0x55: ClickEventExpired,
+        0x57: PrototypeWithdraw
+    }
+
+    prototypes_pending: dict[int, Prototype] = {}
+
+    packet_callbacks: dict[type[Packet], Callable] = {}
+
+    initialized: bool = False
+
+    def StartSession(self, packet: StartSession):
+        self.initialized = True
+        logger.debug(f"Session started with {len(environments)} environments")
+        logger.debug(f"Session started with {len(prototypes)} prototypes")
+        logger.debug(f"Session started with {len(mascots)} mascots")
+
+    def StartPrototype(self, packet: StartPrototype):
+        self.prototypes_pending[packet.prototype_id] = Prototype(packet.prototype_id, self.socket)
+        objects[packet.prototype_id] = self.prototypes_pending[packet.prototype_id]
+
+    def PrototypeName(self, packet: PrototypeName):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.name = packet.name
+
+    def PrototypeDisplayName(self, packet: PrototypeDisplayName):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.display_name = packet.display_name
+
+    def PrototypePath(self, packet: PrototypePath):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.path = packet.path
+
+    def PrototypeFD(self, packet: PrototypeFD):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.fd = os.dup(packet.fd)
+
+    def PrototypeAddAction(self, packet: PrototypeAddAction):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.actions.append(packet.action)
+
+    def PrototypeAddBehavior(self, packet: PrototypeAddBehavior):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.behaviors.append(packet.behavior)
+
+    def PrototypeIcon(self, packet: PrototypeIcon):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.icon_fd = os.dup(packet.iconfd)
+
+    def PrototypeAuthor(self, packet: PrototypeAuthor):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.author = packet.author
+
+    def PrototypeVersion(self, packet: PrototypeVersion):
+        prototype = self.prototypes_pending.get(packet.object_id)
+        if prototype:
+            prototype.version = packet.version
+
+    def CommitPrototypes(self, packet: CommitPrototypes):
+        for prototype in self.prototypes_pending.values():
+            prototypes[prototype.id] = prototype
+        logger.debug(f"Commited {len(self.prototypes_pending)} prototypes")
+        self.prototypes_pending.clear()
+
+    def EnvironmentAnnouncement(self, packet: EnvironmentAnnouncement):
+        environment = Environment(packet.new_id, self.socket, packet.name, packet.description, packet.x, packet.y, packet.width, packet.height, packet.scale)
+        environments[environment.id] = environment
+        objects[environment.id] = environment
+
+    def EnvironmentChanged(self, packet: EnvironmentChanged):
+        environment = environments.get(packet.object_id)
+        if environment:
+            environment.change(packet.name, packet.description, packet.x, packet.y, packet.width, packet.height, packet.scale)
+
+    def EnvironmentWithdrawn(self, packet: EnvironmentWithdrawn):
+        environment = environments.get(packet.object_id)
+        if environment:
+            environment.withdraw(packet)
+
+    def EnvironmentMascot(self, packet: EnvironmentMascot):
+        environment = environments.get(packet.object_id)
+        if environment:
+            environment.mascot_added(packet)
+
+    def SelectionDone(self, packet: SelectionDone):
+        selection = objects.get(packet.object_id)
+        if selection:
+            selection.selected(packet)
+
+    def SelectionCancelled(self, packet: SelectionCancelled):
+        selection = objects.get(packet.object_id)
+        if selection:
+            selection.cancelled(packet)
+
+    def Disconnect(self, packet: Disconnect):
+        logging.info("Disconnected by overlay.")
+        self.socket.close()
+        exit(0)
+
+    def Notice(self, packet: Notice):
+
+        strings = {
+            "config.warning.get": "Config has no key named \"{}\"",
+            "config.warning.set": "Config has no key named \"{}\""
+        }
+
+        [logger.info, logger.warning, logger.error][packet.severity](strings.get(packet.message, packet.message).format(*packet.formating_values))
+
+        if packet.severity == 2:
+            exit(1)
+
+    def __init__(self, address: str, startup_options: dict[str, Any] | None = None):
+        self.address = address
+        self.startup_options = startup_options or {}
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+
+        self.packet_callbacks = {
+            StartSession: Client.StartSession,
+            StartPrototype: Client.StartPrototype,
+            CommitPrototypes: Client.CommitPrototypes,
+            PrototypeName: Client.PrototypeName,
+            PrototypeDisplayName: Client.PrototypeDisplayName,
+            PrototypePath: Client.PrototypePath,
+            PrototypeFD: Client.PrototypeFD,
+            PrototypeAddAction: Client.PrototypeAddAction,
+            PrototypeAddBehavior: Client.PrototypeAddBehavior,
+            PrototypeAuthor: Client.PrototypeAuthor,
+            PrototypeIcon: Client.PrototypeIcon,
+            PrototypeVersion: Client.PrototypeVersion,
+            EnvironmentMascot: Client.EnvironmentMascot,
+            EnvironmentAnnouncement: Client.EnvironmentAnnouncement,
+            EnvironmentChanged: Client.EnvironmentChanged,
+            EnvironmentWithdrawn: Client.EnvironmentWithdrawn,
+            SelectionDone: Client.SelectionDone,
+            SelectionCancelled: Client.SelectionCancelled,
+            Notice: Client.Notice,
+            Disconnect: Client.Disconnect,
+        }
+
+        logger.debug(f"Connecting to overlay at \"{self.address}\"")
+        try:
+            self.socket.connect(self.address)
+            if self.startup_options.get("start", None):
+                logger.info("Overlay is already running")
+                raise SystemExit(1)
+        except (ConnectionRefusedError, FileNotFoundError) as e:
+            if not (self.startup_options.get("start", True)):
+                if not self.startup_options.get("is_config_req", False):
+                    logger.info("Overlay is not running")
+                raise SystemExit(1)
+            logger.debug(f"Failed to connect to overlay at \"{self.address}\": {e}")
+            logger.debug(f"Starting overlay with args {self.startup_options.get('cmdline', [])}")
+            self.socket, overlay_side = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+            cmdline = ["shimeji-overlayd"]
+            cmdline.extend(self.startup_options.get('cmdline', []))
+            cmdline.append('-cfd')
+            cmdline.append(str(overlay_side.fileno()))
+            proc_handle = subprocess.Popen(
+                cmdline, close_fds=True, pass_fds=[overlay_side.fileno()], start_new_session=True,
+                stdout=None if self.startup_options.get("verbose", False) else subprocess.DEVNULL,
+                stderr=None if self.startup_options.get("verbose", False) else subprocess.DEVNULL,
+            )
+            overlay_side.close()
+            out = None
+            try:
+                out = proc_handle.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                ...
+            if out is not None:
+                logger.error(f"Failed to start overlay: {out}")
+                raise SystemExit(1)
+
+
+        except Exception as e:
+            logger.error(f"Failed to connect to overlay: {e}")
+            raise SystemExit(1)
+
+        logger.debug("Connected to overlay")
+
+        self.queue_packet(ClientHello(0x01))
+        self.dispatch_events(until=lambda: self.initialized)
+
+    def queue_packet(self, packet: Packet):
+        socket.send_fds(self.socket, [packet.encode()], packet.fds)
+        # print(f"Sending packet {packet}, {packet.fds}, {packet.buffer}")
+        # print(f"Sending packet {packet}, {packet.fds}, {packet.buffer}")
+
+    def dispatch_events(self, until: Callable | None = None):
+        if until is None:
+            until = lambda: False
+        while not until():
+            buffer, fds, _, _ = socket.recv_fds(self.socket, 4096, 10)
+            if buffer is None:
+                continue
+            try:
+                self.handle_packet(buffer, fds)
+            except Exception as e:
+                logger.error(f"Failed to handle packet: {e}")
+                raise e
+
+    def handle_packet(self, buffer: bytes, fds: list[int]):
+        if len(buffer) < 8:
+            raise ValueError(f"Invalid header in packet (Expected at least 8 bytes, got {len(buffer)})")
+        packet_id, flags, _, object_id = struct.unpack('bbHI', buffer[:8])
+        packet_type = self.deserializers.get(packet_id)
+
+        if packet_type is None:
+            return
+
+        packet: Packet = packet_type(packet_id, flags, object_id, buffer)
+        packet.fds = fds
+        packet.decode()
+
+        packet_handler = self.packet_callbacks.get(packet_type)
+        if packet_handler is not None:
+            packet_handler(self, packet)
+
+    def register_callback(self, packet_type: type[Packet], callback: Callable):
+        self.packet_callbacks[packet_type] = callback
+
+def prototype_find(name: str) -> Prototype | None:
+    if name.isdigit():
+        if int(name) in prototypes:
+            return prototypes[int(name)]
+
+    best_match = lv_variant([x.name for x in prototypes.values()] + [x.display_name for x in prototypes.values()], name)
+    for proto in prototypes.values():
+        if proto.name == best_match:
+            return proto
+        elif proto.display_name == best_match:
+            return proto
+
+    return None
+
+def converter_handler(arguments: argparse.Namespace, client: Client, parser):
+    if not os.path.exists(arguments.input):
+        print(f"Input file '{arguments.input}' does not exist.")
+        exit(1)
+
+    if not os.path.exists(arguments.output):
+        os.makedirs(arguments.output, exist_ok=True)
+
+    if not os.path.isdir(arguments.output):
+        print("Output is not a directory.")
+        exit(1)
+
+    instance_root = arguments.input
+    tmpdir_instance_root = None
+
+    if not os.path.isdir(instance_root):
+        try:
+            zipf = zipfile.ZipFile(instance_root, 'r')
+        except Exception as e:
+            print(f'Failed to parse Shimeji-EE instance: Cannot open zip file: {e}')
+            exit(1)
+
+        tmpdir_instance_root = tempfile.TemporaryDirectory()
+        instance_root = tmpdir_instance_root.name
+        zipf.extractall(instance_root)
+
+    filelist = os.listdir(instance_root)
+    if len(os.listdir(instance_root)) == 1:
+        instance_root = os.path.join(instance_root, os.listdir(instance_root)[0])
+        if not os.path.isdir(instance_root):
+            print("Failed to parse Shimeji-EE instance: Passed input does not contain a valid directory nor is Shimeji-EE instance")
+            exit(1)
+        filelist = os.listdir(instance_root)
+
+    if not all([
+        "img" in filelist,
+        "conf" in filelist
+    ]):
+        print("Failed to parse Shimeji-EE instance: Passed input is not a valid Shimeji-EE instance")
+        exit(1)
+
+    if not os.path.isdir(os.path.join(instance_root, "img")):
+        print(f"Failed to parse Shimeji-EE instance: \"img\" inside instance is not a directory")
+        exit(1)
+
+    if not os.path.isdir(os.path.join(instance_root, "conf")):
+        print(f"Failed to parse Shimeji-EE instance: \"conf\" inside instance is not a directory")
+        exit(1)
+
+    prototype_names = [dnode for dnode in os.listdir(os.path.join(instance_root, "img")) if (os.path.isdir(os.path.join(instance_root, "img", dnode)) and dnode != "unused")]
+    print("Prototypes available for conversion:")
+    for i, prototype_name in enumerate(prototype_names):
+        print(f"{i+1}. {prototype_name}")
+    print("\nEnter prototypes index or name to convert (can be comma-separated or A to convert all)")
+    user_input = input(">").rstrip().lstrip()
+
+    if user_input == "A":
+        user_input = ",".join([str(i+1) for i in range(len(prototype_names))])
+
+    selected = []
+    for index in user_input.split(","):
+        if not index.isnumeric():
+            if index in prototype_names:
+                selected.append(index)
+        else:
+            index = int(index)
+            if index > 0 and index <= len(prototype_names):
+                selected.append(prototype_names[index-1])
+
+    if not selected:
+        print("No prototypes selected")
+        exit(1)
+
+    for prototype in selected:
+
+        if os.path.exists(os.path.join(arguments.output, f"Shimeji.{prototype}.wlshm")):
+            if not arguments.force:
+                print(f"File {os.path.join(arguments.output, f'Shimeji.{prototype}.wlshm')} already exists")
+                continue
+
+        wlpak = open(os.path.join(arguments.output, f"Shimeji.{prototype}.wlshm"), "wb")
+
+        config_base_dir_name = os.path.join(instance_root, "conf")
+
+        if os.path.exists(os.path.join(instance_root, "img", prototype, "conf")):
+            if os.path.isdir(os.path.join(instance_root, "img", prototype, "conf")):
+                config_base_dir_name = os.path.join(instance_root, "img", prototype, "conf")
+
+        config_dirfd = os.open(config_base_dir_name, os.O_PATH)
+        try:
+            scripts, actions, behaviors = \
+            Compiler.compile_shimeji(
+                os.path.join(instance_root, "img", prototype),
+                config_dirfd
+            )
+        except Exception as e:
+            print(f"Conversion failed for {prototype}: {e}")
+            continue
+
+        manifest = \
+        {
+            "name": f"Shimeji.{prototype}",
+            "version": "0.0.1",
+            "description": "",
+            "display_name": prototype,
+            "programs": "scripts.json",
+            "actions": "actions.json",
+            "behaviors": "behaviors.json",
+            "assets": "assets",
+            "icon": None,
+            "artist": None,
+            "scripter": None,
+            "commissioner": None,
+            "support": None
+        }
+
+        # Try parse info.xml
+        # Try parse info.xml
+        try:
+            tree = ET.parse(os.path.join(prototype, "info.xml"))
+
+            # Mascot/Information/Name
+            # Mascot/Information/Name
+            root = tree.getroot()
+            name = root.find("Information/Name")
+            if name is not None:
+                manifest["display_name"] = name.text
+            # Mascot/Information/Artist
+            # Mascot/Information/Artist
+            artist = root.find("Information/Artist")
+            if artist is not None:
+                manifest["artist"] = artist.text
+
+            # Mascot/Information/Scripter
+            # Mascot/Information/Scripter
+            scripter = root.find("Information/Scripter")
+            if scripter is not None:
+                manifest["scripter"] = scripter.text
+
+            # Mascot/Information/Commissioner
+            # Mascot/Information/Commissioner
+            commissioner = root.find("Information/Commissioner")
+            if commissioner is not None:
+                manifest["commissioner"] = commissioner.text
+
+            # Mascot/Information/Support
+            # Mascot/Information/Support
+            support = root.find("Information/Support")
+            if support is not None:
+                manifest["support"] = support.text
+
+            # Mascot/Information/PreviewImage
+            # Mascot/Information/PreviewImage
+            icon_name = root.find("Information/PreviewImage")
+            if icon_name is not None:
+                manifest["icon"] = icon_name.text.removesuffix(".png")\
+                .removesuffix(".jpg")\
+                .removesuffix(".jpeg")\
+                .removesuffix(".gif")\
+                .removesuffix(".webp") + ".qoi"
+
+        except:
+            pass
+
+        memfile = io.BytesIO()
+        tar = tarfile.open(fileobj=memfile, mode="w")
+
+        tarinfo = tarfile.TarInfo("manifest.json")
+        tarinfo.size = len(json.dumps(manifest).encode("utf-8"))
+        tar.addfile(tarinfo, io.BytesIO(json.dumps(manifest).encode("utf-8")))
+
+        tarinfo = tarfile.TarInfo("scripts.json")
+        tarinfo.size = len(scripts.encode("utf-8"))
+        tar.addfile(tarinfo, io.BytesIO(scripts.encode("utf-8")))
+
+        tarinfo = tarfile.TarInfo("actions.json")
+        tarinfo.size = len(actions.encode("utf-8"))
+        tar.addfile(tarinfo, io.BytesIO(actions.encode("utf-8")))
+
+        tarinfo = tarfile.TarInfo("behaviors.json")
+        tarinfo.size = len(behaviors.encode("utf-8"))
+        tar.addfile(tarinfo, io.BytesIO(behaviors.encode("utf-8")))
+
+        tarinfo = tarfile.TarInfo("assets/")
+        tarinfo.type = tarfile.DIRTYPE
+        tar.addfile(tarinfo)
+
+        for path, dirs, files in os.walk(os.path.join(instance_root, "img", prototype)):
+            if path != os.path.join(instance_root, "img", prototype):
+                tarinfo = tarfile.TarInfo("assets/" + path.removeprefix(os.path.join(instance_root, "img", prototype)))
+                tarinfo.type = tarfile.DIRTYPE
+                tar.addfile(tarinfo)
+
+            for file in files:
+                if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                    img = Image.open(os.path.join(path, file))
+                    tempf = tempfile.NamedTemporaryFile(delete=False)
+                    tempf.close()
+                    encode_img(img, False, tempf.name)
+                    tempf = open(tempf.name, "rb")
+                    tarinfo = tarfile.TarInfo("assets/" + os.path.join(path.removeprefix(os.path.join(instance_root, "img", prototype)), file.removesuffix(".png")\
+                    .removesuffix(".jpg")\
+                    .removesuffix(".jpeg")\
+                    .removesuffix(".gif")\
+                    .removesuffix(".webp") + ".qoi"))
+                    tarinfo.size = os.path.getsize(tempf.name)
+                    tar.addfile(tarinfo, tempf)
+                    tempf.close()
+                    os.remove(tempf.name)
+
+        tar.close()
+
+        wlpak_prefix = b"WLPK"
+        wlpak_prefix += struct.pack(f"B{len(manifest['name'].encode('utf-8'))}s", len(manifest['name'].encode("utf-8")), manifest['name'].encode("utf-8"))
+        wlpak_prefix += struct.pack(f"B{len(manifest['version'].encode('utf-8'))}s", len(manifest['version'].encode("utf-8")), manifest['version'].encode("utf-8"))
+        wlpak_prefix += b"\x00" * (512 - len(wlpak_prefix))
+
+        wlpak.write(wlpak_prefix)
+        wlpak.write(memfile.getvalue())
+        print(f'Converted {prototype} to {os.path.join(arguments.output, f"Shimeji.{prototype}.wlshm")}')
+
+def prototypes_handler(arguments: argparse.Namespace, client: Client, parser):
+    match arguments.action:
+        case "list":
+            print("Available prototypes:")
+            for id, prototype in prototypes.items():
+                if not arguments.detailed:
+                    print(f"{id & 0x00FFFFFF}: {prototype.display_name}")
+                else:
+                    header = f"[Prototype \"{prototype.display_name}\" (aka \"{prototype.name}\")]"
+                    padding_left = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                    padding_right = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                    print(f"{'-' * padding_left}{header}{'-' * padding_right}")
+                    print(f"Id: {prototype.id & 0x00FFFFFF}")
+                    print(f"Name: {prototype.name}")
+                    print(f"Display name: {prototype.display_name}")
+                    print(f"Author: {prototype.author}")
+                    print(f"Version: {prototype.version}")
+                    print(f"Prototype store path: {prototype.path}")
+                    print("Actions:")
+                    for action in prototype.actions:
+                        print(f"  - {action}")
+                    print("Behaviors:")
+                    for behavior in prototype.behaviors:
+                        print(f"  - {behavior}")
+                    print()
+                    print(f"Object id: {id}")
+                    header = '[END]'
+                    padding_left = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                    padding_right = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                    print(f"{'-' * padding_left}{header}{'-' * padding_right}")
+                    print()
+
+        case "info":
+            protos_selected = set([])
+            for name in arguments.name or []:
+                proto = prototype_find(name)
+                if prototype_find:
+                    protos_selected.add(proto)
+            prototype: Prototype
+            for prototype in protos_selected:
+                header = f"[Prototype \"{prototype.display_name}\" (aka \"{prototype.name}\")]"
+                padding_left = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                padding_right = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                print(f"{'-' * padding_left}{header}{'-' * padding_right}")
+                print(f"Id: {prototype.id & 0x00FFFFFF}")
+                print(f"Name: {prototype.name}")
+                print(f"Display name: {prototype.display_name}")
+                print(f"Author: {prototype.author}")
+                print(f"Version: {prototype.version}")
+                print(f"Prototype store path: {prototype.path}")
+                print("Actions:")
+                for action in prototype.actions:
+                    print(f"  - {action}")
+                print("Behaviors:")
+                for behavior in prototype.behaviors:
+                    print(f"  - {behavior}")
+                print()
+                print(f"Object id: {prototype.id}")
+                header = '[END]'
+                padding_left = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                padding_right = round(os.get_terminal_size().columns / 4  - len(header) / 2)
+                print(f"{'-' * padding_left}{header}{'-' * padding_right}")
+                print()
+
+        case "reload":
+            for path in arguments.path or []:
+                if not path: continue
+                packet = ReloadPrototype(path)
+                client.queue_packet(packet)
+
+        case "reload-all":
+            packet = ReloadPrototype("")
+            client.queue_packet(packet)
+
+        case "export":
+            is_dir = os.path.isdir(arguments.output[0])
+            if not is_dir and len(arguments.name) != len(arguments.output):
+                print("ERROR: Count of output files should be equal to the number of inputs or output should be a directory")
+                exit(1)
+
+            files = []
+            if not is_dir:
+                for out in arguments.output:
+                    if os.path.exists(out) and not arguments.force:
+                        print(f"ERROR: File '{out}' already exists")
+                        exit(1)
+                    try:
+                        fileno = os.open(out, os.O_WRONLY | os.O_CREAT | (os.O_EXCL if not arguments.force else os.O_TRUNC))
+                    except OSError as E:
+                        print(f"ERROR: Failed to open file '{out}' for writing: {E}")
+                        exit(1)
+                    files.append(fileno)
+            else:
+                for name in arguments.name:
+                    new_name = f"{arguments.output[0]}/"+f"{name}.wlshm".replace(" ", "_").replace("/", "_")
+                    if os.path.exists(new_name) and not arguments.force:
+                        print(f"ERROR: File '{new_name}' already exists")
+                        exit(1)
+                    try:
+                        fileno = os.open(new_name, os.O_WRONLY | os.O_CREAT | (os.O_EXCL if not arguments.force else os.O_TRUNC))
+                    except OSError as E:
+                        print(f"ERROR: Failed to open file '{new_name}' for writing: {E}")
+                        exit(1)
+                    files.append(fileno)
+
+            selected_prototypes = []
+            for name in arguments.name:
+                if not name:
+                    print("WARNING: Empty prototype name")
+                else:
+                    prot = prototype_find(name)
+                    if not prot:
+                        print(f"ERROR: Prototype '{name}' not found")
+                    selected_prototypes.append(prot)
+
+            print(selected_prototypes)
+
+            def failed(client: Client, packet: ExportFailed):
+                export = exports.get(packet.object_id)
+                if export:
+                    logger.error(f"Failed to export prototype '{export.prototype.name}': {packet.error_code}")
+                    os.close(export.export_fd)
+                    exports.pop(export.id, None)
+                    objects.pop(export.id, None)
+
+            def success(client: Client, packet: ExportFinished):
+                export = exports.get(packet.object_id)
+                if export:
+                    logger.info(f"Successfully exported prototype '{export.prototype.name}'")
+                    os.close(export.export_fd)
+                    exports.pop(export.id, None)
+                    objects.pop(export.id, None)
+
+            client.register_callback(ExportFailed, failed)
+            client.register_callback(ExportFinished, success)
+
+            for i, prototype in enumerate(selected_prototypes):
+                Export(files[i], prototype, client.socket)
+
+            client.dispatch_events(until=lambda: len(exports) == 0)
+
+        case "import":
+
+            def failed(client: Client, packet: ImportFailed):
+                import_object = imports.get(packet.object_id)
+                if not import_object:
+                    logger.error(f"Failed to import prototype referenced by unknown id {packet.object_id}: {packet.error_code}")
+                    return
+
+                errors = {
+                    0: "Unknown error",
+                    1: "Invalid file format",
+                    2: "Invalid mascot version",
+                    3: "Referenced prototype already exists. Use -f to overwrite",
+                    4: "File referenced by fd is not valid TAR file",
+                    5: "Invalid mascot version",
+                    6: "FD points not to a file",
+                    7: "FD opened in invalid mode"
+                }
+
+                logger.error(f"Failed to import prototype referenced by id {packet.object_id}: {errors.get(packet.error_code, 'Unknown error')}")
+                imports.pop(packet.object_id, None)
+                objects.pop(packet.object_id, None)
+
+            def finished(client: Client, packet: ImportFinished):
+                import_object = imports.get(packet.object_id)
+                if import_object:
+                    logger.info(f"Successfully imported prototype referenced by id {packet.object_id}")
+                    rpacket = ReloadPrototype(packet.relative_path)
+                    client.queue_packet(rpacket)
+
+                imports.pop(packet.object_id, None)
+                objects.pop(packet.object_id, None)
+
+
+            client.register_callback(ImportFinished, finished)
+            client.register_callback(ImportFailed, failed)
+
+            for input_file in arguments.input:
+                if not os.path.exists(input_file):
+                    logger.error(f"File '{input_file}' does not exist")
+                    exit(1)
+                with open(input_file, "rb") as f:
+                    if f.read(4) != b'WLPK':
+                        logger.warning(f"File '{input_file}' is not a valid wl_shimeji prototype, please first convert it to a wl_shimeji prototype using shimeji-convert command")
+                        continue
+                    Import(f.fileno(), arguments.force, client.socket)
+
+
+            client.dispatch_events(until=lambda: len(imports) == 0)
+
+        case _:
+            parser.print_help()
+            exit(1)
+
+def mascot_handler(arguments: argparse.Namespace, client: Client, parser):
+    global active_selection
+    data = {"mascot__": None}
+    match arguments.action:
+        case "summon":
+            prototype = prototype_find(arguments.name)
+            if prototype is None:
+                logger.error(f"Prototype '{arguments.name}' not found")
+                exit(1)
+
+            envs = []
+            envids = [int(x) for x in arguments.environment or [] if x.isdigit()]
+            for envid in envids:
+                if envid in environments:
+                    envs.append(environments[envid])
+
+            if not arguments.select and (not arguments.position or not arguments.x or not arguments.y):
+                if arguments.position is None:
+                    xpos = arguments.x or -1
+                    ypos = arguments.y or 128
+                else:
+                    xpos, ypos = arguments.position.split(',')
+
+                random_env: Environment = random.choice(envs) if envs else random.choice(list(environments.values()))
+                if xpos == -1:
+                    xpos = 64 + random.randint(0, random_env.width - 128)
+
+                packet = Spawn(prototype.id, random_env.id, xpos, ypos, arguments.behavior)
+                client.queue_packet(packet)
+
+            else:
+                selection = Selection(envs, client.socket)
+                active_selection = selection
+                def selected2(packet: SelectionDone):
+                    global active_selection
+                    xpos, ypos = packet.x, packet.y
+                    env = environments.get(packet.environment_id)
+                    if env is None:
+                        logger.error(f"Environment {packet.environment_id} not found")
+                        exit(1)
+
+                    spawn_packet = Spawn(prototype.id, env.id, xpos, ypos, arguments.behavior)
+                    client.queue_packet(spawn_packet)
+                    active_selection = None
+
+                def cancelled2(packet: SelectionCancelled):
+                    global active_selection
+                    active_selection = None
+                    logger.info(f"Selection cancelled")
+
+                selection.selected = selected2
+                selection.cancelled = cancelled2
+
+                print(f"Using \"{prototype.name}\" prototype. Select spot to spawn new mascot.")
+                try:
+                    client.dispatch_events(until=lambda: active_selection != selection)
+                except KeyboardInterrupt:
+                    selection.cancel()
+
+        case "dismiss":
+            envs = []
+            envids = [int(x) for x in arguments.environment or [] if x.isdigit()]
+            for envid in envids:
+                if envid in environments:
+                    envs.append(environments[envid])
+
+            mascots_to_dismiss: list[Mascot] = []
+
+            if arguments.select or arguments.id is None:
+                selection = Selection(envs, client.socket)
+                active_selection = selection
+                def selected(packet: SelectionDone):
+                    global active_selection
+                    if packet.mascot_id != 0:
+                        mascot = mascots.get(packet.mascot_id)
+                        if mascot is None:
+                            logger.error(f"Failed to get mascot with id {packet.mascot_id}")
+                        else:
+                            mascots_to_dismiss.append(mascot)
+                    if active_selection == selection:
+                        active_selection = None
+
+                def cancelled(packet: SelectionCancelled):
+                    global active_selection
+                    if active_selection == selection:
+                        active_selection = None
+                    logger.info(f"Selection cancelled")
+
+                selection.selected = selected
+                selection.cancelled = cancelled
+
+                print(f"Select mascot to dismiss.")
+
+                try:
+                    client.dispatch_events(until=lambda: active_selection != selection)
+                except KeyboardInterrupt:
+                    selection.cancel()
+            else:
+                if not arguments.id.isnumeric():
+                    print(f"Provided ID is not a number")
+                    exit(1)
+
+                mascot = mascots.get(int(arguments.id))
+                if not mascot:
+                    print(f"Mascot with ID {arguments.id} not found")
+                    exit(1)
+
+                else:
+                    mascots_to_dismiss = [mascot]
+
+            if arguments.all:
+                for mascot in mascots.values():
+                    if (mascot.environment in envs or not len(envs)) and mascot not in mascots_to_dismiss:
+                        if not arguments.filter_same_type or (arguments.filter_same_type and mascot.prototype == mascots_to_dismiss[0].prototype):
+                            mascots_to_dismiss.append(mascot)
+
+            for i, mascot in enumerate(mascots_to_dismiss):
+                if i == 0 and arguments.filter_other:
+                    continue
+
+                mascot.dismiss()
+
+        case "info":
+            mascot = None
+            if arguments.id is None:
+                selection = Selection([], client.socket)
+                active_selection = selection
+
+                def selected(packet: SelectionDone):
+                    global active_selection
+                    data["mascot__"] = mascots.get(packet.mascot_id)
+                    active_selection = None
+
+                def cancelled(packet: SelectionCancelled):
+                    global active_selection
+                    print("Selection cancelled")
+                    active_selection = None
+
+                selection.selected = selected
+                selection.cancelled = cancelled
+
+                print(f"Select mascot to get information about.")
+
+                client.dispatch_events(until=lambda: active_selection is None)
+                mascot = data["mascot__"]
+            else:
+                if not arguments.id.isdigit():
+                    print("Invalid ID")
+                    exit(1)
+                mascot = mascots.get(int(arguments.id))
+
+            if not mascot:
+                print("Mascot not found")
+                exit(1)
+
+            print(mascot)
+            packet = MascotGetInfo(mascot.id)
+            client.queue_packet(packet)
+
+            def got_mascot_info(client: Client, packet: MascotInfo):
+                prototype = prototypes.get(packet.prototype_id)
+                mascot = mascots.get(packet.object_id)
+                environment = environments.get(packet.environment_id)
+                if not prototype:
+                    print("Prototype not found")
+                    exit(1)
+                if not mascot:
+                    print("Mascot not found")
+                    exit(1)
+                print(f"Mascot id {packet.object_id} (Type {prototype.name}:")
+                print(f"Environment: {packet.environment_id}")
+                print(f"Current state: {packet.current_state}")
+                print(f"Current action: {packet.current_action_name.decode()}")
+                print(f"Current action index: {packet.current_action_index}")
+                print(f"Current behavior: {packet.current_behavior_name.decode()}")
+                print(f"Affordance: {packet.current_affordance_name.decode()}")
+                print("Action stack:")
+                for action_name, action_index in packet.actions:
+                    print(f"  {action_name.decode()}, stored index: {action_index}")
+                print("Behavior pool:")
+                for behavior_name, frequency in packet.behaviors:
+                    print(f"  {behavior_name.decode()}, frequency: {frequency}")
+
+                print(f"Position: {packet.variables[0].value}, {packet.variables[1].value}")
+                # print(f"Target: {packet.variables[2].value}, {packet.variables[3].value}")
+                # print(f"Target: {packet.variables[2].value}, {packet.variables[3].value}")
+                # print(f"Gravity: {packet.variables[4].value}")
+                # print(f"Gravity: {packet.variables[4].value}")
+                # print(f"Looking Right: {packet.variables[5].value}")
+                # print(f"Looking Right: {packet.variables[5].value}")
+                # print(f"Air Drag: {packet.variables[6].value}, {packet.variables[7].value}")
+                # print(f"Air Drag: {packet.variables[6].value}, {packet.variables[7].value}")
+                # print(f"Velocity: {packet.variables[8].value}, {packet.variables[9].value}")
+                # print(f"Velocity: {packet.variables[8].value}, {packet.variables[9].value}")
+                # print(f"Foot X: {packet.variables[15].value}")
+                # print(f"Foot X: {packet.variables[15].value}")
+                # print(f"Foot DX: {packet.variables[16].value}")
+                # print(f"Foot DX: {packet.variables[16].value}")
+                print(f"IE Offset: {packet.variables[22].value}, {packet.variables[23].value}")
+                exit(0)
+
+            client.register_callback(MascotInfo, got_mascot_info)
+            client.dispatch_events()
+
+        case "set-behavior":
+            mascot = None
+            if arguments.id is None:
+                selection = Selection([], client.socket)
+                active_selection = selection
+
+                def selected(packet: SelectionDone):
+                    global active_selection
+                    data["mascot__"] = mascots.get(packet.mascot_id)
+                    active_selection = None
+
+                def cancelled(packet: SelectionCancelled):
+                    global active_selection
+                    print("Selection cancelled")
+                    active_selection = None
+
+                selection.selected = selected
+                selection.cancelled = cancelled
+
+                print(f"Select mascot to set behavior for.")
+                client.dispatch_events(until=lambda: active_selection is None)
+                mascot = data["mascot__"]
+            else:
+                if not arguments.id.isdigit():
+                    print("Invalid ID")
+                    exit(1)
+                mascot = mascots.get(int(arguments.id))
+
+            if not mascot:
+                print("Mascot not found")
+                exit(1)
+
+            packet = ApplyBehavior(mascot.id, arguments.behavior_name)
+            client.queue_packet(packet)
+
+        case _:
+            parser.print_help()
+            exit(1)
+
+
+def environment_handler(arguments: argparse.Namespace, client: Client, parser):
+    global active_selection
+    match arguments.action:
+        case "list":
+            for environment in environments.values():
+                print(environment)
+        case "close":
+            if not arguments.id:
+                selection = Selection([], client.socket)
+                active_selection = selection
+
+                def selected(packet: SelectionDone):
+                    global active_selection
+                    environment = environments.get(packet.environment_id)
+                    if environment is None:
+                        print("Invalid environment!")
+                        exit(1)
+
+                    environment.close()
+                    print(f"Closing environment {environment.id}")
+                    active_selection = None
+
+                def cancelled(packet: SelectionCancelled):
+                    global active_selection
+                    print("Selection cancelled")
+                    active_selection = None
+
+                selection.selected = selected
+                selection.cancelled = cancelled
+
+                print("Select screen to close. (Closes overlay on that screen)")
+                client.dispatch_events(until=lambda: active_selection == None)
+            else:
+                environment = environments.get(arguments.id)
+                if environment is None:
+                    print("Invalid environment!")
+                    exit(1)
+
+                environment.close()
+                print(f"Closing environment {environment.id}")
+
+        case "info":
+            returndict = {"env": None}
+            if arguments.id is None:
+                selection = Selection([], client.socket)
+                active_selection = selection
+
+                def selected(packet: SelectionDone):
+                    global active_selection
+                    environment = environments.get(packet.environment_id)
+                    if environment is None:
+                        print("Invalid environment!")
+                        exit(1)
+
+                    returndict["env"] = environment
+                    active_selection = None
+
+                def cancelled(packet: SelectionCancelled):
+                    global active_selection
+                    active_selection = None
+
+                selection.selected = selected
+                selection.cancelled = cancelled
+
+                print("Select screen to get info about.")
+                client.dispatch_events(until=lambda: active_selection == None)
+            else:
+                environment = environments.get(arguments.id)
+                if environment is None:
+                    print("Invalid environment id!")
+                    exit(1)
+
+                returndict["env"] = environment
+
+            environment = returndict["env"]
+            if environment is None:
+                print("No environment was selected.")
+                exit(1)
+
+            print(f"Environment#{environment.id}")
+            print(f"Name: {environment.name}")
+            print(f"Description: {environment.description}")
+            print(f"Compositor position: {environment.x}, {environment.y}")
+            print(f"Size: {environment.width}x{environment.height}")
+            print(f"Scale: {environment.scale}")
+            print("Referenced mascots:")
+            for id, mascot in environment.mascots.items():
+                print(f" - {mascot.prototype.display_name}#{mascot.id} (aka {mascot.prototype.name})")
+
+        case _:
+            parser.print_help()
+            exit(1)
+
+
+def config_handler(arguments: argparse.Namespace, client: Client, parser):
+    name_cast = {
+        "BREEDING": "Multiplication",
+        "DRAGGING": "Dragging",
+        "WINDOW_INTERACTIONS": "Window Interactions",
+        "WINDOW_THROWING": "Window Throwing",
+        "WINDOW_THROW_POLICY": "Window Throw Policy",
+        "CURSOR_POSITION": "Cursor Position",
+        "MASCOT_LIMIT": "Mascot Limit",
+        "ALLOW_THROWING_MULTIHEAD": "Allow Throwing Multihead",
+        "ALLOW_DRAGGING_MULTIHEAD": "Allow Dragging Multihead",
+        "UNIFIED_OUTPUTS": "Unified Outputs",
+        "DISMISS_ANIMATIONS": "Dismiss Animations",
+        "AFFORDANCES": "Affordances",
+        "INTERPOLATION_FRAMERATE": "Interpolation Framerate",
+        "WLR_SHELL_LAYER": "Overlay layer",
+        "TABLETS_ENABLED": "Tablets Enabled",
+        "POINTER_LEFT_BUTTON": "Left Button",
+        "POINTER_RIGHT_BUTTON": "Right Button",
+        "POINTER_MIDDLE_BUTTON": "Middle Button",
+        "ON_TOOL_PEN": "On Tool Pen Button",
+        "ON_TOOL_ERASER": "On Tool Eraser Button",
+        "ON_TOOL_BRUSH": "On Tool Brush Button",
+        "ON_TOOL_PENCIL": "On Tool Pencil Button",
+        "ON_TOOL_AIRBRUSH": "On Tool Airbrush Button",
+        "ON_TOOL_FINGER": "On Tool Finger Button",
+        "ON_TOOL_LENS": "On Tool Lens Button",
+        "ON_TOOL_MOUSE": "On Tool Mouse Button",
+        "ON_TOOL_BUTTON1": "On Tool Button 1",
+        "ON_TOOL_BUTTON2": "On Tool Button 2",
+        "ON_TOOL_BUTTON3": "On Tool Button 3",
+        "OPACITY": "Opacity",
+        "MASCOT_SCALE": "Scaling"
+    }
+    starttime = time.time()
+    wait_until_null_null = False
+
+    def received_config_key(client: Client, packet: ConfigKey):
+        if len(packet.key) == 0:
+            exit(0)
+
+        key = name_cast.get(packet.key, packet.key)
+
+        print(f"  - {key} ({packet.key}) = {packet.value}")
+        if not wait_until_null_null:
+            exit(0)
+
+    client.register_callback(ConfigKey, received_config_key)
+
+    match arguments.subcommand:
+        case "get":
+            packet = GetConfigKey(arguments.key)
+            client.queue_packet(packet)
+            client.dispatch_events(until=lambda: time.time() - starttime > 5)
+            print("Timeout.")
+        case "set":
+            if arguments.key not in name_cast:
+                print(f"Unknown key: {arguments.key}\nAvailable keys:")
+                for key in name_cast:
+                    print(f"  - {key}")
+                exit(1)
+            packet = SetConfigKey(arguments.key, arguments.value)
+            client.queue_packet(packet)
+            client.dispatch_events(until=lambda: time.time() - starttime > 5)
+            print("Timeout.")
+        case "list":
+            print("Config:")
+            wait_until_null_null = True
+            packet = ListConfigKeys()
+            client.queue_packet(packet)
+            client.dispatch_events(until=lambda: time.time() - starttime > 5)
+            print("Timeout.")
+        case _:
+            parser.print_help()
+            exit(1)
+
+def local_config_handler(arguments: argparse.Namespace, parser):
+    name_cast = {
+        "BREEDING": "breeding",
+        "DRAGGING": "dragging",
+        "WINDOW_INTERACTIONS": "ie_interactions",
+        "WINDOW_THROWING": "ie_throwing",
+        "WINDOW_THROW_POLICY": "ie_throw_policy",
+        "CURSOR_POSITION": "cursor_data",
+        "MASCOT_LIMIT": "mascot_limit",
+        "ALLOW_THROWING_MULTIHEAD": "allow_throwing_multihead",
+        "ALLOW_DRAGGING_MULTIHEAD": "allow_dragging_multihead",
+        "UNIFIED_OUTPUTS": "unified_outputs",
+        "DISMISS_ANIMATIONS": "allow_dismiss_animations",
+        "AFFORDANCES": "per_mascot_interactions",
+        "INTERPOLATION_FRAMERATE": "interpolation_framerate",
+        "WLR_SHELL_LAYER": "overlay_layer",
+        "TABLETS_ENABLED": "tablets_enabled",
+        "POINTER_LEFT_BUTTON": "pointer_left_value",
+        "POINTER_RIGHT_BUTTON": "pointer_right_value",
+        "POINTER_MIDDLE_BUTTON": "pointer_middle_value",
+        "ON_TOOL_PEN": "on_tool_pen_value",
+        "ON_TOOL_ERASER": "on_tool_eraser_value",
+        "ON_TOOL_BRUSH": "on_tool_brush_value",
+        "ON_TOOL_PENCIL": "on_tool_pencil_value",
+        "ON_TOOL_AIRBRUSH": "on_tool_airbrush_value",
+        "ON_TOOL_FINGER": "on_tool_finger_value",
+        "ON_TOOL_LENS": "on_tool_lens_value",
+        "ON_TOOL_MOUSE": "on_tool_mouse_value",
+        "ON_TOOL_BUTTON1": "on_tool_button1_value",
+        "ON_TOOL_BUTTON2": "on_tool_button2_value",
+        "ON_TOOL_BUTTON3": "on_tool_button3_value",
+        "OPACITY": "mascot_opacity",
+        "MASCOT_SCALE": "mascot_scale",
+        "PROTOTYPES_LOCATION": "prototypes_location",
+        "PLUGINS_LOCATION": "plugins_location",
+        "SOCKET_LOCATION": "socket_location",
+    }
+
+    backmap = { v: k for k, v in name_cast.items() }
+
+    config_file_loc = arguments.config
+    if config_file_loc is None:
+        basedir = os.path.expanduser("~/.local/share/wl_shimeji")
+        config_file_loc = os.path.join(basedir, "shimeji-overlayd.conf")
+
+    if not os.path.exists(config_file_loc):
+        print(f"Config file not found at {config_file_loc}! Please start wl_shimeji at least once before editing it.")
+        exit(1)
+
+    def parse_boolean(value):
+        if value.lower() in ["true", "yes", "on", "1"]:
+            return True
+        elif value.lower() in ["false", "no", "off", "0"]:
+            return False
+        return True
+
+    config = {}
+    with open(config_file_loc, "r") as f:
+        for line in f.readlines():
+            key, value = line.strip().split("=")
+            if key in backmap:
+                config[backmap[key]] = value.strip()
+
+
+    match arguments.subcommand:
+        case "get":
+            if arguments.key not in name_cast:
+                print(f"Unknown key: {arguments.key}\nAvailable keys:")
+                for key in name_cast:
+                    print(f"  - {key}")
+                exit(1)
+            print(config.get(arguments.key, "Key not found"))
+        case "set":
+            if arguments.key not in name_cast:
+                print(f"Unknown key: {arguments.key}\nAvailable keys:")
+                for key in name_cast:
+                    print(f"  - {key}")
+                exit(1)
+            config[arguments.key] = arguments.value
+            with open(config_file_loc, "w") as f:
+                for key, value in config.items():
+                    f.write(f"{name_cast[key]}={value}\n")
+        case "list":
+            print("Config:")
+            for key, value in config.items():
+                print(f"{key}: {value}")
+        case _:
+            parser.print_help()
+            exit(1)
+
+def plugins_handler(arguments, client, plugins_category):
+    if plugins_category == "restore-windows":
+        packet = PluginRestoreWindows()
+        client.queue_packet(packet)
+
+if __name__ == "__main__":
+    argparser = argparse.ArgumentParser(description="CLI client for the wl_shimeji overlay")
+    argparser.add_argument("-s", "--socket", help="Path to the shimeji-overlayd socket")
+    argparser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    argparser.add_argument("-c", "--config", help="Path to the shimeji-overlayd config")
+    argparser.add_argument("-cr", "--config-root", help="Path to the shimeji-overlayd config root directory")
+    argparser.add_argument("--do-not-start", action="store_true", help="Do not start the overlay")
+    argparser.add_argument("--do-start", action="store_true", help="Start the overlay")
+
+    category = argparser.add_subparsers(dest="category", help="")
+
+# Mascot category
+# Mascot category
+
+    mascot_category = category.add_parser("mascot", help="Manage mascots")
+    mascot_subparsers = mascot_category.add_subparsers(dest="action", help="Action to perform")
+
+    summoner = mascot_subparsers.add_parser("summon", help="Summon a mascot")
+    summoner.add_argument("name", help="Name of the mascot to summon. You can see available mascot types using prototypes list")
+    summoner.add_argument('-s', "--select", action="store_true", help="Use selection mechanism to select place where to summon")
+    summoner.add_argument("-e", "--environment", action="append", help="Selects possible environments to summon in. If specified with select, will act as filter for the selection")
+    summoner.add_argument("-x", help="Selects X coordinates to summon in. Does nothing when select is specified.")
+    summoner.add_argument("-y", help="Selects Y coordinates to summon in. Does nothing when select is specified.")
+    summoner.add_argument("--position", help="Takes a position in the format x,y, mutually exclusive with -x and -y")
+    summoner.add_argument("-b", "--behavior", help="Specifies starting behavior.", default="")
+
+    dismisser = mascot_subparsers.add_parser("dismiss", help="Dismiss a mascot")
+    dismisser.add_argument("-i", "--id", help="ID of the mascot to dismiss.")
+    dismisser.add_argument('-s', "--select", action="store_true", help="Use selection mechanism to select place where to summon")
+    dismisser.add_argument("-e", "--environment", action="append", help="Selects possible environments to where dismiss can be done. Acts as filter for the selection and if specified with --all will act as filter during processing")
+    dismisser.add_argument("-a", "--all", action="store_true", help="Dismiss all mascots. Mutually exclusive with --all-other")
+    dismisser.add_argument("-o", "--filter-other", action="store_true", help="Dismiss all mascots except the one selected")
+    dismisser.add_argument("-fs", "--filter-same-type", action="store_true", help="Dismiss all mascots of the same type as the selected one")
+
+    # info_getter = mascot_subparsers.add_parser("info", help="Get information about a mascot")
+    # info_getter = mascot_subparsers.add_parser("info", help="Get information about a mascot")
+    # info_getter.add_argument("-i", "--id", help="ID of the mascot to get information about. If not specified, selection mechanism will be used")
+    # info_getter.add_argument("-i", "--id", help="ID of the mascot to get information about. If not specified, selection mechanism will be used")
+
+    behavior_setter = mascot_subparsers.add_parser("set-behavior", help="Set behavior of a mascot")
+    behavior_setter.add_argument("-i", "--id", help="ID of the mascot to set behavior for. If not specified, selection mechanism will be used")
+    behavior_setter.add_argument("behavior_name", help="Behavior(s) to set for the mascot.")
+
+# Environment category
+# Environment category
+
+    environment_category = category.add_parser("environment", help="Manage environments")
+    environment_subparsers = environment_category.add_subparsers(dest="action", help="Action to perform")
+
+    environment_list = environment_subparsers.add_parser("list", help="List known environments")
+
+    environment_close = environment_subparsers.add_parser("close", help="Close overlay on a screen (Acts as if output was unplugged, to restore overlay on that screen you need to restart the overlay or replug the screen)")
+    environment_close.add_argument("-i", "--id", help="ID of the environment to close")
+
+    environment_info = environment_subparsers.add_parser("info", help="Get information about an environment")
+    environment_info.add_argument("-i", "--id", help="ID of the environment to get information about")
+
+# Prototype category
+# Prototype category
+
+    prototype_category = category.add_parser("prototypes", help="Manage prototypes")
+    prototype_subparsers = prototype_category.add_subparsers(dest="action", help="Action to perform")
+
+    prototype_list = prototype_subparsers.add_parser("list", help="List known prototypes")
+    prototype_list.add_argument("-d", "--detailed", action="store_true", help="Show detailed information about the prototypes")
+
+    prototype_info = prototype_subparsers.add_parser("info", help="Get information about a prototype")
+    prototype_info.add_argument("name", action="append", help="Name(s) of the prototype to get information about")
+
+    prototype_reloader = prototype_subparsers.add_parser("reload", help="Reload a prototype")
+    prototype_reloader.add_argument("path", action="append", help="Path(s) of the prototype to reload")
+
+    prototype_reload_all = prototype_subparsers.add_parser("reload-all", help="Reload all prototypes")
+
+    prototype_exporter = prototype_subparsers.add_parser("export", help="Export a prototype")
+    prototype_exporter.add_argument("-i", "--name", action="append", help="Name of the prototype to export. Can be specified multiple times.")
+    prototype_exporter.add_argument("-o", "--output", action="append", help="Output file path. Should match inputs count or be a directory")
+    prototype_exporter.add_argument("-f", "--force", action="store_true", help="Overwrite existing files")
+
+    prototype_importer = prototype_subparsers.add_parser("import", help="Import a prototype")
+    prototype_importer.add_argument("input", nargs="*", help="Path(s) of the prototype to import. Can be either in wlshm format or in Shimeji-ee format. Can be specified multiple times.")
+    prototype_importer.add_argument("-f", "--force", action="store_true", help="Overwrite existing prototypes")
+
+# Convert category
+# Convert category
+
+    convert_category = category.add_parser("convert", help="Convert a instance")
+    convert_category.add_argument("input", help="Path of the instance to convert. Should be either a directory or a zip file. Must be Shimeji-EE instance.")
+    convert_category.add_argument("-O", "--output", help="Output directory.", required=True)
+    convert_category.add_argument("-f", "--force", action="store_true", help="Overwrite existing files")
+
+# Config category
+# Config category
+
+    config_category = category.add_parser("config", help="Config category")
+
+    config_subparsers = config_category.add_subparsers(dest="subcommand", help="Subcommands")
+
+    config_subparsers.add_parser("list", help="List all config files")
+    getter = config_subparsers.add_parser("get", help="Get a config value")
+    getter.add_argument("key", help="Key of the config value to get")
+
+    setter = config_subparsers.add_parser("set", help="Set a config value")
+    setter.add_argument("key", help="Key of the config value to set")
+    setter.add_argument("value", help="Value to set")
+
+# Stop
+# Stop
+
+    stop_parser = category.add_parser("stop", help="Ask overlay daemon to stop")
+
+# Foreground
+# Foreground
+    foreground_parser = category.add_parser("foreground", help="Run overlay daemon in foreground")
+
+# Shortcuts
+# Shortcuts
+
+    summoner = category.add_parser("summon", help="Summon a mascot")
+    summoner.add_argument("name", help="Name of the mascot to summon. You can see available mascot types using prototypes list")
+    summoner.add_argument('-s', "--select", action="store_true", help="Use selection mechanism to select place where to summon")
+    summoner.add_argument("-e", "--environment", action="append", help="Selects possible environments to summon in. If specified with select, will act as filter for the selection")
+    summoner.add_argument("-x", help="Selects X coordinates to summon in. Does nothing when select is specified.")
+    summoner.add_argument("-y", help="Selects Y coordinates to summon in. Does nothing when select is specified.")
+    summoner.add_argument("--position", help="Takes a position in the format x,y, mutually exclusive with -x and -y")
+    summoner.add_argument("-b", "--behavior", help="Specifies starting behavior.", default="")
+
+    dismisser = category.add_parser("dismiss", help="Dismiss a mascot")
+    dismisser.add_argument("-i", "--id", help="ID of the mascot to dismiss.")
+    dismisser.add_argument('-s', "--select", action="store_true", help="Use selection mechanism to select place where to summon")
+    dismisser.add_argument("-e", "--environment", action="append", help="Selects possible environments to where dismiss can be done. Acts as filter for the selection and if specified with --all will act as filter during processing")
+    dismisser.add_argument("-a", "--all", action="store_true", help="Dismiss all mascots. Mutually exclusive with --all-other")
+    dismisser.add_argument("-o", "--filter-other", action="store_true", help="Dismiss all mascots except the one selected")
+    dismisser.add_argument("-fs", "--filter-same-type", action="store_true", help="Dismiss all mascots of the same type as the selected one")
+
+    behavior_setter = category.add_parser("set-behavior", help="Set behavior of a mascot")
+    behavior_setter.add_argument("-i", "--id", help="ID of the mascot to set behavior for. If not specified, selection mechanism will be used")
+    behavior_setter.add_argument("behavior_name", help="Behavior(s) to set for the mascot.")
+
+    window_restorer = category.add_parser("restore-windows", help="Restore windows of a mascot")
+
+    prototype_exporter = category.add_parser("export", help="Export a prototype")
+    prototype_exporter.add_argument("-i", "--name", action="append", help="Name of the prototype to export. Can be specified multiple times.")
+    prototype_exporter.add_argument("-o", "--output", action="append", help="Output file path. Should match inputs count or be a directory")
+    prototype_exporter.add_argument("-f", "--force", action="store_true", help="Overwrite existing files")
+
+    prototype_importer = category.add_parser("import", help="Import a prototype")
+    prototype_importer.add_argument("input", nargs="*", help="Path(s) of the prototype to import. Can be either in wlshm format or in Shimeji-ee format. Can be specified multiple times.")
+    prototype_importer.add_argument("-f", "--force", action="store_true", help="Overwrite existing prototypes")
+
+    prototype_list = category.add_parser("list", help="List known prototypes")
+    prototype_list.add_argument("-d", "--detailed", action="store_true", help="Show detailed information about the prototypes")
+
+    arguments = argparser.parse_args()
+    if arguments.category is None:
+        argparser.print_help()
+        exit(1)
+
+    socket_path = arguments.socket or (
+        os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "shimeji-overlayd.sock")
+    )
+
+    startopts: dict[str, Any] = {
+        "cmdline": []
+    }
+
+    if arguments.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+        startopts["verbose"] = True
+    else:
+        logging.basicConfig(level=logging.INFO)
+
+
+    if arguments.socket:
+        startopts["cmdline"].append('-s')
+        startopts["cmdline"].append(socket_path)
+
+    if arguments.do_not_start:
+        startopts["start"] = False
+    if arguments.do_start:
+        startopts["start"] = True
+
+    if arguments.do_start and arguments.do_not_start:
+        logging.error("--do-not-start and --do-start are mutually exclusive")
+        exit(1)
+
+    if arguments.config:
+        startopts["config"] = arguments.config
+        startopts["cmdline"].append("--config-file")
+        startopts["cmdline"].append(arguments.config)
+
+    if arguments.config_root:
+        startopts["config_root"] = arguments.config_root
+        startopts["cmdline"].append("--configuration-root")
+        startopts["cmdline"].append(arguments.config_root)
+
+    if arguments.category == "foreground":
+        startopts["start"] = True
+        startopts["verbose"] = True
+
+    if arguments.category == "config":
+        startopts["start"] = False
+        startopts["is_config_req"] = True
+
+    try:
+        client = Client(socket_path, startopts)
+    except KeyboardInterrupt:
+        logging.info("Interrupted.")
+    except SystemExit as e:
+        if arguments.category == "config":
+            local_config_handler(arguments, config_category)
+            exit(0)
+        raise e
+    except Exception as e:
+        logging.error(f"Failed to start client: {e}")
+        exit(1)
+
+    if arguments.category == "foreground":
+        try:
+            client.dispatch_events()
+        except KeyboardInterrupt:
+            logging.info("Interrupted.")
+            stopcommand = Stop()
+            client.queue_packet(stopcommand)
+        except Exception as e:
+            logging.error(f"Failed to dispatch events: {e}")
+            exit(1)
+        exit(0)
+
+    try:
+        match arguments.category:
+            case "prototypes":
+                prototypes_handler(arguments, client, prototype_category)
+            case "convert":
+                converter_handler(arguments, client, convert_category)
+            case "mascot":
+                mascot_handler(arguments, client, mascot_category)
+            case "environment":
+                environment_handler(arguments, client, environment_category)
+            case "stop":
+                client.queue_packet(Stop())
+            case "config":
+                config_handler(arguments, client, config_category)
+            case "summon":
+                arguments.category = "mascot"
+                arguments.action = "summon"
+                mascot_handler(arguments, client, argparser)
+            case "dismiss":
+                arguments.category = "mascot"
+                arguments.action = "dismiss"
+                mascot_handler(arguments, client, argparser)
+            case "set-behavior":
+                arguments.category = "mascot"
+                arguments.action = "set-behavior"
+                mascot_handler(arguments, client, argparser)
+            case "list":
+                arguments.category = "prototypes"
+                arguments.action = "list"
+                prototypes_handler(arguments, client, argparser)
+            case "import":
+                arguments.category = "prototypes"
+                arguments.action = "import"
+                prototypes_handler(arguments, client, argparser)
+            case "export":
+                arguments.category = "prototypes"
+                arguments.action = "export"
+                prototypes_handler(arguments, client, argparser)
+            case "restore-windows":
+                arguments.category = "plugins"
+                arguments.action = "restore-windows"
+                plugins_handler(arguments, client, "restore-windows")
+            case _:
+                argparser.print_help()
+                exit(1)
+    except KeyboardInterrupt:
+        logging.info("Interrupted.")
