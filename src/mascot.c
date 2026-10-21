@@ -986,10 +986,6 @@ void mascot_unlink(struct mascot *mascot) {
 
   protocol_server_mascot_destroyed(mascot);
 
-  if (mascot->prototype) {
-    mascot_prototype_unlink((struct mascot_prototype *)mascot->prototype);
-  }
-
   if (mascot->subsurface) {
     environment_destroy_subsurface(mascot->subsurface);
   }
@@ -997,6 +993,12 @@ void mascot_unlink(struct mascot *mascot) {
   mascot_announce_affordance(mascot, NULL);
 
   mascot_detach_affordance_manager(mascot);
+
+  // Last, as the calls above still use the prototype, which this may free
+  if (mascot->prototype) {
+    mascot_prototype_unlink((struct mascot_prototype *)mascot->prototype);
+    mascot->prototype = NULL;
+  }
 
   free(mascot->action_data);
 
