@@ -416,12 +416,13 @@ void protocol_server_mascot_destroyed(struct mascot *mascot)
 }
 
 void protocol_server_prototype_withdraw(struct mascot_prototype* prototype) {
-    ipc_packet_t* withdraw_event = protocol_builder_prototype_withdrawn(prototype);
     pthread_mutex_lock(&server_state->clients_mutex);
     for (uint32_t i = 0, c = list_count(server_state->clients); i < list_size(server_state->clients) && c; i++) {
         struct protocol_client* client = list_get(server_state->clients, i);
         if (!client) continue;
         c--;
+        // One packet per client: ipc_connector_send frees it once sent
+        ipc_packet_t* withdraw_event = protocol_builder_prototype_withdrawn(prototype);
         ipc_connector_send(client->connector, withdraw_event);
     }
     pthread_mutex_unlock(&server_state->clients_mutex);
