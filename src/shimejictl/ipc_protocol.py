@@ -1,4 +1,4 @@
-from __future__ import annotations
+ from __future__ import annotations
 import os
 import struct
 import socket
@@ -646,7 +646,7 @@ class Spawn(Packet):
         self.spawn_behavior = spawn_behavior
 
     def serialize(self) -> bytes:
-        return struct.pack(f"IIIIb{len(self.spawn_behavior)}s", self.prototype_id, self.environment_id, self.x, self.y, len(self.spawn_behavior), self.spawn_behavior.encode())
+        return struct.pack(f"IIIIb{len(self.spawn_behavior)}s", self.prototype_id, self.environment_id, int(self.x), int(self.y), len(self.spawn_behavior), self.spawn_behavior.encode())
 
 class Dispose(Packet):
     type: int = 0x2B
