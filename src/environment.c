@@ -2316,6 +2316,11 @@ static void handle_output(void *data, uint32_t id, uint32_t version) {
 
 static void handle_seat(void *data, uint32_t id, uint32_t version) {
   UNUSED(data);
+  // Pointer objects inherit the seat version. Our listener handles events
+  // through axis_relative_direction (v9); v11 can also deliver warp.
+  const uint32_t supported_version = WL_POINTER_AXIS_RELATIVE_DIRECTION_SINCE_VERSION;
+  if (version > supported_version)
+    version = supported_version;
   seat = wl_registry_bind(registry, id, &wl_seat_interface, version);
   wl_seat_add_listener(seat, &wl_seat_listener, NULL);
   DEBUG("Binded wl_seat global of ver %u", version);
