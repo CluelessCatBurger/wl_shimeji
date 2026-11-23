@@ -826,7 +826,10 @@ int main(int argc, const char** argv)
                     ERROR("EXIT ON RECEIVE STATUS");
                 }
 
+                // Keep mascots alive for the duration of a protocol request.
+                pthread_mutex_lock(&server_state.environment_mutex);
                 protocol_error handler_status = protocol_client_handle_packet(sd->client, packet);
+                pthread_mutex_unlock(&server_state.environment_mutex);
                 if (handler_status == PROTOCOL_CLIENT_VIOLATION) {
                     list_remove(server_state.clients, list_find(server_state.clients, sd->client));
                     ipc_destroy_connector(sd->ipc_connector);
@@ -843,7 +846,12 @@ int main(int argc, const char** argv)
                     LOG("ERROR", RED, "Wayland connection closed");
                     break;
                 }
-                if (environment_dispatch() == -1) {
+                // Wayland input callbacks and mascot ticks share subsurface
+                // lifetimes, including the pointer's current drag target.
+                pthread_mutex_lock(&server_state.environment_mutex);
+                int dispatch_result = environment_dispatch();
+                pthread_mutex_unlock(&server_state.environment_mutex);
+                if (dispatch_result == -1) {
                     LOG("ERROR", RED, "Can't dispatch wayland events");
                     break;
                 }
