@@ -270,6 +270,8 @@ struct environment_event_frame {
 };
 
 struct environment_pointer {
+  struct environment_pointer *next;
+
   // Position of the pointer, in surface-local coordinates
   int32_t x, y;
   int32_t dx, dy;
@@ -339,6 +341,7 @@ struct environment_buffer {
 // Pointer with most recent activity
 environment_pointer_t default_active_pointer = {0};
 environment_pointer_t *active_pointer = &default_active_pointer;
+static environment_pointer_t *input_pointers;
 
 #define ACTIVATE_POINTER(pointer) active_pointer = pointer
 
@@ -432,6 +435,15 @@ struct wl_surface_data *wl_surface_set_data(struct wl_surface *surface,
 void wl_surface_clear_data(struct wl_surface *surface) {
   if (!surface)
     return;
+  for (environment_pointer_t *pointer = input_pointers; pointer;
+       pointer = pointer->next) {
+    if (pointer->above_surface == surface) {
+      pointer->above_surface = NULL;
+      pointer->above_environment = NULL;
+    }
+    if (pointer->frame.surface_changed == surface)
+      pointer->frame.surface_changed = NULL;
+  }
   struct wl_surface_data *surface_data = wl_surface_get_user_data(surface);
   if (!surface_data)
     return;
@@ -627,6 +639,8 @@ environment_pointer_t *allocate_env_pointer(int32_t protocol,
     pointer->cursor = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
   }
 
+  pointer->next = input_pointers;
+  input_pointers = pointer;
   return pointer;
 }
 
@@ -649,6 +663,11 @@ void free_env_pointer(environment_pointer_t *pointer) {
   if (pointer->cursor_shape_device) {
     wp_cursor_shape_device_v1_destroy(pointer->cursor_shape_device);
   }
+  environment_pointer_t **entry = &input_pointers;
+  while (*entry && *entry != pointer)
+    entry = &(*entry)->next;
+  if (*entry)
+    *entry = pointer->next;
   free(pointer);
 }
 
@@ -2615,6 +2634,15 @@ environment_subsurface_t *environment_create_subsurface(environment_t *env) {
 }
 
 void environment_destroy_subsurface(environment_subsurface_t *surface) {
+  // A mascot can be dismissed with a button release still queued.
+  if (surface->drag_pointer) {
+    surface->drag_pointer->grabbed_subsurface = NULL;
+    surface->drag_pointer->above_environment = NULL;
+    surface->drag_pointer = NULL;
+    surface->is_grabbed = false;
+    enable_input_on_environments(false);
+  }
+
   if (surface->alpha_modifier) {
     wp_alpha_modifier_surface_v1_destroy(surface->alpha_modifier);
   }
